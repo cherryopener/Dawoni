@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.DS_Store
+node_modules/
+frontend/dist/
+# 로컬 테스트용 작업공간 (실제 교재·학생 자료는 커밋하지 않음)
+/workspace/
+/scratch/
+.claude/settings.local.json

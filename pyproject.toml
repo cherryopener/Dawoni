@@ -1,0 +1,56 @@
+[project]
+name = "dawoni"
+version = "0.0.1"
+description = "다워니 — 구독 중인 AI CLI를 일꾼으로 부려 수학·과학 문항 DB화, 파라미터 그림, 해설·동형문제, 채점, DOCX 출력을 돕는 학원 강사용 도구"
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+dependencies = [
+    "pydantic>=2.12",
+]
+
+[project.scripts]
+dawoni = "dawoni.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "ruff>=0.14",
+    "pyright>=1.1.400",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dawoni"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PTH", "T20"]
+ignore = [
+    "RUF001",  # 한글·수학 기호(①, ×, −)는 의도된 문자
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+
+[tool.pyright]
+include = ["dawoni", "tests"]
+pythonVersion = "3.14"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "agent: 실제 AI CLI를 호출하는 테스트 (기본 제외, `-m agent`로 실행)",
+]
