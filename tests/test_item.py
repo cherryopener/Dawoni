@@ -41,7 +41,7 @@ def test_ids_are_unique_and_time_ordered(incline_item: dict[str, Any]) -> None:
 
 def test_undefined_variable_in_stem(incline_item: dict[str, Any]) -> None:
     d = copy.deepcopy(incline_item)
-    d["stem"][0]["runs"][1]["v"] = "{{mass}}\\,\\mathrm{kg}"
+    d["stem"][0]["runs"][1]["v"] = "\\var{mass}\\,\\mathrm{kg}"
     _bad(d, "정의되지 않은 변수: ['mass']")
 
 
@@ -53,7 +53,7 @@ def test_undefined_variable_in_constraint(incline_item: dict[str, Any]) -> None:
 
 def test_functions_in_placeholder_are_not_variables(incline_item: dict[str, Any]) -> None:
     d = copy.deepcopy(incline_item)
-    d["stem"][0]["runs"][1]["v"] = "{{ sqrt(2)*m*sin(theta*pi/180) }}"
+    d["stem"][0]["runs"][1]["v"] = "\\var{sqrt(2)*m*sin(theta*pi/180)}"
     ItemContent.model_validate(d)
 
 

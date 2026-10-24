@@ -3,8 +3,9 @@
 수식은 `$…$` 구분자를 쓰지 않고 `MathRun`으로 분리해 저장한다. AIHelper에서 반복되던
 `$ x $` 공백 문제·조사 붙음 문제가 구조적으로 생기지 않는다.
 
-런의 텍스트와 수식에는 변수 자리표시 `{{식}}`을 쓸 수 있다. 예: `{{m}}`, `{{2*m}}`.
+런의 텍스트와 수식에는 변수 자리표시 `\\var{식}`을 쓸 수 있다. 예: `\\var{m}`, `\\var{2*m}`.
 동형문제(L1)에서 변수 값을 바꾸면 이 자리가 다시 계산된다.
+`{{m}}` 같은 이중 중괄호는 LaTeX(`\\frac{1}{{{a}}}`, `x^{{2}}`)와 충돌하므로 쓰지 않는다.
 
 AI 출력 토큰을 아끼기 위해 런은 짧은 키(`t`, `v`)를, 블록은 `type`을 판별자로 쓴다.
 """
@@ -135,11 +136,11 @@ def paragraph(*runs: TextRun | MathRun) -> ParagraphBlock:
     return ParagraphBlock(type="paragraph", runs=list(runs))
 
 
-_PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}")
+_PLACEHOLDER = re.compile(r"\\var\{([^{}]*)\}")
 
 
 def placeholders_in(s: str) -> list[str]:
-    """문자열 안의 `{{식}}` 내용 목록."""
+    """문자열 안의 `\\var{식}` 내용 목록."""
     return [m.strip() for m in _PLACEHOLDER.findall(s)]
 
 

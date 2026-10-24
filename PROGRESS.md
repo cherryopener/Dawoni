@@ -38,4 +38,5 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 
 ## 작업 로그
 
+- 2026-10-25: M0 보완 — 그림(그래프) 선지 규칙(PLAN §5-5): 선지 그림은 원본 그대로, `note` 필수, 한 장짜리 선지 그림(`choices_figure_id`), `choice_layout`. 변수 자리표시를 `{{m}}`에서 `\var{m}`으로 변경(LaTeX 이중 중괄호 충돌). 테스트 75개.
 - 2026-10-25: 계획 v1 확정. Claude Code CLI 2.1.310 설치(로그인 전). agy stdin(NDJSON) 호출 방식 실측. AIHelper 파일은 `legacy/aihelper/`로 이동. M0 완료.

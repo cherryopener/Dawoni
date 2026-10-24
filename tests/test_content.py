@@ -77,8 +77,15 @@ def test_extra_fields_rejected() -> None:
 
 
 def test_placeholders() -> None:
-    assert placeholders_in("{{m}} kg, {{ 2*m }}") == ["m", "2*m"]
+    assert placeholders_in("\\var{m} kg, \\var{ 2*m }") == ["m", "2*m"]
+    assert placeholders_in("\\frac{1}{\\var{a}}") == ["a"]
     assert placeholders_in("없음") == []
+
+
+@pytest.mark.parametrize("latex", ["x^{{2}}", "\\frac{{a}}{b}", "\\frac{1}{{{a}}}"])
+def test_latex_double_braces_are_not_placeholders(latex: str) -> None:
+    """LaTeX의 이중 중괄호를 변수로 오인하지 않는다."""
+    assert placeholders_in(latex) == []
 
 
 def test_helpers_build_valid_models() -> None:

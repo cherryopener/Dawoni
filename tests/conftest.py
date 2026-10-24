@@ -36,9 +36,9 @@ def incline_item() -> dict[str, Any]:
                 "type": "paragraph",
                 "runs": [
                     {"t": "text", "v": "그림과 같이 질량이 "},
-                    {"t": "math", "v": "{{m}}\\,\\mathrm{kg}"},
+                    {"t": "math", "v": "\\var{m}\\,\\mathrm{kg}"},
                     {"t": "text", "v": "인 물체가 경사각 "},
-                    {"t": "math", "v": "{{theta}}^\\circ"},
+                    {"t": "math", "v": "\\var{theta}^\\circ"},
                     {"t": "text", "v": "인 빗면을 미끄러져 내려온다. 가속도의 크기는?"},
                 ],
             },
@@ -58,9 +58,9 @@ def incline_item() -> dict[str, Any]:
                     "kind": "incline",
                     "angle_deg": "theta",
                     "angle_label": "θ",
-                    "block_label": "{{m}} kg",
+                    "block_label": "\\var{m} kg",
                     "block_position": 0.55,
-                    "friction_label": "μ = {{mu}}",
+                    "friction_label": "μ = \\var{mu}",
                     "forces": [{"force": "acceleration", "label": "a"}],
                 },
             }

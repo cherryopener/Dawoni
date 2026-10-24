@@ -24,6 +24,9 @@ VariantLevel = Literal["L1", "L2", "L3", "L4"]
 
 ReviewStatus = Literal["draft", "needs_review", "approved"]
 
+ChoiceLayout = Literal["auto", "row", "grid_3_2", "grid_2", "column"]
+"""선지 배치: 자동 / 한 줄 5개 / 3+2 / 2열 / 세로 1열"""
+
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _VAR_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
@@ -66,15 +69,24 @@ class Variable(DawoniModel):
 
 
 class Choice(DawoniModel):
+    """선지 하나.
+
+    그림 선지(그래프 등)는 동형문제에서 **변형하지 않는다**. 대신 문제 조건을 바꿔 다른 선지가
+    정답이 되게 한다. 그러려면 각 그림 선지가 무엇을 나타내는지 `note`로 알아야 한다.
+    """
+
     label: int = Field(ge=1, le=9, description="①=1, ②=2 …")
     runs: list[Run] = Field(default_factory=lambda: list[Run]())
     figure_id: str | None = None
+    note: str | None = Field(
+        default=None,
+        description="그림 선지의 내용 설명 (예: 'y=2^x 그래프, (0,1)을 지나고 증가'). "
+        "그림만 있는 선지에는 필수",
+    )
 
-    @model_validator(mode="after")
-    def _not_empty(self) -> Choice:
-        if not self.runs and self.figure_id is None:
-            raise ValueError(f"선지 {self.label}: 내용(runs)이나 그림(figure_id)이 필요")
-        return self
+    @property
+    def is_label_only(self) -> bool:
+        return not self.runs and self.figure_id is None
 
 
 class ChoiceAnswer(DawoniModel):
@@ -119,6 +131,11 @@ class ItemContent(DawoniModel):
     difficulty: int | None = Field(default=None, ge=1, le=5)
     stem: list[Block] = Field(min_length=1)
     choices: list[Choice] = Field(default_factory=lambda: list[Choice]())
+    choice_layout: ChoiceLayout = "auto"
+    choices_figure_id: str | None = Field(
+        default=None,
+        description="①~⑤가 그림 한 장에 함께 들어 있을 때 그 그림. 이때 선지는 번호와 note만",
+    )
     answer: Answer | None = None
     solution: list[Block] = Field(default_factory=lambda: list[Block]())
     variables: dict[str, Variable] = Field(default_factory=lambda: dict[str, Variable]())
@@ -152,6 +169,7 @@ class ItemContent(DawoniModel):
                 errors.append(f"선지 번호는 1부터 차례대로여야 함: {labels}")
         elif self.choices:
             errors.append(f"{self.item_type} 문항에는 선지가 없어야 함")
+        errors += self._check_figure_choices()
 
         # 정답
         match self.answer:
@@ -170,6 +188,8 @@ class ItemContent(DawoniModel):
             errors.append(f"그림 ID 중복: {fig_ids}")
         referenced = figure_ids_in(self.stem) + figure_ids_in(self.solution)
         referenced += [c.figure_id for c in self.choices if c.figure_id]
+        if self.choices_figure_id:
+            referenced.append(self.choices_figure_id)
         missing = sorted(set(referenced) - set(fig_ids))
         if missing:
             errors.append(f"정의되지 않은 그림 참조: {missing}")
@@ -194,6 +214,48 @@ class ItemContent(DawoniModel):
         if errors:
             raise ValueError("; ".join(errors))
         return self
+
+    @property
+    def has_figure_choices(self) -> bool:
+        """그림 선지 문항인가. 그렇다면 동형문제에서 선지를 고정하고 문제만 바꾼다."""
+        return self.choices_figure_id is not None or any(c.figure_id for c in self.choices)
+
+    def _check_figure_choices(self) -> list[str]:
+        """그림 선지 규칙. 오류가 가장 적은 방식으로 제한한다.
+
+        - 선지 그림은 원본 크롭(raster)을 그대로 쓴다. 다시 그리지 않으므로 재현 오류가 없다.
+          (spec을 함께 둘 수는 있지만 의미 기록·정답 검증용일 뿐 출력에는 쓰지 않는다.)
+        - 그림 선지 문항의 선지에는 변수 자리표시를 쓰지 않는다 (동형문제에서도 고정).
+        - 그림만 있는 선지는 무엇을 그린 것인지 `note`가 있어야 한다.
+        - 한 장짜리 선지 그림(choices_figure_id)을 쓰면 모든 선지는 번호+note만 가진다.
+        """
+        errors: list[str] = []
+        if self.choices_figure_id and self.item_type != "multiple_choice":
+            errors.append("choices_figure_id는 선택형 문항에만 사용")
+
+        for c in self.choices:
+            if self.choices_figure_id:
+                if not c.is_label_only:
+                    errors.append(
+                        f"선지 {c.label}: 선지 그림이 한 장(choices_figure_id)이면 "
+                        "선지에는 runs·figure_id를 넣지 않음"
+                    )
+            elif c.is_label_only:
+                errors.append(f"선지 {c.label}: 내용(runs)이나 그림(figure_id)이 필요")
+            if not c.runs and not c.note:
+                errors.append(f"선지 {c.label}: 그림 선지에는 내용 설명(note)이 필요")
+
+        if self.has_figure_choices:
+            for c in self.choices:
+                if any(placeholders_in(r.v) for r in c.runs):
+                    errors.append(f"선지 {c.label}: 그림 선지 문항의 선지에는 변수 자리표시 금지")
+            choice_fig_ids = {c.figure_id for c in self.choices if c.figure_id}
+            if self.choices_figure_id:
+                choice_fig_ids.add(self.choices_figure_id)
+            for f in self.figures:
+                if f.id in choice_fig_ids and f.mode != "raster":
+                    errors.append(f"{f.id}: 선지 그림은 원본 그대로(mode=raster) 사용")
+        return errors
 
 
 class AgentStamp(DawoniModel):
