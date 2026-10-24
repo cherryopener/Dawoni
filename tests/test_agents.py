@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import stat
 import sys
 import threading
 import time
@@ -29,26 +28,8 @@ from dawoni.paths import AppPaths
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="가짜 CLI는 POSIX 셸 스크립트")
 
-FAKE = Path(__file__).with_name("fake_agy.py")
+MakeFake = Callable[..., Path]
 SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
-
-MakeFake = Callable[[str], Path]
-
-
-@pytest.fixture
-def make_fake(tmp_path: Path) -> MakeFake:
-    """동작 모드가 고정된 가짜 CLI 실행 파일을 만든다."""
-
-    def make(mode: str) -> Path:
-        exe = tmp_path / f"fake-agy-{mode}"
-        exe.write_text(
-            f'#!/bin/sh\nFAKE_AGENT_MODE={mode} exec "{sys.executable}" "{FAKE}" "$@"\n',
-            encoding="utf-8",
-        )
-        exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
-        return exe
-
-    return make
 
 
 def _run(

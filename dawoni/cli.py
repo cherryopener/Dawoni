@@ -5,6 +5,7 @@ dawoni schema item-content            # AI 출력 스키마(JSON Schema) 출력
 dawoni workspace init ~/DawoniWork
 dawoni agent detect                   # 설치된 AI CLI 확인
 dawoni agent test --cli agy           # 이미지 1장 판독 연결 테스트
+dawoni rules list|add|on|off|rm|preview  # 전역 규칙 (cli_rules.py)
 """
 
 from __future__ import annotations
@@ -144,6 +145,10 @@ def build_parser() -> argparse.ArgumentParser:
     at.add_argument("--model", help="이번 테스트에만 쓸 모델 (예: claude-sonnet-5-5-medium)")
     at.add_argument("--keep", action="store_true", help="성공해도 격리 폴더 보존")
     at.set_defaults(func=_cmd_agent_test)
+
+    from dawoni import cli_rules
+
+    cli_rules.register(sub)
     return p
 
 

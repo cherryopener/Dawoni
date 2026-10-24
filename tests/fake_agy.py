@@ -10,6 +10,9 @@
   denied    응답 없이 denied_actions만 남기고 종료
   garbage   JSON이 아닌 출력 후 비정상 종료
   crash     stderr에 메시지 후 exit 3
+  script    FAKE_SCRIPT(JSON 파일)의 응답 목록을 호출 순서대로 돌려준다. 받은 프롬프트는
+            FAKE_STATE_DIR/prompt_N.txt에 저장 (수리 요청 내용 검사용)
+            항목: {"response": "...", "structured": {...}(선택)}
 """
 
 from __future__ import annotations
@@ -52,6 +55,20 @@ def main() -> int:
 
     emit({"event": "init", "init": {"model": "fake-model", "cwd": str(Path.cwd())}})
 
+    if mode == "script":
+        state = Path(os.environ["FAKE_STATE_DIR"])
+        state.mkdir(parents=True, exist_ok=True)
+        counter = state / "count"
+        n = int(counter.read_text()) + 1 if counter.exists() else 1
+        counter.write_text(str(n))
+        (state / f"prompt_{n}.txt").write_text(content, encoding="utf-8")
+        script = json.loads(Path(os.environ["FAKE_SCRIPT"]).read_text(encoding="utf-8"))
+        entry = script[min(n, len(script)) - 1]
+        extra: dict[str, object] = {}
+        if schema and "structured" in entry:
+            extra["structured_output"] = entry["structured"]
+        result("SUCCESS", entry.get("response", ""), **extra)
+        return 0
     if mode == "garbage":
         sys.stdout.write("이것은 JSON이 아님\n")
         return 1
@@ -91,8 +108,8 @@ def main() -> int:
             "step_update": {"step_type": "tool", "state": "ACTIVE", "tool_name": "read_file"},
         }
     )
-    extra: dict[str, object] = {"structured_output": answer} if schema else {}
-    result("SUCCESS", json.dumps(answer, ensure_ascii=False), **extra)
+    ok_extra: dict[str, object] = {"structured_output": answer} if schema else {}
+    result("SUCCESS", json.dumps(answer, ensure_ascii=False), **ok_extra)
     return 0
 
 

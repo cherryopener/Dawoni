@@ -90,6 +90,16 @@ class WorkspacePaths:
         return self.root / "rubrics"
 
     @property
+    def scopes(self) -> Path:
+        """범위 프로필 (허용 개념·기법)."""
+        return self.root / "scopes"
+
+    @property
+    def rules(self) -> Path:
+        """강사 전역 규칙 (ON/OFF)."""
+        return self.root / "rules"
+
+    @property
     def exams(self) -> Path:
         return self.root / "exams"
 
@@ -115,6 +125,8 @@ class WorkspacePaths:
             self.bank,
             self.concepts,
             self.rubrics,
+            self.scopes,
+            self.rules,
             self.exams,
             self.students,
             self.lectures,

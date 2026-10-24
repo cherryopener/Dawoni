@@ -245,6 +245,7 @@ sequenceDiagram
 | 결과 | `result.structured_output`에 스키마 검증된 객체 | `structured_output`, 사용량 한도 `rate_limit_event`(5시간/7일 사용률) |
 
 실측: 동봉 이미지 연결 테스트(`dawoni agent test`) — agy+gemini-3.8-flash-medium 16.9초·18.5k 토큰, agy+claude-sonnet-5-5-low 9.5초·13.7k 토큰, 둘 다 한글·수식·도형 판독 정답.
+agy `--json-schema`는 `$ref`를 파일 경로로 잘못 해석해 실패하므로 모든 CLI에 `$ref`를 펼친 스키마를 보낸다(`context/schema.py`, M2 실측).
 `claude --json-schema`는 파일이 아니라 문자열을 받으므로 12,000자 초과 스키마는 넘기지 않고 프롬프트+사후 검증으로 처리(Windows 명령행 32K 한계).
 
 ---

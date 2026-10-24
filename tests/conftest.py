@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import shlex
+import stat
+import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -66,3 +71,37 @@ def incline_item() -> dict[str, Any]:
             }
         ],
     }
+
+
+FAKE_AGY = Path(__file__).with_name("fake_agy.py")
+MakeFake = Callable[..., Path]
+
+
+@pytest.fixture
+def make_fake(tmp_path: Path) -> MakeFake:
+    """동작 모드가 고정된 가짜 agy 실행 파일을 만든다 (POSIX 전용).
+
+    make_fake("ok") / make_fake("script", script=[{"response": "..."}, ...])
+    script 모드에서는 실행 파일 옆 `<이름>.state/prompt_N.txt`에 받은 프롬프트가 남는다.
+    """
+    if sys.platform == "win32":
+        pytest.skip("가짜 CLI는 POSIX 셸 스크립트")
+    counter = {"n": 0}
+
+    def make(mode: str, *, script: list[dict[str, Any]] | None = None) -> Path:
+        counter["n"] += 1
+        exe = tmp_path / f"fake-agy-{mode}-{counter['n']}"
+        env = {"FAKE_AGENT_MODE": mode}
+        if script is not None:
+            script_path = exe.with_suffix(".script.json")
+            script_path.write_text(json.dumps(script, ensure_ascii=False), encoding="utf-8")
+            env["FAKE_SCRIPT"] = str(script_path)
+            env["FAKE_STATE_DIR"] = str(exe.with_suffix(".state"))
+        assigns = " ".join(f"{k}={shlex.quote(v)}" for k, v in env.items())
+        exe.write_text(
+            f'#!/bin/sh\n{assigns} exec "{sys.executable}" "{FAKE_AGY}" "$@"\n', encoding="utf-8"
+        )
+        exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
+        return exe
+
+    return make

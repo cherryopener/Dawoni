@@ -1,11 +1,12 @@
 [project]
 name = "dawoni"
 version = "0.0.1"
-description = "다워니 — 구독 중인 AI CLI를 일꾼으로 부려 수학·과학 문항 DB화, 파라미터 그림, 해설·동형문제, 채점, DOCX 출력을 돕는 학원 강사용 도구"
+description = "다워니 — 구독 중인 AI CLI를 일꾼으로 부려, 교재 개념 범위 안에서 해설·루브릭을 만들고 강사 기준에 맞춰 서술형 답안을 채점하는 학원 강사용 도구"
 readme = "README.md"
 requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
+    "jinja2>=3.1",
     "pydantic>=2.12",
 ]
 

@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from dawoni.agents import AgentClient
@@ -26,3 +28,17 @@ def test_agy_reads_image_without_permission_prompt(app_paths: AppPaths) -> None:
     assert report.passed, report.problems
     assert res.schema_enforced
     assert not res.warnings, res.warnings
+
+
+def test_agy_refines_rule_and_flags_conflict(app_paths: AppPaths, tmp_path: Path) -> None:
+    from dawoni.context import ContextEngine, GlobalRule, RuleStore
+    from dawoni.context.refine import refine_rule
+
+    store = RuleStore(tmp_path / "rules")
+    short = store.save(
+        GlobalRule(title="짧은 첨삭", text="첨삭은 두 문장 이내로 쓸 것.", applies_to=["feedback"])
+    )
+    engine = ContextEngine(AgentClient(AppConfig(), app_paths), rules=store)
+    res = refine_rule(engine, "첨삭은 풀이 단계마다 아주 자세하게 길게 써 줘", store)
+    assert "feedback" in res.value.applies_to or "all" in res.value.applies_to
+    assert [c.rule_id for c in res.value.conflicts] == [short.id]
