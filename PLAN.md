@@ -249,10 +249,12 @@ sequenceDiagram
 | 구조화 출력 | `--json-schema <파일>` | `--json-schema` |
 | 모델 | `--model gemini-3.8-flash-low` 등 (`agy models`) | `--model` |
 | 시간 제한 | `--print-timeout 120s` + 앱 자체 heartbeat | 앱 자체 heartbeat |
-| 격리 | 격리 cwd, `--sandbox`, `--mode plan` 검토 | `--bare` 또는 `--setting-sources` 제한, `--strict-mcp-config`, `--tools Read`, `--no-session-persistence` |
-| ⚠️ 주의 | 기본 도구가 60여 개(run_command, write_to_file 등), 권한 모드 `request-review`. AIHelper는 `--dangerously-skip-permissions`로 멈춤을 피했는데, 이는 **AI가 명령 실행·파일 쓰기를 승인 없이 할 수 있게 여는 것**이라 Dawoni에서는 쓰지 않음. 대신 이미지 읽기에 필요한 최소 권한만 확보(M1에서 실측) | 로그인 필요: 터미널에서 `claude` 실행 후 `/login` |
+| 격리 | 격리 cwd + `--sandbox` + `--disable-slash-commands` (`--mode plan`은 계획 문서를 따로 써서 토큰 약 4배 → 미사용) | `--restricted --safe-mode --strict-mcp-config --tools Read --allowedTools Read --permission-mode dontAsk --no-session-persistence` (M1에서 실행 확인) |
+| 권한 동작 (M1 실측) | 작업 폴더 안 `read_file`(이미지 포함)은 승인 없이 허용. 파일 쓰기·변경 명령(`touch` 등)은 비대화 모드가 **자동 거부**하고 `denied_actions`를 남긴 채 종료(멈추지 않음). `ls` 같은 읽기 명령은 허용됨. AIHelper의 `--dangerously-skip-permissions`는 이 거부를 없애 AI에게 쓰기·명령 실행을 여는 것이라 **쓰지 않음** | 읽기 외 도구 없음. 결과의 `permission_denials`로 차단 확인 |
+| 결과 | `result.structured_output`에 스키마 검증된 객체 | `structured_output`, 사용량 한도 `rate_limit_event`(5시간/7일 사용률) |
 
-실측 예: 간단한 JSON 응답 왕복 약 5초, 입력 토큰 약 6,900(agy 기본 시스템 프롬프트 포함).
+실측: 동봉 이미지 연결 테스트(`dawoni agent test`) — agy+gemini-3.8-flash-medium 16.9초·18.5k 토큰, agy+claude-sonnet-5-5-low 9.5초·13.7k 토큰, 둘 다 한글·수식·도형 판독 정답.
+`claude --json-schema`는 파일이 아니라 문자열을 받으므로 12,000자 초과 스키마는 넘기지 않고 프롬프트+사후 검증으로 처리(Windows 명령행 32K 한계).
 
 ---
 

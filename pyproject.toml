@@ -50,7 +50,7 @@ venv = ".venv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --strict-markers"
+addopts = "-q --strict-markers -m 'not agent'"
 markers = [
     "agent: 실제 AI CLI를 호출하는 테스트 (기본 제외, `-m agent`로 실행)",
 ]

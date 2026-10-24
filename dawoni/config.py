@@ -19,6 +19,7 @@ from dawoni.paths import AppPaths
 log = logging.getLogger(__name__)
 
 AgentName = Literal["agy", "claude", "codex"]
+AGENT_NAMES: tuple[AgentName, ...] = ("agy", "claude", "codex")
 
 
 class _Settings(BaseModel):
