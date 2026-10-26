@@ -56,7 +56,15 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
   - 합성 손글씨 이미지 `tests/fixtures/grading/scans/F_q1.jpg` (나눔손글씨 펜, 취소선 줄·어색한 학생 계산 포함)
   - agy 실관통: 6줄 전부 적힌 그대로(취소선·`+7-4`·메모 포함), 교차 판독(claude-sonnet via agy) 일치 100%, 확인 후 채점 4/4, 인용이 지운 줄을 `…`로 건너뜀
   - 첫 실행에서 섞인 줄을 글/식으로 나눠 순서가 뒤바뀌는 문제 발견 → 지침·스키마 설명 수정 (템플릿 v2026-10-27.2)
-- [ ] M5 자료 DB화 (교재 개념·기법 → 범위 프로필, 시험지 PDF)
+- [x] **M5 자료 DB화** (2026-10-27) — 실제 교재·시험지 PDF로 검증은 강사 자료 도착 후
+  - `ingest/layout.py` 결정적 레이아웃: 2단 감지, 근거 기반 머리말·꼬리말(배너·가운데 가로지름·반복·쪽 번호), 번호 흐름으로 거른 문항 앵커, 단·쪽 넘김 이어짐, 벡터 군집·이미지 그림, 글 상자(<보기>) 구분, ①~⑤ 기호로 그림 선지 짝짓기, 배점 [n점]
+  - `ingest/exam.py` 쪽 단위 AI 구조화 + 검증(문항 번호·그림 ID·레이아웃 선지 짝·**PDF에 없는 한글 10% 초과 차단**·ItemContent), 그림은 원본 크롭(raster)+설명
+  - `ingest/textbook.py` 교재 → 개념·기법·금지 후보·관례 → 근거 검사 → 코드가 합치고 C/S ID 부여 → 범위 프로필 초안
+  - `ingest/sources.py` SHA-256 자료 등록·중복 DB화 방지(`--force`)
+  - `dawoni ingest layout [--overlay] | exam | textbook`
+  - 합성 PDF 생성기 `tests/pdfgen.py` (배너·2단·보기 상자·그래프 선지·단/쪽 넘김·이미지 서술형·쪽 번호)
+  - agy 실관통: 교재 → 개념 4·기법 3·금지 "미분"(이유 포함)·관례 2, 시험지 → 6문항 전부 첫 시도 통과(보기 구조화, 그래프 선지 5개 + 내용 설명, 쪽 넘김 그림 귀속)
+  - 미지원: 스캔 PDF의 문항 분할
 - [ ] M6 수식·DOCX
 - [ ] M7 UI
 - [ ] M8 보정 고도화
@@ -66,6 +74,9 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 - [ ] M12 확장 (유튜브 요약, Drive 팀 공유)
 
 ## 다음에 할 일 / 미뤄 둔 것
+
+- 스캔 PDF 시험지의 문항 분할(글자 정보 없음) — 쪽 이미지 판독으로 영역·그림 좌표 받기
+- 시험지 쪽 단위 구조화가 1쪽 5문항에 약 2.5분(gemini-3.8-flash-medium) — 문항이 많은 쪽은 나눠 호출 검토
 
 - 실제 학생 손글씨(흘림체·연필·사진 그림자)로 판독 정확도 측정 — 강사 자료 필요
 
@@ -78,6 +89,8 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 - agy가 `~/.gemini/GEMINI.md`를 실제로 읽는지 확인 (현재 빈 파일이라 영향 없음, detect가 비어 있지 않으면 경고)
 
 ## 작업 로그
+
+- 2026-10-27: M5 완료. 테스트 중 발견·수정: 그림 옆 짧은 글 흡수 규칙이 ①~⑤를 삼켜 선지 짝짓기 실패, 위치만으로 자른 머리말이 다음 쪽 이어진 문항을 잘라 냄, 단 경계를 페이지 끝에서 재서 왼쪽 단 번호를 놓침.
 
 - 2026-10-27: Python 3.15로 전환(3.16 알파는 OpenCV·Windows용 빌드 부재). 테스트 그대로 통과. OpenCV 원근 보정 추가(`ocr/perspective.py`, 확실할 때만 보정).
 

@@ -47,6 +47,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]
+"tests/test_ingest.py" = ["E501"]  # 한글 시험지 픽스처 데이터 (줄을 나누면 오히려 읽기 어려움)
 
 [tool.pyright]
 include = ["dawoni", "tests"]
