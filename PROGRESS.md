@@ -12,7 +12,7 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 ## 마일스톤
 
 - [x] **M0 기반** (2026-10-25)
-  - uv 프로젝트(Python 3.16.0a1), ruff·pyright(strict)·pytest
+  - uv 프로젝트(처음 3.16.0a1 → 2026-10-27 **3.15.0**으로 전환), ruff·pyright(strict)·pytest
   - `paths.py` 앱 데이터/작업공간 폴더, `config.py` 설정(원자적 저장, 손상 시 백업, 알 수 없는 키 무시, 0600 권한)
   - `logs.py` dawoni.log + error.log, `fsio.py` 원자적 쓰기·SHA-256, `workspace.py` 작업공간 만들기/열기
   - `models/` 핵심 계약: 런/블록(수식 분리, 보기·조건·상자·표), 문항(`ItemContent`=AI 출력 / `Item`=저장), 변수·제약, 정답 3종, 그림(원본+스펙, 빗면·함수그래프 2종), 작업 진행률, 원본 자료
@@ -67,7 +67,6 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 
 ## 다음에 할 일 / 미뤄 둔 것
 
-- 원근 보정(OpenCV 3.16 빌드 없음) — 비스듬히 찍은 사진 대응. Pillow만으로 사각형 검출·보정 검토
 - 실제 학생 손글씨(흘림체·연필·사진 그림자)로 판독 정확도 측정 — 강사 자료 필요
 
 - 그림 스펙 안의 식(`angle_deg: "theta"`)이 정의된 변수만 쓰는지 검사 → M4에서 렌더러가 식을 평가할 때 함께 구현
@@ -79,6 +78,8 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 - agy가 `~/.gemini/GEMINI.md`를 실제로 읽는지 확인 (현재 빈 파일이라 영향 없음, detect가 비어 있지 않으면 경고)
 
 ## 작업 로그
+
+- 2026-10-27: Python 3.15로 전환(3.16 알파는 OpenCV·Windows용 빌드 부재). 테스트 그대로 통과. OpenCV 원근 보정 추가(`ocr/perspective.py`, 확실할 때만 보정).
 
 - 2026-10-27: M3 기능 완료. 실관통 중 추론 모델이 '생각'하는 동안 출력 없이 120초를 넘겨 멈춤 판정 → 무출력 감시 기본 300초 + 멈춤 시 새 세션 1회 자동 재시도 + 학생별 실패가 전체를 멈추지 않게, 채점된 답안은 건너뜀(`--regrade`).
 

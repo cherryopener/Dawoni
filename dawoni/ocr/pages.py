@@ -1,7 +1,8 @@
 # pyright: basic, reportMissingTypeStubs=false
 """답안 사진·스캔 PDF → AI에게 보낼 페이지 이미지.
 
-- 사진: EXIF 회전 바로잡기, 긴 변 2400px로 축소, 약한 자동 대비. **이진화는 하지 않는다**
+- 사진: EXIF 회전 바로잡기, 원근 보정(종이를 확실히 찾았을 때만), 긴 변 2400px로 축소,
+  약한 자동 대비. **이진화는 하지 않는다**
   (AI 비전은 원본에 가까운 이미지를 더 잘 읽고, 연필 자국·지운 흔적이 사라지지 않게).
 - PDF: 페이지마다 200dpi로 렌더링.
 - HEIC(아이폰): Pillow가 못 읽으므로 macOS에서는 내장 `sips`로 JPEG 변환.
@@ -18,6 +19,8 @@ from pathlib import Path
 
 import pymupdf
 from PIL import Image, ImageOps
+
+from dawoni.ocr.perspective import correct_perspective
 
 MAX_SIDE = 2400
 PDF_DPI = 200
@@ -55,11 +58,15 @@ def _heic_to_jpeg(src: Path, dst: Path) -> Path:
     return dst
 
 
-def prepare_image(src: Path, dst: Path, max_side: int = MAX_SIDE) -> Path:
+def prepare_image(
+    src: Path, dst: Path, max_side: int = MAX_SIDE, *, perspective: bool = True
+) -> Path:
     try:
         with Image.open(src) as im:
             im = ImageOps.exif_transpose(im)
             im = im.convert("RGB")
+            if perspective:
+                im, _ = correct_perspective(im)
             if max(im.size) > max_side:
                 im.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
             im = ImageOps.autocontrast(im, cutoff=1)

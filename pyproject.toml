@@ -7,6 +7,8 @@ requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
     "jinja2>=3.1",
+    "numpy>=2.3",
+    "opencv-python-headless>=4.12",
     "pillow>=11",
     "pydantic>=2.12",
     # 1.28.2 고정: 이후 판은 3.16용 빌드가 없는 onnxruntime을 요구 (2026-10-27)

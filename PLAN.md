@@ -257,7 +257,7 @@ agy `--json-schema`는 `$ref`를 파일 경로로 잘못 해석해 실패하므�
 
 ```mermaid
 flowchart TD
-    P["사진 · 스캔 PDF · HEIC"] --> Q["페이지 준비: EXIF 회전 · 축소(긴 변 2400px) · 약한 대비<br/>이진화 안 함 · 원본 보관"]
+    P["사진 · 스캔 PDF · HEIC"] --> Q["페이지 준비: EXIF 회전 · 원근 보정 · 축소(긴 변 2400px) · 약한 대비<br/>이진화 안 함 · 원본 보관"]
     Q --> H["(선택) CLOVA · Mathpix 결과 → 참고 자료로만"]
     Q --> S1["판독 A: AI 비전 — 원문 그대로, 줄마다 문항 번호·확신도·불확실·지운 흔적"]
     Q --> S2["판독 B: 다른 모델/AI (교차 판독, 설정 기본 켜짐)"]
@@ -272,7 +272,7 @@ flowchart TD
 - 손글씨 혼동 쌍(1/l/7, 0/o/6, 2/z, 5/s, 4/9, x/×, −/=, +/t, 분수선·근호 범위, 지수·첨자, 괄호 짝)을 판독 지침에 명시.
 - 문항 번호 없는 줄은 시험이 1문항이면 그 문항으로, 아니면 "문항을 알 수 없는 줄"로 강사에게 보여 준다.
 - 외부 OCR은 강사가 키를 넣고 켰을 때만 (학생 답안이 외부로 전송됨). 실패해도 판독을 막지 않는다.
-- 원근 보정(OpenCV)은 3.16용 빌드가 없어 보류. 현재는 "답안지를 위에서 반듯하게 찍기"를 안내.
+- 원근 보정(OpenCV): 종이의 네 모서리를 확실히 찾았을 때만 편다(사진 면적 30~95%). 못 찾으면 원본 그대로.
 - 채점은 확정된 판독문만 본다. 미확정 답안은 채점 명령에서 "확인 대기"로 건너뛴다.
 
 ---
@@ -516,13 +516,13 @@ PROGRESS.md의 수정 이력을 "증상"이 아니라 "원인 구조"로 묶어 
 
 | 영역 | 선택 | 이유 |
 |---|---|---|
-| 언어/런타임 | Python 3.16 (개발), Node 26 (프론트 빌드) | 사용자 지정. 단, §14 리스크 참고 |
+| 언어/런타임 | **Python 3.15** (개발·배포), Node 26 (프론트 빌드) | 2026-10-27 3.16(알파)에서 전환: 3.15는 OpenCV·numpy·matplotlib·Pillow·lxml·pythonnet이 macOS·Windows 모두 미리 빌드된 판으로 설치됨 |
 | 패키지 관리 | `uv` | 이미 설치됨, 빠르고 lockfile 재현성 |
 | 서버 | FastAPI + uvicorn | AIHelper와 동일 |
 | UI | Vite + React + TypeScript, KaTeX(수식), CSS Modules | 빌드 산출물을 패키지에 포함 |
 | 데스크톱 창 | macOS: pywebview / Windows: Edge `--app` 모드 | Windows pythonnet 문제 회피 |
 | PDF | PyMuPDF (`import pymupdf`) | 텍스트·블록·벡터 드로잉·렌더링 |
-| 이미지 전처리 | Pillow (+ OpenCV는 휠이 있을 때 선택) | 원근 보정·대비·이진화 |
+| 이미지 전처리 | Pillow + OpenCV(headless) | 원근 보정·대비 |
 | 수식 → Word | **pandoc(texmath) 기반 LaTeX→OMML** (결과 캐시) | math2docx보다 커버리지·정확도 높음. `pypandoc-binary`로 pandoc 동봉 |
 | DOCX 조립 | python-docx + 저수준 OXML 헬퍼 | 2단·보기 상자·선지 격자 등 세밀 제어 |
 | 그림 렌더 | matplotlib(기하·역학·그래프·장), schemdraw(회로) | AI가 준 **코드를 실행하지 않고**, 검증된 스펙(JSON)만 렌더 |
@@ -610,7 +610,7 @@ Dawoni/
 
 | 리스크 | 내용 | 제안 |
 |---|---|---|
-| **Python 3.16은 아직 알파(3.16.0a1)** | 이 Mac에서는 전 스택 빌드 성공(부록). 단 numpy·matplotlib·pillow·lxml은 **소스 빌드**라 Xcode가 없는 동료 PC·Windows에서는 설치 실패 가능 | 개발은 3.16, `requires-python >=3.14`(시간순 ID용 `uuid.uuid7`이 3.14부터)로 열어 두고 **배포 번들은 PyInstaller로 미리 빌드**(사용자는 Python 설치 불필요) |
+| ~~Python 3.16 알파~~ | 2026-10-27 **3.15로 전환해 해소**. 3.16에서는 numpy 등이 소스 빌드라 Windows·Xcode 없는 PC에서 설치 실패 위험, OpenCV·pythonnet 없음 | 코드는 `requires-python >=3.14` 유지 (uuid7·PEP 758) |
 | agy 권한 정책 | 이미지 읽기 도구 호출 시 승인 대기로 멈출 수 있음 | M1에서 최소 권한 조합 실측, heartbeat로 멈춤 즉시 감지 |
 | Claude Code 로그인 | 설치 완료(2.1.310), 사용자가 터미널에서 로그인 완료(claude.ai 계정) | 테스트는 agy 우선 |
 | CLI 옵션 변경 | 버전마다 플래그가 바뀜 | 어댑터가 `--help`/버전으로 기능 감지 |
@@ -618,6 +618,8 @@ Dawoni/
 
 
 ## 부록 — 환경 점검 결과
+
+> 2026-10-27: 개발 Python을 **3.15.0**(Homebrew)으로 전환. 아래 표는 3.16 당시 기록. 3.15는 OpenCV·numpy·matplotlib·Pillow·lxml·pythonnet 모두 macOS(arm64)·Windows(x64) 미리 빌드 판 확인. PyMuPDF 1.29+는 onnxruntime 의존으로 3.14/3.15/3.16 모두 불가 → 1.28.2 고정 유지.
 
 2026-10-25, macOS(Apple Silicon), `/usr/local/bin/python3.16` = **3.16.0a1**, Node **v26.12.1**, uv 사용 가능, Xcode 있음.
 
