@@ -43,9 +43,10 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 - [ ] M6 수식·DOCX
 - [ ] M7 UI
 - [ ] M8 보정 고도화
-- [ ] M9 파라미터 그림·동형문제
-- [ ] M10 패키징
-- [ ] M11 확장 (유튜브 요약, Drive 팀 공유)
+- [ ] M9 문항 제작 (동형 미지수형·수치형, 신규 A: 같은 범위·다른 기법, 신규 B: 확장 개념+제시문)
+- [ ] M10 파라미터 그림
+- [ ] M11 패키징
+- [ ] M12 확장 (유튜브 요약, Drive 팀 공유)
 
 ## 다음에 할 일 / 미뤄 둔 것
 
@@ -58,6 +59,8 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 - agy가 `~/.gemini/GEMINI.md`를 실제로 읽는지 확인 (현재 빈 파일이라 영향 없음, detect가 비어 있지 않으면 경고)
 
 ## 작업 로그
+
+- 2026-10-27: PLAN §9 문항 제작 추가(동형 미지수형·수치형, 신규 A·B). 실제 시험 세트는 나중에 제공 → M3는 합성 세트로 기능 먼저.
 
 - 2026-10-25: M2 완료. 템플릿 `render(name=…)` 인자 충돌 버그를 테스트로 발견·수정. agy가 pydantic 스키마의 `$ref`를 처리하지 못해 스키마 펼치기 추가.
 
