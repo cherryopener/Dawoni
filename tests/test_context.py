@@ -419,3 +419,20 @@ def test_inline_refs_keeps_sibling_description_and_detects_cycles() -> None:
     cyclic = {"$ref": "#/$defs/N", "$defs": {"N": {"properties": {"n": {"$ref": "#/$defs/N"}}}}}
     with pytest.raises(SchemaError, match="순환"):
         inline_refs(cyclic)
+
+
+def test_stall_is_retried_once_in_new_session(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path
+) -> None:
+    exe = make_fake("script", script=[{"stall": True}, {"response": json.dumps(GOOD)}])
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    cfg.agents["agy"].idle_timeout_s = 5
+    cfg.agents["claude"].enabled = False
+    cfg.agents["codex"].enabled = False
+    log = CallLog(tmp_path / "calls.jsonl")
+    engine = ContextEngine(AgentClient(cfg, app_paths), calllog=log)
+    res = engine.run(SIMPLE, VARS)
+    assert res.value.score == 7 and res.attempts == 1
+    assert len(fake_prompts(exe)) == 2
+    assert [r["ok"] for r in log.read()] == [True]

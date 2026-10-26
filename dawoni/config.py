@@ -34,8 +34,9 @@ class AgentSettings(_Settings):
     """CLI에 넘길 모델 이름. 없으면 CLI 기본값."""
     timeout_s: int = Field(default=600, ge=10)
     """한 번의 호출 전체 제한 시간."""
-    idle_timeout_s: int = Field(default=120, ge=5)
-    """출력 이벤트가 이 시간 동안 없으면 멈춘 것으로 보고 중단."""
+    idle_timeout_s: int = Field(default=300, ge=5)
+    """출력 이벤트가 이 시간 동안 없으면 멈춘 것으로 보고 중단.
+    추론형 모델은 '생각'하는 동안 이벤트가 없어 2분을 넘기기도 한다 (M3 실측) → 기본 5분."""
 
 
 def _default_agents() -> dict[AgentName, AgentSettings]:

@@ -238,6 +238,8 @@ def _run_in_sandbox(
                 progress(p.progress)
     finally:
         stdout_log.close()
+        # 멈춤·취소로 끝나도 stderr는 남긴다 (원인 분석용)
+        sb.log_path("stderr.txt").write_text("\n".join(stderr_tail), encoding="utf-8")
 
     try:
         returncode = proc.wait(timeout=max(5.0, options.timeout_s - (time.monotonic() - started)))

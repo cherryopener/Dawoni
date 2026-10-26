@@ -12,7 +12,7 @@
   crash     stderr에 메시지 후 exit 3
   script    FAKE_SCRIPT(JSON 파일)의 응답 목록을 호출 순서대로 돌려준다. 받은 프롬프트는
             FAKE_STATE_DIR/prompt_N.txt에 저장 (수리 요청 내용 검사용)
-            항목: {"response": "...", "structured": {...}(선택)}
+            항목: {"response": "...", "structured": {...}(선택)} 또는 {"stall": true}(멈춤)
 """
 
 from __future__ import annotations
@@ -64,6 +64,9 @@ def main() -> int:
         (state / f"prompt_{n}.txt").write_text(content, encoding="utf-8")
         script = json.loads(Path(os.environ["FAKE_SCRIPT"]).read_text(encoding="utf-8"))
         entry = script[min(n, len(script)) - 1]
+        if entry.get("stall"):
+            time.sleep(60)
+            return 0
         extra: dict[str, object] = {}
         if schema and "structured" in entry:
             extra["structured_output"] = entry["structured"]

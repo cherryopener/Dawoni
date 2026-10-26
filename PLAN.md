@@ -539,26 +539,26 @@ Dawoni/
 │   ├── cli.py config.py paths.py logs.py fsio.py workspace.py
 │   ├── models/          # ★ 모듈 간 계약 (pydantic)
 │   │   ├── content.py item.py figure.py job.py source.py      # (M0)
-│   │   ├── scope.py           # 범위 프로필: 개념·기법·금지·관례           (M3)
-│   │   ├── solution.py        # 범위 해설: 단계 + 사용 개념·기법 ID        (M3)
-│   │   ├── rubric.py          # 루브릭 항목·부분점수·다른 풀이·감점 금지   (M3)
-│   │   ├── transcript.py      # 판독문: 줄·LaTeX·확신도·불확실 토큰         (M3/M4)
-│   │   └── grading.py         # 항목별 점수·근거 인용·이중 채점·강사 수정    (M3)
+│   │   ├── scope.py           # 범위 프로필: 개념 C·기법 S·확장 X·금지·관례  (M3)
+│   │   └── grading.py         # 시험·범위 해설·루브릭·판독문·채점 결과     (M3)
 │   ├── agents/          # CLI 브리지 (M1)
 │   ├── context/         # 메타프롬프트 엔진 (M2)
-│   │   ├── templates/*.md.j2  assembler.py  budget.py  extract.py  repair.py
-│   │   ├── rules.py           # 전역 규칙 ON/OFF·적용 대상·정제
+│   │   ├── templates/*.md.j2  # 계약·과업·수리 템플릿 (첫 줄 version)
+│   │   ├── assembler.py       # 레이어 조립 + 토큰 예산
+│   │   ├── engine.py          # 호출 → 추출 → 검증 → 수리 루프
+│   │   ├── extract.py schema.py   # JSON 추출 · CLI용 스키마($ref 펼치기)
+│   │   ├── rules.py refine.py # 전역 규칙 ON/OFF·적용 대상 · 자연어 정제
 │   │   ├── tasks.py           # 작업 정의 (템플릿 + 출력 모델 + 검증기)
 │   │   └── calllog.py         # calls.jsonl
 │   ├── grading/         # ★ 채점 파이프라인 (M3)
-│   │   ├── solve.py           # 범위 해설 + 범위 검증 + 독립 재풀이
-│   │   ├── rubric.py          # 해설 → 루브릭 도출
-│   │   ├── grade.py           # 문항별 채점 + 인용·배점·감점 사유 검증
-│   │   ├── double.py          # 이중 채점·불일치 판정
-│   │   └── calibrate.py       # 기준 예시·강사 수정 이력·일치도
+│   │   ├── checks.py          # 범위 대조·금지 기법 흔적·인용 실존·배점·감점 사유·이중 채점 차이
+│   │   ├── render.py          # 문항·범위·해설·루브릭·판독문 → 프롬프트 텍스트
+│   │   ├── pipeline.py        # 해설(+재풀이) → 루브릭 → 승인 → 채점(+이중 채점), 강사 단계 관문
+│   │   └── store.py           # 작업공간 저장 (항목 1개 = 파일 1개)
+│   ├── cli_exam.py      # dawoni scope / dawoni exam
 │   ├── ocr/             # 손글씨 판독 (M4)
 │   ├── ingest/          # PDF 자료 DB화 (M5)
-│   ├── mathx/           # LaTeX 검증·OMML·sympy (M3에서 일부, M6)
+│   ├── mathx/           # sym.py: sympy 동치 판정(M3) · LaTeX 검증·OMML(M6)
 │   ├── export/docx/     # DOCX (M6)
 │   ├── generate/        # 문항 제작: 동형(미지수형·수치형)·신규 A·신규 B (M9)
 │   ├── figures/         # 파라미터 그림 (M10)

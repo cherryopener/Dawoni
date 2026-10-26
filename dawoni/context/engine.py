@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from dawoni.agents import AgentClient, AgentError, AgentRequest
+from dawoni.agents import AgentClient, AgentError, AgentErrorCode, AgentRequest, AgentResult
 from dawoni.agents.base import as_dict
 from dawoni.agents.runner import ProgressCallback
 from dawoni.config import AgentName
@@ -36,6 +36,7 @@ from dawoni.context.tasks import TaskDef
 log = logging.getLogger(__name__)
 
 DEFAULT_BUDGET_TOKENS = 60_000
+TRANSIENT_ERRORS = frozenset({AgentErrorCode.STALLED})
 _PREVIOUS_CLIP = 4_000
 
 
@@ -75,6 +76,14 @@ class TaskFailed(Exception):
         super().__init__(f"{task}: {attempts}회 시도 후에도 검증 실패 — {summary}")
 
 
+@dataclass(frozen=True)
+class _CallOptions:
+    fallback: bool
+    keep_sandbox: bool
+    on_progress: ProgressCallback | None
+    cancel: threading.Event | None
+
+
 def _clip(s: str, n: int = _PREVIOUS_CLIP) -> str:
     return s if len(s) <= n else s[:n] + f"\n… (이하 {len(s) - n:,}자 생략)"
 
@@ -89,6 +98,7 @@ class ContextEngine:
         calllog: CallLog | None = None,
         budget_tokens: int = DEFAULT_BUDGET_TOKENS,
         max_repairs: int = 2,
+        transient_retries: int = 1,
     ) -> None:
         self.client = client
         self.templates = templates or TemplateStore()
@@ -96,11 +106,17 @@ class ContextEngine:
         self.calllog = calllog
         self.budget_tokens = budget_tokens
         self.max_repairs = max_repairs
+        self.transient_retries = transient_retries
 
     def active_rules(self, task: TaskDef[Any]) -> list[GlobalRule]:
         if self.rules is None or task.rule_target is None:
             return []
-        return self.rules.active_for(task.rule_target)
+        targets = (task.rule_target,) if isinstance(task.rule_target, str) else task.rule_target
+        picked: dict[str, GlobalRule] = {}
+        for target in targets:
+            for r in self.rules.active_for(target):
+                picked.setdefault(r.id, r)
+        return list(picked.values())
 
     def preview(
         self, task: TaskDef[Any], inp: TaskInput, *, repair: str | None = None
@@ -127,6 +143,19 @@ class ContextEngine:
             except OSError:
                 log.exception("호출 기록 실패")
 
+    def _call(
+        self, req: AgentRequest, agent: AgentName | None, model: str | None, o: _CallOptions
+    ) -> AgentResult:
+        return self.client.run(
+            req,
+            agent=agent,
+            model=model,
+            fallback=o.fallback,
+            keep_sandbox=o.keep_sandbox,
+            on_progress=o.on_progress,
+            cancel=o.cancel,
+        )
+
     def run[T: BaseModel](
         self,
         task: TaskDef[T],
@@ -140,6 +169,7 @@ class ContextEngine:
         cancel: threading.Event | None = None,
     ) -> TaskResult[T]:
         schema = agent_schema(task.output)
+        opts = _CallOptions(fallback, keep_sandbox, on_progress, cancel)
         errors: list[str] = []
         previous = ""
         total_tokens: int | None = None
@@ -147,6 +177,7 @@ class ContextEngine:
         warnings: list[str] = []
         pinned: AgentName | None = agent
         attempts = 0
+        transient_left = self.transient_retries
 
         for attempt in range(1, self.max_repairs + 2):
             attempts = attempt
@@ -166,22 +197,27 @@ class ContextEngine:
                 rule_ids=prompt.rule_ids,
                 est_prompt_tokens=prompt.est_tokens,
             )
+
+            req = AgentRequest(
+                prompt=prompt.text,
+                attachments=inp.attachments,
+                json_schema=schema,
+                task=task.name,
+                timeout_s=task.timeout_s,
+            )
+            res: AgentResult
             try:
-                res = self.client.run(
-                    AgentRequest(
-                        prompt=prompt.text,
-                        attachments=inp.attachments,
-                        json_schema=schema,
-                        task=task.name,
-                        timeout_s=task.timeout_s,
-                    ),
-                    agent=pinned,
-                    model=model if pinned == agent else None,
-                    fallback=fallback,
-                    keep_sandbox=keep_sandbox,
-                    on_progress=on_progress,
-                    cancel=cancel,
-                )
+                try:
+                    res = self._call(req, pinned, model if pinned == agent else None, opts)
+                except AgentError as e:
+                    if e.code not in TRANSIENT_ERRORS or transient_left <= 0:
+                        raise
+                    # 멈춤은 일시적인 경우가 많다: 새 세션으로 한 번 더 (수리 횟수와 별개)
+                    transient_left -= 1
+                    log.warning("%s 시도 %d 일시 오류(%s) — 재시도", task.name, attempt, e.code)
+                    if on_progress:
+                        on_progress(f"응답이 멈춰 새 세션으로 다시 시도합니다 ({e.code})")
+                    res = self._call(req, pinned, model if pinned == agent else None, opts)
             except AgentError as e:
                 rec.agent = e.agent
                 rec.error_code = str(e.code)

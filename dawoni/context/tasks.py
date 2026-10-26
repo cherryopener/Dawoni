@@ -43,8 +43,9 @@ class TaskDef[T: BaseModel]:
     template: str
     """context/templates/ 안의 과업 템플릿 파일 이름."""
     output: type[T]
-    rule_target: RuleTarget | None
-    """None이면 전역 규칙을 넣지 않는다 (규칙 정제 같은 내부 작업)."""
+    rule_target: RuleTarget | tuple[RuleTarget, ...] | None
+    """적용할 전역 규칙의 작업 종류 (여러 개 가능: 채점은 채점+첨삭).
+    None이면 전역 규칙을 넣지 않는다 (규칙 정제 같은 내부 작업)."""
     validator: Callable[[T], list[str]] | None = None
     """모델 검증을 통과한 결과에 대한 작업별 검사(범위·인용·합계 등).
     문제 목록(한국어)을 돌려준다. 빈 목록 = 통과. 문제가 있으면 수리 요청에 그대로 쓰인다."""

@@ -6,6 +6,7 @@ dawoni workspace init ~/DawoniWork
 dawoni agent detect                   # 설치된 AI CLI 확인
 dawoni agent test --cli agy           # 이미지 1장 판독 연결 테스트
 dawoni rules list|add|on|off|rm|preview  # 전역 규칙 (cli_rules.py)
+dawoni scope … / dawoni exam …        # 채점 파이프라인 (cli_exam.py)
 """
 
 from __future__ import annotations
@@ -146,9 +147,10 @@ def build_parser() -> argparse.ArgumentParser:
     at.add_argument("--keep", action="store_true", help="성공해도 격리 폴더 보존")
     at.set_defaults(func=_cmd_agent_test)
 
-    from dawoni import cli_rules
+    from dawoni import cli_exam, cli_rules
 
     cli_rules.register(sub)
+    cli_exam.register(sub)
     return p
 
 
