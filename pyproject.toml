@@ -7,7 +7,10 @@ requires-python = ">=3.14"
 license = "MIT"
 dependencies = [
     "jinja2>=3.1",
+    "pillow>=11",
     "pydantic>=2.12",
+    # 1.28.2 고정: 이후 판은 3.16용 빌드가 없는 onnxruntime을 요구 (2026-10-27)
+    "pymupdf==1.28.2",
     "sympy>=1.14",
 ]
 
@@ -53,6 +56,11 @@ venv = ".venv"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers -m 'not agent'"
+filterwarnings = [
+    # PyMuPDF(SWIG)가 Python 3.16에서 내는 경고 — 우리 코드와 무관
+    "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
+    "ignore:'typing.ByteString' and 'collections.abc.ByteString' are deprecated:DeprecationWarning",
+]
 markers = [
     "agent: 실제 AI CLI를 호출하는 테스트 (기본 제외, `-m agent`로 실행)",
 ]

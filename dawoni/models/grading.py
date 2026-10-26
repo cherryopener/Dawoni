@@ -183,10 +183,56 @@ class Transcript(DawoniModel):
     confirmed: bool = False
     """강사 확인을 거친 판독문만 채점한다."""
     confirmed_by: str | None = None
+    pages: list[str] = Field(
+        default_factory=lambda: list[str](), description="원본 페이지 이미지 (시험 폴더 기준)"
+    )
+    cross_checked: bool = False
+    agreement: float | None = Field(default=None, ge=0, le=1, description="교차 판독 일치도")
+    notes: list[str] = Field(default_factory=lambda: list[str]())
 
     @property
     def is_blank(self) -> bool:
         return not any(line.joined.strip() for line in self.lines if not line.struck)
+
+    @property
+    def needs_attention(self) -> bool:
+        """강사가 특히 주의해서 확인할 판독문."""
+        return any(line.uncertain or line.confidence < 0.7 for line in self.lines) or (
+            self.agreement is not None and self.agreement < 0.9
+        )
+
+
+class TranscribedLine(DawoniModel):
+    """AI 출력: 판독한 한 줄."""
+
+    question_number: str | None = Field(description="이 줄이 속한 문항 번호. 알 수 없으면 null")
+    page: int = Field(ge=1)
+    text: str = Field(
+        default="",
+        description="글 (원문 그대로). 글과 식이 섞인 줄은 여기에 순서대로, 식만 \\( \\)로 감쌈",
+    )
+    math: str | None = Field(
+        default=None, description="줄 전체가 식일 때만: LaTeX, $ 없이, 적힌 그대로"
+    )
+    confidence: float = Field(ge=0, le=1)
+    uncertain: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="읽기 불확실한 부분과 가능한 다른 읽기 (예: '7 또는 1')",
+    )
+    struck: bool = Field(default=False, description="학생이 지운(줄 그은) 부분")
+
+    @property
+    def joined(self) -> str:
+        return " ".join(x for x in (self.text, self.math or "") if x)
+
+
+class TranscriptionDraft(DawoniModel):
+    """AI 출력: 한 학생 답안지 전체 판독."""
+
+    lines: list[TranscribedLine] = Field(default_factory=lambda: list[TranscribedLine]())
+    notes: list[str] = Field(
+        default_factory=lambda: list[str](), description="판독 전반에 대해 강사가 알아야 할 점"
+    )
 
 
 # ---------------------------------------------------------------- 채점

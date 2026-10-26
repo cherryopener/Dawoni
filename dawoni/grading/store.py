@@ -96,6 +96,9 @@ class ExamStore:
     def rubric(self, q: str) -> Rubric | None:
         return _load(self._q("rubrics", q), Rubric)
 
+    def scan_dir(self, student: str) -> Path:
+        return self.root / "scans" / safe_name(student)
+
     def save_transcript(self, t: Transcript) -> None:
         write_model_atomic(self._sq("transcripts", t.student_id, t.question_number), t)
 

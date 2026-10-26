@@ -7,6 +7,8 @@
     dawoni exam show <시험ID> -q 3                 # 해설·루브릭 보기
     dawoni exam approve <시험ID> -q 3 --by 김선생   # 루브릭 승인 (강사 단계)
     dawoni exam answer <시험ID> --student 홍길동 -q 3 answer.txt   # 입력한 답안(확인된 판독문)
+    dawoni exam scan <시험ID> --student 홍길동 사진1.jpg 사진2.jpg [--cross]  # 손글씨 판독(미확인)
+    dawoni exam transcript <시험ID> --student 홍길동 -q 3 [--confirm] [--replace 고친답안.txt]
     dawoni exam grade <시험ID> [--student 홍길동] [-q 3] [--double] [--regrade]
     dawoni exam report <시험ID>
 
@@ -36,6 +38,7 @@ from dawoni.grading.render import rubric_text, solution_text
 from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.grading import Exam, ExamQuestion, Transcript, TranscriptLine
 from dawoni.models.scope import ScopeProfile
+from dawoni.ocr.pages import PageError
 from dawoni.services import Services, open_services
 from dawoni.workspace import WorkspaceError
 
@@ -202,6 +205,86 @@ def _cmd_answer(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_transcript(t: Transcript) -> None:
+    head = "확인됨" if t.confirmed else "미확인"
+    agree = f", 교차 판독 일치 {t.agreement:.0%}" if t.agreement is not None else ""
+    attention = " ⚠ 주의해서 확인" if t.needs_attention and not t.confirmed else ""
+    _out(f"[{t.student_id} 문항 {t.question_number}] {head}{agree}{attention}")
+    for n, line in enumerate(t.lines, start=1):
+        mark = "~~" if line.struck else ""
+        body = f"{line.text} {'식: ' + line.math if line.math else ''}".strip()
+        warn = f"   ← {' / '.join(line.uncertain)}" if line.uncertain else ""
+        conf = f" ({line.confidence:.0%})" if line.confidence < 0.7 else ""
+        _out(f"  {n:2}. {mark}{body}{mark}{conf}{warn}")
+    for note in t.notes:
+        _out(f"  ! {note}")
+    if t.pages:
+        _out(f"  원본: {', '.join(t.pages)}")
+
+
+def _cmd_scan(args: argparse.Namespace) -> int:
+    from dawoni.ocr.hints import collect_hints, providers_from
+    from dawoni.ocr.pages import prepare_pages
+    from dawoni.ocr.transcribe import transcribe_student
+
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    exam = store.exam()
+    scope = ScopeStore(svc.workspace).get(exam.scope_id)
+    out_dir = store.scan_dir(args.student)
+    pages = prepare_pages([Path(f) for f in args.files], out_dir)
+    refs = [p.original.relative_to(store.root).as_posix() for p in pages]
+    refs = list(dict.fromkeys(refs))  # PDF 여러 쪽은 원본 하나
+    hints, warnings = collect_hints(providers_from(svc.config.ocr), [p.image for p in pages])
+    for w in warnings:
+        _out(f"  ! {w}")
+    cross = None
+    if args.cross or (svc.config.ocr.cross_check and not args.no_cross):
+        cross = SecondOpinion(model=args.cross_model)
+    _progress(f"{args.student} 답안지 {len(pages)}쪽 판독")
+    outcome = transcribe_student(
+        svc.engine,
+        exam,
+        scope.level,
+        args.student,
+        [p.image for p in pages],
+        page_refs=refs,
+        cross=cross,
+        hints=hints,
+    )
+    for t in outcome.transcripts.values():
+        old = store.transcript(args.student, t.question_number)
+        if old is not None and old.confirmed and not args.overwrite:
+            _out(f"문항 {t.question_number}: 이미 확인된 판독문이 있어 덮어쓰지 않음 (--overwrite)")
+            continue
+        store.save_transcript(t)
+        _print_transcript(t)
+    for line in outcome.unassigned:
+        _out(f"  ? 문항을 알 수 없는 줄 ({line.page}쪽): {line.joined}")
+    for note in outcome.notes:
+        _out(f"  · {note}")
+    _out("원본과 비교해 확인한 뒤 `exam transcript … --confirm`으로 확정해야 채점할 수 있습니다.")
+    return 0
+
+
+def _cmd_transcript(args: argparse.Namespace) -> int:
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    t = store.transcript(args.student, args.q)
+    if t is None:
+        return _err(f"{args.student} 문항 {args.q}: 판독문이 없습니다.")
+    if args.replace:
+        lines = parse_answer_text(Path(args.replace).read_text(encoding="utf-8"))
+        t = t.model_copy(update={"lines": lines, "confirmed": False})
+        _out("판독문을 고친 내용으로 바꿨습니다.")
+    if args.confirm:
+        t = t.model_copy(update={"confirmed": True, "confirmed_by": args.by})
+    if args.replace or args.confirm:
+        store.save_transcript(t)
+    _print_transcript(t)
+    return 0
+
+
 def _cmd_grade(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
@@ -217,6 +300,10 @@ def _cmd_grade(args: argparse.Namespace) -> int:
         for st in students:
             t = store.transcript(st, q.number)
             if t is None:
+                continue
+            if not t.confirmed:
+                hint = "`exam transcript … --confirm`"
+                _out(f"{st} 문항 {q.number}: 판독문 확인 대기 — 건너뜀 ({hint})")
                 continue
             old = store.grade(st, q.number)
             if old is not None and not args.regrade and old.rubric_version == rubric.version:
@@ -275,7 +362,7 @@ def _wrap(fn: Any) -> Any:
     def run(args: argparse.Namespace) -> int:
         try:
             return int(fn(args))
-        except (WorkspaceError, PipelineError, KeyError, FileNotFoundError) as e:
+        except (WorkspaceError, PipelineError, PageError, KeyError, FileNotFoundError) as e:
             return _err(str(e).strip("'\""))
         except TaskFailed as e:
             return _err(f"{e}\n  마지막 응답 일부: {e.last_response[:300]}")
@@ -329,6 +416,25 @@ def register(sub: Any) -> None:
     an.add_argument("--by")
     an.add_argument("file")
     an.set_defaults(func=_wrap(_cmd_answer))
+
+    sc = es.add_parser("scan", help="손글씨 답안 사진·PDF 판독 (강사 확인 전 상태로 저장)")
+    sc.add_argument("exam")
+    sc.add_argument("--student", required=True)
+    sc.add_argument("files", nargs="+")
+    sc.add_argument("--cross", action="store_true", help="교차 판독 (설정이 켜져 있으면 기본)")
+    sc.add_argument("--no-cross", action="store_true", help="교차 판독 끄기")
+    sc.add_argument("--cross-model", help="교차 판독에 쓸 모델 (예: claude-sonnet-5-5-low)")
+    sc.add_argument("--overwrite", action="store_true", help="이미 확인된 판독문도 덮어쓰기")
+    sc.set_defaults(func=_wrap(_cmd_scan))
+
+    tr = es.add_parser("transcript", help="판독문 보기·고치기·확정")
+    tr.add_argument("exam")
+    tr.add_argument("--student", required=True)
+    tr.add_argument("-q", required=True)
+    tr.add_argument("--replace", help="고친 답안 텍스트 파일 (answer 형식)")
+    tr.add_argument("--confirm", action="store_true", help="원본과 대조 확인 완료")
+    tr.add_argument("--by")
+    tr.set_defaults(func=_wrap(_cmd_transcript))
 
     g = with_q(es.add_parser("grade", help="채점"))
     g.add_argument("--student")

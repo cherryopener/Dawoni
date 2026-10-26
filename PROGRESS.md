@@ -46,7 +46,16 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
   - 합성 세트 `tests/fixtures/grading/` (고1 이차함수 최대·최소, 미분 금지)
   - agy 실관통: 해설 재풀이 일치, 루브릭 4점 자동 생성(감점 금지 목록 포함), A 4/4, **B(다른 풀이) 4/4**, D(계산 실수) 2/4 + AI가 애매한 이중 감점을 강사 확인 요청 + 이중 채점 불일치 표시, E(무응답) 0/4
   - 남은 것: 강사 실제 세트로 완료 기준(감점 0·±1점 90% 등) 측정
-- [ ] M4 손글씨 판독
+- [x] **M4 손글씨 판독** (2026-10-27) — 실제 학생 손글씨로 정확도 측정은 강사 자료 도착 후
+  - `ocr/pages.py` 사진(EXIF 회전·축소·약한 대비, 이진화 안 함)·PDF(200dpi)·HEIC(macOS `sips` 변환), 원본 보관
+  - `transcribe_answer.md.j2` 고쳐 읽지 않기, 혼동 쌍, 애매하면 확정 대신 `uncertain`, 섞인 줄은 `text` 하나에 순서대로 + 식만 `\( \)`
+  - `ocr/transcribe.py` 답안지 전체 1회 판독 → 문항별 판독문(미확인) 저장, 문항 번호 검증, 1문항 시험은 번호 없는 줄 자동 배정
+  - `ocr/crosscheck.py` 두 번째 판독과 줄 단위 정렬 → 다른 줄은 확신도↓ + 다른 읽기 표시, 일치도
+  - `ocr/hints.py` CLOVA·Mathpix(선택, 키 있을 때만, 참고 자료로만 — 실서비스 미검증)
+  - `dawoni exam scan … [--cross --cross-model]`, `dawoni exam transcript … [--replace] [--confirm]`, 채점은 미확인 판독문을 "확인 대기"로 건너뜀
+  - 합성 손글씨 이미지 `tests/fixtures/grading/scans/F_q1.jpg` (나눔손글씨 펜, 취소선 줄·어색한 학생 계산 포함)
+  - agy 실관통: 6줄 전부 적힌 그대로(취소선·`+7-4`·메모 포함), 교차 판독(claude-sonnet via agy) 일치 100%, 확인 후 채점 4/4, 인용이 지운 줄을 `…`로 건너뜀
+  - 첫 실행에서 섞인 줄을 글/식으로 나눠 순서가 뒤바뀌는 문제 발견 → 지침·스키마 설명 수정 (템플릿 v2026-10-27.2)
 - [ ] M5 자료 DB화 (교재 개념·기법 → 범위 프로필, 시험지 PDF)
 - [ ] M6 수식·DOCX
 - [ ] M7 UI
@@ -57,6 +66,9 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 - [ ] M12 확장 (유튜브 요약, Drive 팀 공유)
 
 ## 다음에 할 일 / 미뤄 둔 것
+
+- 원근 보정(OpenCV 3.16 빌드 없음) — 비스듬히 찍은 사진 대응. Pillow만으로 사각형 검출·보정 검토
+- 실제 학생 손글씨(흘림체·연필·사진 그림자)로 판독 정확도 측정 — 강사 자료 필요
 
 - 그림 스펙 안의 식(`angle_deg: "theta"`)이 정의된 변수만 쓰는지 검사 → M4에서 렌더러가 식을 평가할 때 함께 구현
 - 채점 모델(`models/grading.py`) → M9

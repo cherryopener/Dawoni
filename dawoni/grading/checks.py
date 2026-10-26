@@ -134,23 +134,24 @@ def merge_never_deduct(draft: RubricDraft, defaults: tuple[str, ...]) -> list[st
 # ---------------------------------------------------------------- 근거 인용
 
 
-def _norm_quote(s: str) -> str:
+def normalize_for_compare(s: str) -> str:
+    """판독·인용 비교용 정규화: 공백·LaTeX 간격 명령·중괄호·수식 구분자 제거."""
     s = s.replace("\\(", "").replace("\\)", "").replace("$", "")
     return normalize_latex(s).replace("{", "").replace("}", "")
 
 
 def quote_in_transcript(quote: str, transcript: Transcript) -> bool:
     """인용이 판독문에 실제로 있는가. `…`로 이은 조각은 순서대로 모두 있어야 한다."""
-    haystack = _norm_quote(" ".join(line.joined for line in transcript.lines))
-    parts = [p for p in re.split(r"…|\.\.\.", quote) if _norm_quote(p)]
+    haystack = normalize_for_compare(" ".join(line.joined for line in transcript.lines))
+    parts = [p for p in re.split(r"…|\.\.\.", quote) if normalize_for_compare(p)]
     if not parts:
         return False
     pos = 0
     for part in parts:
-        found = haystack.find(_norm_quote(part), pos)
+        found = haystack.find(normalize_for_compare(part), pos)
         if found < 0:
             return False
-        pos = found + len(_norm_quote(part))
+        pos = found + len(normalize_for_compare(part))
     return True
 
 
