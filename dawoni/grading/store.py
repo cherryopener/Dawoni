@@ -78,6 +78,12 @@ class ExamStore:
             raise KeyError(f"시험 {self.exam_id} 없음")
         return e
 
+    def save_exam(self, exam: Exam) -> None:
+        """문항 내용 수정 (그림 스펙·모드 등). 시험 ID는 바꿀 수 없다."""
+        if exam.id != self.exam_id:
+            raise ValueError("시험 ID가 다릅니다")
+        write_model_atomic(self.root / "exam.json", exam)
+
     def _q(self, kind: str, q: str) -> Path:
         return self.root / kind / f"{safe_name(q)}.json"
 

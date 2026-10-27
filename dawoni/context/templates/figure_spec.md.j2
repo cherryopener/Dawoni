@@ -1,0 +1,13 @@
+{#- version: 2026-10-27.2 -#}
+첨부한 그림(시험 문항에서 잘라 낸 원본)을 **다시 그릴 수 있는 스펙(JSON)**으로 옮겨라. 앱은 이 스펙으로 그림을 그린다 — 코드가 아니라 데이터만 쓴다.
+
+{% if item_text %}그림이 속한 문항:
+{{ item_text }}
+{% endif %}{% if caption %}그림 설명: {{ caption }}
+{% endif %}{% if variables %}문항 변수: {{ variables }} — 그림의 수치가 이 변수에 해당하면 숫자 대신 변수 이름(또는 식, 예: "2*m")을 쓴다.
+{% endif %}
+1. 그림의 종류(`kind`)를 고른다: 함수 그래프(function_graph), 운동 그래프(motion_graph: v-t·x-t 등 꺾은선), 기하(geometry), 빗면(incline), 용수철(spring), 포물선 운동(projectile), 도르래(pulley), 충돌(collision), 전기장·자기장(field), 전기회로(circuit).
+2. 사진·세포·지도·화학 구조·복잡한 실험 장치처럼 이 종류로 다시 그리기 어려우면 `verdict`를 "raster"로 하고 이유를 쓴다 (원본을 그대로 쓴다).
+3. 수치·좌표·각은 그림에서 읽은 값 또는 문항에 적힌 값으로. 기하의 점은 문항 조건(중점·수선의 발·내분점·교점·내심·외심·무게중심)이 있으면 좌표 대신 작도(`midpoint`·`foot`·`divide`·`intersect`·`incenter`·`circumcenter`·`centroid`)로 쓰고, 내접원·외접원은 반지름을 어림하지 말고 `incircle`·`circumcircle`로 쓴다 (앱이 계산).
+4. 라벨은 그림에 적힌 글자 그대로. 수식 라벨은 `\( \)`로 감싼다 (예: `"\\(\\theta\\)"`, `"\\(v_0\\)"`).
+5. 눈금·격자가 없는 수능형 그림이면 눈금을 넣지 않는다.

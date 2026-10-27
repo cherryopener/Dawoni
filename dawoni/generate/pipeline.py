@@ -94,6 +94,24 @@ def _material(src: ExamQuestion, src_sol: SolutionDraft | None) -> str:
 # ---------------------------------------------------------------- 동형 · 수치형
 
 
+def _unrenderable(item: ItemContent, values: dict[str, float]) -> str | None:
+    """이 값으로 파라미터 그림을 그릴 수 없으면 이유 (예: 경사각 85°)."""
+    import tempfile
+    from pathlib import Path
+
+    from dawoni.figures.common import FigureError
+    from dawoni.figures.render import render_spec
+
+    for f in item.figures:
+        if f.mode == "parametric" and f.spec is not None:
+            with tempfile.TemporaryDirectory() as d:
+                try:
+                    render_spec(f.spec, values, Path(d) / "check.png")
+                except FigureError as e:
+                    return f"{f.id}: {e}"
+    return None
+
+
 def numeric_drafts(
     engine: ContextEngine,
     src: ExamQuestion,
@@ -130,6 +148,10 @@ def numeric_drafts(
         warnings.append(f"깔끔한 답이 나오는 조합이 {len(res.found)}개뿐 (요청 {opts.count}개)")
     drafts: list[Draft] = []
     for c in res.found:
+        bad = _unrenderable(t.item, c.values)
+        if bad:
+            warnings.append(f"값 {c.values}: 그림을 그릴 수 없어 제외 ({bad})")
+            continue
         item = fill_item(with_values(t.item, c.values))
         if c.choice_label is not None:
             item = item.model_copy(

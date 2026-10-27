@@ -6,7 +6,17 @@ import s from "./Item.module.css";
 const CIRCLED = "①②③④⑤⑥⑦⑧⑨";
 export const circled = (n: number) => CIRCLED[n - 1] ?? `(${n})`;
 
-type Ctx = { examId: string; figures: Figure[] };
+type Ctx = { examId: string; figures: Figure[]; renderBase?: string };
+
+/** 파라미터 그림이면 다시 그린 그림, 아니면 원본 크롭. */
+export function figureSrc(f: Figure, ctx: Ctx): string | null {
+  if (f.mode === "parametric" && f.spec && ctx.renderBase) {
+    // 스펙·변수가 바뀌면 주소도 바뀌게 (서버 캐시와 별개로 브라우저 캐시 무효화)
+    const key = JSON.stringify(f.spec).length;
+    return `${ctx.renderBase}/${encodeURIComponent(f.id)}/render?k=${key}`;
+  }
+  return f.orig ? examFileUrl(ctx.examId, f.orig) : null;
+}
 
 export function Runs({ runs }: { runs: Run[] }) {
   return (
@@ -24,8 +34,9 @@ export function Runs({ runs }: { runs: Run[] }) {
 
 function FigureImg({ id, ctx }: { id: string; ctx: Ctx }) {
   const f = ctx.figures.find((x) => x.id === id);
-  if (!f || !f.orig) return <span className={s.missing}>[그림 {id}]</span>;
-  return <img src={examFileUrl(ctx.examId, f.orig)} alt={f.caption ?? `그림 ${id}`} title={f.caption ?? undefined} />;
+  const src = f ? figureSrc(f, ctx) : null;
+  if (!f || !src) return <span className={s.missing}>[그림 {id}]</span>;
+  return <img src={src} alt={f.caption ?? `그림 ${id}`} title={f.caption ?? undefined} />;
 }
 
 function Labeled({ items, sep }: { items: LabeledItem[]; sep: string }) {
@@ -200,13 +211,14 @@ export function Choices({ item, ctx }: { item: Item; ctx: Ctx }) {
   );
 }
 
-export function ItemView({ number, points, item, examId }: {
+export function ItemView({ number, points, item, examId, renderBase }: {
   number: string;
   points?: number;
   item: Item;
   examId: string;
+  renderBase?: string;
 }) {
-  const ctx = { examId, figures: item.figures };
+  const ctx = { examId, figures: item.figures, renderBase };
   const label = /^\d+$/.test(number) ? `${number}.` : `[${number}]`;
   return (
     <div className={s.item}>

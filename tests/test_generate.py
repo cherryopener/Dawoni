@@ -338,3 +338,32 @@ def test_generate_symbolic(env: Any) -> None:
     s = generate(svc, store, "1", "symbolic")[0]
     assert s.solution.verified and s.rubric is not None
     assert isinstance(s.item.answer, ValueAnswer) and s.item.answer.latex == "7 - a^{2}"
+
+
+def test_numeric_variant_with_parametric_figure(env: Any) -> None:
+    """변수 값을 바꾸면 본문·그림·정답이 함께 바뀐다 (M10 완료 기준)."""
+    from dawoni.figures.render import render_figure
+
+    incline = json.loads((FIX.parent / "figures" / "samples.json").read_text(encoding="utf-8"))[
+        "incline"
+    ]["spec"]
+    tpl = json.loads(json.dumps(Q1_TEMPLATE))
+    tpl["item"]["stem"].append({"type": "figure", "figure_id": "F1"})
+    tpl["item"]["variables"]["theta"] = {"value": 30, "choices": [30, 45]}
+    tpl["item"]["variables"]["m"] = {"value": 2}
+    tpl["item"]["figures"] = [{"id": "F1", "mode": "parametric", "spec": incline}]
+    t = NumericTemplate.model_validate(tpl)
+    assert gp._unrenderable(t.item, {"a": 4, "b": 7, "theta": 85, "m": 2}), "85°는 그릴 수 없음"  # pyright: ignore[reportPrivateUsage]
+    assert gp._unrenderable(t.item, {"a": 4, "b": 7, "theta": 30, "m": 2}) is None  # pyright: ignore[reportPrivateUsage]
+    cand = search(t, count=1).found[0]
+    ans = str(cand.answer)
+    svc, store, _ = env([tpl, solved(ans, ans), RUBRIC_OK])
+    s = generate(svc, store, "1", "numeric", opts=gp.Options(count=1))[0]
+    assert s.values == cand.values
+    fig = s.item.figures[0]
+    assert s.item.variables["theta"].value == cand.values["theta"], "그림은 그 동형문제의 값으로"
+    p1 = render_figure(fig, s.item, svc.workspace.root / "r")
+    other = s.item.model_copy(deep=True)
+    other.variables["theta"].value = 45 if cand.values["theta"] == 30 else 30
+    p2 = render_figure(other.figures[0], other, svc.workspace.root / "r")
+    assert p1.read_bytes() != p2.read_bytes(), "경사각이 바뀌면 그림도 바뀜"

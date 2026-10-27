@@ -351,3 +351,30 @@ def test_generate_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path) 
         detail["questions"][0]["solution"]["verified"]
         and detail["questions"][0]["rubric"]["status"] == "draft"
     )
+
+
+def test_figure_api(app_paths: AppPaths, tmp_path: Path) -> None:
+    from test_figures import SAMPLES
+
+    c = _client(app_paths)
+    c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q = {"number": "1", "points": 3, "item": {
+        "item_type": "short_answer",
+        "stem": [{"type": "paragraph", "runs": [{"t": "text", "v": "가속도를 구하시오."}]}, {"type": "figure", "figure_id": "F1"}],
+        "variables": {"theta": {"value": 30}, "m": {"value": 2}},
+        "figures": [{"id": "F1", "mode": "raster", "orig": "figures/1/F1.png"}]}}  # fmt: skip
+    eid = c.post(
+        "/api/exams", json={"title": "그림", "scope_id": scope["id"], "questions": [q]}
+    ).json()["id"]
+    base = f"/api/exams/{eid}/questions/1/figures/F1"
+    assert c.get(f"{base}/render").status_code == 400, "스펙 없음"
+    bad = c.put(base, json={"mode": "parametric"})
+    assert bad.status_code == 400, "스펙 없이 parametric 불가"
+    fig = c.put(base, json={"spec": SAMPLES["incline"]["spec"], "mode": "parametric"}).json()
+    assert fig["mode"] == "parametric" and fig["spec"]["kind"] == "incline"
+    img = c.get(f"{base}/render")
+    assert img.status_code == 200 and img.headers["content-type"] == "image/png"
+    assert c.put(base, json={"mode": "raster"}).json()["mode"] == "raster"
+    r = c.post(f"{base}/extract")
+    assert r.status_code == 400 and "원본 이미지가 없습니다" in r.json()["detail"]

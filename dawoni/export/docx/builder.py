@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math as pymath
 import re
+import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -95,10 +96,12 @@ class FigureContext:
 
     figures: dict[str, Figure] = field(default_factory=lambda: dict[str, Figure]())
     base_dir: Path | None = None
+    item: ItemContent | None = None
+    """파라미터 그림을 그릴 때 쓰는 변수 값."""
 
     @classmethod
     def of(cls, item: ItemContent, base_dir: Path | None) -> FigureContext:
-        return cls({f.id: f for f in item.figures}, base_dir)
+        return cls({f.id: f for f in item.figures}, base_dir, item)
 
 
 def item_latex(item: ItemContent) -> list[str]:
@@ -552,6 +555,16 @@ class DocWriter:
     # ------------------------------------------------ 그림
 
     def _figure_path(self, fig: Figure, ctx: FigureContext) -> Path | None:
+        if fig.mode == "parametric" and fig.spec is not None and ctx.item is not None:
+            # 스펙으로 다시 그린 그림 (문항 변수 값 반영, 같은 값이면 캐시)
+            from dawoni.figures.common import FigureError
+            from dawoni.figures.render import render_figure
+
+            cache = (ctx.base_dir or Path(tempfile.gettempdir())) / "figures" / "_render"
+            try:
+                return render_figure(fig, ctx.item, cache)
+            except FigureError as e:
+                self.warnings.append(f"그림 {fig.id}: 다시 그리지 못해 원본을 씀 ({e})")
         if fig.orig is None:
             return None
         p = Path(fig.orig)

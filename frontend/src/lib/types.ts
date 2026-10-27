@@ -26,6 +26,7 @@ export type Figure = {
   mode: "parametric" | "raster";
   orig?: string | null;
   caption?: string | null;
+  spec?: Record<string, unknown> | null;
 };
 
 export type ItemType = "multiple_choice" | "short_answer" | "essay";

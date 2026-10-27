@@ -14,7 +14,7 @@ from pydantic import Field, field_validator, model_validator
 
 from dawoni.models.base import DawoniModel, new_id, utcnow
 from dawoni.models.content import Block, Run, figure_ids_in, iter_runs, placeholders_in
-from dawoni.models.figure import Figure, SourceBox
+from dawoni.models.figure import Figure, SourceBox, spec_expressions
 
 ItemType = Literal["multiple_choice", "short_answer", "essay"]
 """선택형(5지선다 등) / 단답형 / 서술형"""
@@ -207,6 +207,11 @@ class ItemContent(DawoniModel):
             used |= _expr_identifiers(expr)
         if isinstance(self.answer, ValueAnswer) and self.answer.expr:
             used |= _expr_identifiers(self.answer.expr)
+        for f in self.figures:  # 그림 스펙의 식·라벨도 정의된 변수만 (함수식의 x는 독립변수)
+            if f.spec is not None:
+                for expr, is_function in spec_expressions(f.spec):
+                    names = _expr_identifiers(expr)
+                    used |= names - {"x"} if is_function else names
         undefined = sorted(used - known)
         if undefined:
             errors.append(f"정의되지 않은 변수: {undefined}")

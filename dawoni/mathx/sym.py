@@ -14,12 +14,22 @@ from tokenize import TokenError
 import sympy
 from sympy.parsing.sympy_parser import (
     convert_xor,
-    implicit_multiplication_application,
+    function_exponentiation,
+    implicit_application,
+    implicit_multiplication,
     parse_expr,
     standard_transformations,
 )
 
-_TRANSFORMS = (*standard_transformations, implicit_multiplication_application, convert_xor)
+# 여러 글자 이름은 쪼개지 않는다: `t1`, `th`, `mu`가 `t*1`, `t*h`가 되면 안 됨 (M10 실측).
+# `2x`, `2(a+b)` 같은 숫자 뒤 곱은 그대로 인정.
+_TRANSFORMS = (
+    *standard_transformations,
+    implicit_multiplication,
+    implicit_application,
+    function_exponentiation,
+    convert_xor,
+)
 
 
 class ExprError(ValueError):
@@ -158,3 +168,23 @@ Value = sympy.Expr
 
 def same_value(a: sympy.Expr, b: sympy.Expr) -> bool:
     return bool(sympy.simplify(a - b) == 0)
+
+
+def numeric_function(expr: str, values: dict[str, float], var: str = "x"):
+    """`x`에 대한 식 → numpy 배열을 받는 함수 (그림 그리기용). 다른 문자는 values로 채운다."""
+    import numpy as np
+
+    e = parse(expr)
+    subs = [(sympy.Symbol(k), sympy.nsimplify(v)) for k, v in values.items() if k != var]
+    e = e.subs(subs)
+    left = sorted(str(s) for s in e.free_symbols if str(s) != var)
+    if left:
+        raise ExprError(f"값이 없는 변수: {left} ({expr!r})")
+    f = sympy.lambdify(sympy.Symbol(var), e, modules="numpy")
+
+    def call(xs: np.ndarray) -> np.ndarray:
+        with np.errstate(all="ignore"):
+            ys = np.asarray(f(xs), dtype=float)
+        return np.broadcast_to(ys, xs.shape).astype(float)
+
+    return call

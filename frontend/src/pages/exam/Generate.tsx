@@ -168,7 +168,7 @@ function SetCard({ s, scope, selected, onSelect, onChanged }: {
         ))}
         {open && (
           <>
-            <ItemView number="새" points={s.points} item={s.item} examId={s.source.exam_id} />
+            <ItemView number="새" points={s.points} item={s.item} examId={s.source.exam_id} renderBase={`/api/generated/${s.id}/figures`} />
             <SolutionView sol={s.solution} scope={scope} />
             {s.skill_ids.length > 0 && <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>쓴 기법: {s.skill_ids.join(", ")}</div>}
             {s.rubric && (
