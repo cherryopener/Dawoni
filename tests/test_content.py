@@ -91,3 +91,34 @@ def test_latex_double_braces_are_not_placeholders(latex: str) -> None:
 def test_helpers_build_valid_models() -> None:
     p = paragraph(text("속력 ", bold=True), math("v"))
     assert p.model_dump()["runs"][1] == {"t": "math", "v": "v"}
+
+
+@pytest.mark.parametrize(
+    ("src", "expected"),
+    [
+        (r"x = 1\\text{일 때 } y = 4, \\quad x=0", r"x = 1\text{일 때 } y = 4, \quad x=0"),
+        (r"\begin{pmatrix}1&2\\3&4\end{pmatrix}", r"\begin{pmatrix}1&2\\3&4\end{pmatrix}"),
+        (r"\\begin{cases}x \\\\ y\\end{cases}", r"\begin{cases}x \\ y\end{cases}"),
+        (r"\frac{1}{2}", r"\frac{1}{2}"),
+        (r"a \\ b", r"a \\ b"),
+    ],
+)
+def test_fix_overescaped(src: str, expected: str) -> None:
+    """AI가 한 번 더 이스케이프한 식(M7 실측: `\\\\text`)을 코드가 바로잡아 수리 왕복을 아낀다."""
+    from dawoni.models.content import fix_overescaped, math
+
+    assert fix_overescaped(src) == expected
+    assert math(src).v == expected
+
+
+def test_overescaped_fixed_in_solution_fields() -> None:
+    from dawoni.models.grading import SolutionDraft
+
+    d = SolutionDraft.model_validate(
+        {
+            "steps": [{"explanation": "꼭짓점", "math": r"x = 1\\text{일 때 } 4", "uses": ["C1"]}],
+            "final_answer": {"latex": r"\\frac{1}{2}"},
+        }
+    )
+    assert d.steps[0].math == r"x = 1\text{일 때 } 4"
+    assert d.final_answer.latex == r"\frac{1}{2}"

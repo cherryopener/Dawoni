@@ -173,6 +173,22 @@ def approve_rubric(rubric: Rubric, by: str | None) -> Rubric:
     )
 
 
+def edit_rubric(
+    previous: Rubric, draft: RubricDraft, q: ExamQuestion, solution: SolutionDraft
+) -> Rubric:
+    """강사가 고친 루브릭. 합계·해설 단계 검사를 통과해야 하고, 다시 승인해야 채점에 쓴다."""
+    problems = checks.check_rubric(draft, q.points, solution)
+    if problems:
+        raise PipelineError("; ".join(problems))
+    bump = 1 if previous.status == "approved" else 0
+    return Rubric(
+        **draft.model_dump(),
+        question_number=previous.question_number,
+        version=previous.version + bump,
+        status="draft",
+    )
+
+
 # ---------------------------------------------------------------- 채점
 
 
@@ -247,4 +263,39 @@ def grade_answer(
         disagreements=diff,
         agent=used_agent,
         model=used_model,
+    )
+
+
+def teacher_review(
+    g: GradeResult,
+    rubric: Rubric,
+    awarded: dict[str, float],
+    *,
+    note: str | None = None,
+    by: str | None = None,
+) -> GradeResult:
+    """강사 확인: 항목별 점수를 고칠 수 있다. 처음 고칠 때 AI 판정을 `ai_judgements`에 남긴다."""
+    points = {i.id: i.points for i in rubric.items}
+    unknown = sorted(set(awarded) - set(points))
+    if unknown:
+        raise PipelineError(f"루브릭에 없는 항목: {unknown}")
+    for k, v in awarded.items():
+        if not 0 <= v <= points[k]:
+            raise PipelineError(f"{k} 점수 {v:g}는 0~{points[k]:g} 사이여야 합니다")
+    judgements = [
+        j.model_copy(update={"awarded": awarded.get(j.rubric_item_id, j.awarded)})
+        for j in g.judgements
+    ]
+    changed = any(a.awarded != b.awarded for a, b in zip(judgements, g.judgements, strict=True))
+    ai = g.ai_judgements if g.ai_judgements is not None else (g.judgements if changed else None)
+    return g.model_copy(
+        update={
+            "judgements": judgements,
+            "total": sum(j.awarded for j in judgements),
+            "status": "teacher_confirmed",
+            "ai_judgements": ai,
+            "teacher_note": note or g.teacher_note,
+            "confirmed_by": by,
+            "confirmed_at": utcnow(),
+        }
     )

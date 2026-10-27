@@ -26,14 +26,8 @@ from dawoni.agents import AgentError
 from dawoni.config import AGENT_NAMES
 from dawoni.context import TaskFailed
 from dawoni.fsio import read_json
-from dawoni.grading.pipeline import (
-    PipelineError,
-    SecondOpinion,
-    approve_rubric,
-    derive_rubric,
-    grade_answer,
-    solve_question,
-)
+from dawoni.grading import workflow
+from dawoni.grading.pipeline import PipelineError, SecondOpinion, approve_rubric
 from dawoni.grading.render import rubric_text, solution_text
 from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.grading import Exam, ExamQuestion, Transcript, TranscriptLine
@@ -108,20 +102,23 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cli_progress(done: int, total: int, message: str) -> None:
+    if done < total:
+        _progress(message)
+
+
 def _cmd_solve(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
-    exam = store.exam()
-    scope = ScopeStore(svc.workspace).get(exam.scope_id)
     verify = SecondOpinion(model=args.verify_model) if args.verify else None
-    for q in _questions(exam, args.q):
-        _progress(f"문항 {q.number} 해설")
-        sol = solve_question(svc.engine, q, scope, verify=verify)
-        store.save_solution(sol)
+    for sol in workflow.solve_questions(svc, store, args.q, verify=verify, progress=_cli_progress):
         mark = (
             "재풀이 일치" if sol.verified else ("확인 필요" if sol.check_notes else "재풀이 안 함")
         )
-        _out(f"문항 {q.number}: 해설 {len(sol.steps)}단계, 답 {sol.final_answer.latex}  [{mark}]")
+        _out(
+            f"문항 {sol.question_number}: 해설 {len(sol.steps)}단계, "
+            f"답 {sol.final_answer.latex}  [{mark}]"
+        )
         for n in sol.check_notes:
             _out(f"   ! {n}")
     return 0
@@ -130,17 +127,10 @@ def _cmd_solve(args: argparse.Namespace) -> int:
 def _cmd_rubric(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
-    exam = store.exam()
-    scope = ScopeStore(svc.workspace).get(exam.scope_id)
-    for q in _questions(exam, args.q):
-        sol = store.solution(q.number)
-        if sol is None:
-            return _err(f"문항 {q.number}: 해설이 없습니다. 먼저 `exam solve`를 실행하세요.")
-        _progress(f"문항 {q.number} 루브릭")
-        r = derive_rubric(svc.engine, q, sol, scope, previous=store.rubric(q.number))
-        store.save_rubric(r)
+    for r in workflow.rubric_questions(svc, store, args.q, progress=_cli_progress):
         _out(
-            f"문항 {q.number}: 루브릭 초안 v{r.version} — 항목 {len(r.items)}개, 합계 {r.total:g}점"
+            f"문항 {r.question_number}: 루브릭 초안 v{r.version} — "
+            f"항목 {len(r.items)}개, 합계 {r.total:g}점"
         )
     _out("검토 후 `exam approve`로 승인해야 채점할 수 있습니다.")
     return 0
@@ -223,45 +213,28 @@ def _print_transcript(t: Transcript) -> None:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
-    from dawoni.ocr.hints import collect_hints, providers_from
-    from dawoni.ocr.pages import prepare_pages
-    from dawoni.ocr.transcribe import transcribe_student
-
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
-    exam = store.exam()
-    scope = ScopeStore(svc.workspace).get(exam.scope_id)
-    out_dir = store.scan_dir(args.student)
-    pages = prepare_pages([Path(f) for f in args.files], out_dir)
-    refs = [p.original.relative_to(store.root).as_posix() for p in pages]
-    refs = list(dict.fromkeys(refs))  # PDF 여러 쪽은 원본 하나
-    hints, warnings = collect_hints(providers_from(svc.config.ocr), [p.image for p in pages])
-    for w in warnings:
-        _out(f"  ! {w}")
-    cross = None
-    if args.cross or (svc.config.ocr.cross_check and not args.no_cross):
-        cross = SecondOpinion(model=args.cross_model)
-    _progress(f"{args.student} 답안지 {len(pages)}쪽 판독")
-    outcome = transcribe_student(
-        svc.engine,
-        exam,
-        scope.level,
+    cross: bool | None = True if args.cross else (False if args.no_cross else None)
+    res = workflow.scan_student(
+        svc,
+        store,
         args.student,
-        [p.image for p in pages],
-        page_refs=refs,
+        [Path(f) for f in args.files],
         cross=cross,
-        hints=hints,
+        cross_model=args.cross_model,
+        overwrite=args.overwrite,
+        progress=_cli_progress,
     )
-    for t in outcome.transcripts.values():
-        old = store.transcript(args.student, t.question_number)
-        if old is not None and old.confirmed and not args.overwrite:
-            _out(f"문항 {t.question_number}: 이미 확인된 판독문이 있어 덮어쓰지 않음 (--overwrite)")
-            continue
-        store.save_transcript(t)
+    for w in res.warnings:
+        _out(f"  ! {w}")
+    for q in res.kept_confirmed:
+        _out(f"문항 {q}: 이미 확인된 판독문이 있어 덮어쓰지 않음 (--overwrite)")
+    for t in res.saved:
         _print_transcript(t)
-    for line in outcome.unassigned:
+    for line in res.unassigned:
         _out(f"  ? 문항을 알 수 없는 줄 ({line.page}쪽): {line.joined}")
-    for note in outcome.notes:
+    for note in res.notes:
         _out(f"  · {note}")
     _out("원본과 비교해 확인한 뒤 `exam transcript … --confirm`으로 확정해야 채점할 수 있습니다.")
     return 0
@@ -288,45 +261,27 @@ def _cmd_transcript(args: argparse.Namespace) -> int:
 def _cmd_grade(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
-    exam = store.exam()
-    scope = ScopeStore(svc.workspace).get(exam.scope_id)
-    students = [args.student] if args.student else store.students()
-    double = SecondOpinion(model=args.double_model) if args.double else None
-    failed: list[str] = []
-    for q in _questions(exam, args.q):
-        rubric = store.rubric(q.number)
-        if rubric is None:
-            return _err(f"문항 {q.number}: 루브릭이 없습니다.")
-        for st in students:
-            t = store.transcript(st, q.number)
-            if t is None:
-                continue
-            if not t.confirmed:
-                hint = "`exam transcript … --confirm`"
-                _out(f"{st} 문항 {q.number}: 판독문 확인 대기 — 건너뜀 ({hint})")
-                continue
-            old = store.grade(st, q.number)
-            if old is not None and not args.regrade and old.rubric_version == rubric.version:
-                done = f"{old.total:g}/{old.max_points:g}"
-                _out(f"{st} 문항 {q.number}: 이미 채점됨 ({done}) — 건너뜀")
-                continue
-            _progress(f"{st} 문항 {q.number} 채점")
-            try:
-                g = grade_answer(svc.engine, q, rubric, t, scope, double=double)
-            except (AgentError, TaskFailed) as e:
-                # 한 학생 실패로 나머지 채점을 멈추지 않는다
-                failed.append(f"{st} 문항 {q.number}: {e}")
-                _out(f"{st} 문항 {q.number}: 실패 — 다시 실행하면 이 답안만 다시 채점합니다")
-                continue
-            store.save_grade(g)
-            mark = "검토 필요" if g.status == "needs_review" else "자동"
-            _out(f"{st} 문항 {q.number}: {g.total:g}/{g.max_points:g}  [{mark}]")
-            for f in g.flags:
-                _out(f"   ! {f}")
-    if failed:
-        _out(f"\n실패 {len(failed)}건:")
-        for f in failed:
-            _out(f"  - {f}")
+    run = workflow.grade_exam(
+        svc,
+        store,
+        students=[args.student] if args.student else None,
+        only=args.q,
+        double=SecondOpinion(model=args.double_model) if args.double else None,
+        regrade=args.regrade,
+        progress=_cli_progress,
+    )
+    for sk in run.skipped:
+        hint = " (`exam transcript … --confirm`)" if sk.reason.startswith("판독문") else ""
+        _out(f"{sk.student} 문항 {sk.question}: {sk.reason} — 건너뜀{hint}")
+    for g in run.graded:
+        mark = "검토 필요" if g.status == "needs_review" else "자동"
+        _out(f"{g.student_id} 문항 {g.question_number}: {g.total:g}/{g.max_points:g}  [{mark}]")
+        for f in g.flags:
+            _out(f"   ! {f}")
+    if run.failed:
+        _out(f"\n실패 {len(run.failed)}건 (다시 실행하면 이 답안만 다시 채점합니다):")
+        for f in run.failed:
+            _out(f"  - {f.student} 문항 {f.question}: {f.reason}")
         return 1
     return 0
 

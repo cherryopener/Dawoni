@@ -9,9 +9,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from dawoni.models.base import DawoniModel, new_id, utcnow
+from dawoni.models.content import fix_overescaped
 from dawoni.models.item import ItemContent
 
 # ---------------------------------------------------------------- 시험
@@ -54,12 +55,22 @@ class SolutionStep(DawoniModel):
         min_length=1, description="이 단계가 쓰는 개념·기법 ID (범위 프로필의 C·S·X 번호)"
     )
 
+    @field_validator("math")
+    @classmethod
+    def _unescape(cls, v: str | None) -> str | None:
+        return fix_overescaped(v) if v else v
+
 
 class FinalAnswer(DawoniModel):
     latex: str = Field(description="최종 답 (LaTeX, $ 없이)")
     expr: str | None = Field(
         default=None, description="수치·식이면 sympy로 읽을 수 있는 식 (예: 3/2, (-1+sqrt(5))/2)"
     )
+
+    @field_validator("latex")
+    @classmethod
+    def _unescape(cls, v: str) -> str:
+        return fix_overescaped(v)
 
 
 class AlternativeSolution(DawoniModel):
@@ -214,6 +225,12 @@ class TranscribedLine(DawoniModel):
     math: str | None = Field(
         default=None, description="줄 전체가 식일 때만: LaTeX, $ 없이, 적힌 그대로"
     )
+
+    @field_validator("math")
+    @classmethod
+    def _unescape(cls, v: str | None) -> str | None:
+        return fix_overescaped(v) if v else v
+
     confidence: float = Field(ge=0, le=1)
     uncertain: list[str] = Field(
         default_factory=lambda: list[str](),
@@ -281,3 +298,9 @@ class GradeResult(DawoniModel):
     agent: str | None = None
     model: str | None = None
     graded_at: datetime = Field(default_factory=utcnow)
+    ai_judgements: list[ItemJudgement] | None = Field(
+        default=None, description="강사가 점수를 고치기 전 AI 판정 (보정·일치도 측정용, M8)"
+    )
+    teacher_note: str | None = None
+    confirmed_by: str | None = None
+    confirmed_at: datetime | None = None

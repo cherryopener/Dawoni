@@ -15,29 +15,18 @@ import argparse
 import os
 import subprocess
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from dawoni.export.docx.builder import DocWriter, ExportError
-from dawoni.export.docx.check import check_docx
-from dawoni.export.docx.documents import (
-    KeyOptions,
-    PaperOptions,
-    build_answer_key,
-    build_exam_paper,
-    build_grading_report,
-    build_score_sheets,
-)
+from dawoni.export.docx.builder import ExportError
+from dawoni.export.docx.documents import KeyOptions, PaperOptions
+from dawoni.export.docx.export import ExportKind, export_exam
 from dawoni.export.docx.fonts import FontSpec
 from dawoni.export.fill import FillError
-from dawoni.grading.store import ExamStore, safe_name
+from dawoni.grading.store import ExamStore
 from dawoni.mathx.omml import PandocMissing
-from dawoni.models.grading import Exam
 from dawoni.services import Services, open_services
 from dawoni.workspace import WorkspaceError
-
-_KIND_NAMES = {"paper": "시험지", "key": "정답및해설", "report": "채점리포트", "scores": "성적표"}
 
 
 def _out(s: str = "") -> None:
@@ -63,34 +52,29 @@ def fonts_of(svc: Services) -> FontSpec:
     return FontSpec(body=d.body_font, math=d.math_font, size_pt=d.body_size_pt)
 
 
-def _export(
-    args: argparse.Namespace, kind: str, build: Callable[[Services, ExamStore, Exam], DocWriter]
-) -> int:
+def _export(args: argparse.Namespace, kind: ExportKind, **options: Any) -> int:
     svc = open_services(Path(args.workspace) if args.workspace else None)
     store = ExamStore(svc.workspace, args.exam)
-    exam = store.exam()
-    writer = build(svc, store, exam)
-    out = (
-        Path(args.out)
-        if args.out
-        else svc.workspace.exports / f"{safe_name(exam.title)}_{_KIND_NAMES[kind]}.docx"
+    res = export_exam(
+        store,
+        kind,
+        fonts_of(svc),
+        svc.workspace.exports,
+        out=Path(args.out) if args.out else None,
+        **options,
     )
-    writer.save(out)
-    report = check_docx(out)
-    _out(f"저장: {out}")
-    _out(f"  {report.summary()}")
-    for w in writer.warnings:
+    _out(f"저장: {res.path}")
+    _out(f"  {res.check.summary()}")
+    for w in res.warnings:
         _out(f"  ! {w}")
-    if writer.math_fallbacks:
-        _out(
-            f"  ! Word 수식으로 못 바꾼 학생 답안 식 {len(writer.math_fallbacks)}개는 원문으로 표시"
-        )
-    if not report.ok:
-        for e in report.errors:
+    if res.math_fallbacks:
+        _out(f"  ! Word 수식으로 못 바꾼 학생 답안 식 {len(res.math_fallbacks)}개는 원문으로 표시")
+    if not res.check.ok:
+        for e in res.check.errors:
             _out(f"  ✗ {e}")
         return _err("자동 검사를 통과하지 못했습니다 (위 ✗ 항목)")
     if args.open:
-        open_file(out)
+        open_file(res.path)
     return 0
 
 
@@ -101,28 +85,20 @@ def _cmd_paper(args: argparse.Namespace) -> int:
         answer_lines=args.answer_lines,
         subtitle=args.subtitle,
     )
-    return _export(
-        args, "paper", lambda svc, st, ex: build_exam_paper(ex, st.root, fonts_of(svc), opts)
-    )
+    return _export(args, "paper", paper=opts)
 
 
 def _cmd_key(args: argparse.Namespace) -> int:
     opts = KeyOptions(with_questions=args.with_questions, with_rubric=args.with_rubric)
-    return _export(args, "key", lambda svc, st, ex: build_answer_key(ex, st, fonts_of(svc), opts))
+    return _export(args, "key", key=opts)
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
-    return _export(
-        args,
-        "report",
-        lambda svc, st, ex: build_grading_report(ex, st, fonts_of(svc), args.student),
-    )
+    return _export(args, "report", students=args.student)
 
 
 def _cmd_scores(args: argparse.Namespace) -> int:
-    return _export(
-        args, "scores", lambda svc, st, ex: build_score_sheets(ex, st, fonts_of(svc), args.student)
-    )
+    return _export(args, "scores", students=args.student)
 
 
 def _wrap(fn: Any) -> Any:

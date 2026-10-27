@@ -1,0 +1,28 @@
+.item { display: flex; flex-direction: column; gap: 8px; line-height: 1.75; }
+.para { margin: 0; }
+.num { font-weight: 700; margin-right: 4px; }
+.points { color: var(--text-2); margin-left: 4px; white-space: nowrap; }
+.box {
+  border: 1px solid var(--text);
+  padding: 10px 14px;
+  border-radius: 2px;
+}
+.boxTitle { text-align: center; font-weight: 700; margin-bottom: 4px; letter-spacing: 0.3em; }
+.labeled { display: flex; gap: 6px; }
+.label { flex: none; }
+.table { border-collapse: collapse; margin: 0 auto; }
+.table td, .table th { border: 1px solid var(--text-2); padding: 4px 10px; text-align: center; }
+.table th { background: var(--panel-2); }
+.figure { text-align: center; }
+.figure img { max-width: 100%; height: auto; }
+.choices { display: grid; gap: 4px 12px; }
+.choice { display: flex; flex-direction: column; gap: 2px; }
+.choiceInline { display: flex; gap: 6px; align-items: baseline; }
+.choice img { max-width: 100%; height: auto; }
+.missing {
+  display: inline-block;
+  border: 1px dashed var(--line-strong);
+  color: var(--text-3);
+  padding: 10px 16px;
+  border-radius: 4px;
+}

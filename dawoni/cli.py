@@ -122,6 +122,12 @@ def _cmd_agent_test(args: argparse.Namespace) -> int:
     return 2
 
 
+def _cmd_ui(args: argparse.Namespace) -> int:
+    from dawoni.server.launch import run_ui
+
+    return run_ui(port=args.port, window=not args.no_window)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="dawoni", description="Dawoni 개발용 명령줄")
     sub = p.add_subparsers(dest="command", required=True)
@@ -147,6 +153,13 @@ def build_parser() -> argparse.ArgumentParser:
     at.add_argument("--model", help="이번 테스트에만 쓸 모델 (예: claude-sonnet-5-5-medium)")
     at.add_argument("--keep", action="store_true", help="성공해도 격리 폴더 보존")
     at.set_defaults(func=_cmd_agent_test)
+
+    ui = sub.add_parser("ui", help="화면(앱 창) 열기")
+    ui.add_argument("--port", type=int, default=8765)
+    ui.add_argument(
+        "--no-window", action="store_true", help="창 없이 서버만 (주소를 브라우저로 열기)"
+    )
+    ui.set_defaults(func=_cmd_ui)
 
     from dawoni import cli_exam, cli_export, cli_ingest, cli_rules
 

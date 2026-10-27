@@ -19,6 +19,23 @@ from pydantic import Field, field_validator
 
 from dawoni.models.base import DawoniModel
 
+_DOUBLED_BEGIN = re.compile(r"\\\\begin\{")
+_DOUBLED_CMD = re.compile(r"\\\\(?=[A-Za-z])")
+
+
+def fix_overescaped(latex: str) -> str:
+    """AI가 JSON 이스케이프를 한 번 더 해 `\\\\text{…}`처럼 쓴 식 → `\\text{…}` (M7 실측: gemini).
+
+    - `\\\\begin{`이 있으면 식 전체가 두 겹 → 모든 `\\\\`를 `\\`로
+    - 환경(`\\begin`)이 없으면 줄바꿈 `\\\\`가 의미 없으므로, 글자 앞의 `\\\\`만 `\\`로
+    - 환경이 있으면(행렬·정렬의 줄바꿈 `\\\\`) 그대로 둔다
+    """
+    if _DOUBLED_BEGIN.search(latex):
+        return latex.replace("\\\\", "\\")
+    if "\\begin{" in latex:
+        return latex
+    return _DOUBLED_CMD.sub(r"\\", latex)
+
 
 class TextRun(DawoniModel):
     t: Literal["text"]
@@ -43,7 +60,7 @@ class MathRun(DawoniModel):
                 break
         if not s:
             raise ValueError("빈 수식")
-        return s
+        return fix_overescaped(s)
 
 
 Run = Annotated[TextRun | MathRun, Field(discriminator="t")]

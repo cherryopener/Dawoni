@@ -11,6 +11,9 @@ from __future__ import annotations
 import json
 import logging
 import threading
+from collections.abc import Generator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -38,6 +41,26 @@ log = logging.getLogger(__name__)
 DEFAULT_BUDGET_TOKENS = 60_000
 TRANSIENT_ERRORS = frozenset({AgentErrorCode.STALLED})
 _PREVIOUS_CLIP = 4_000
+
+_CANCEL: ContextVar[threading.Event | None] = ContextVar("dawoni_cancel", default=None)
+_PROGRESS: ContextVar[ProgressCallback | None] = ContextVar("dawoni_progress", default=None)
+
+
+@contextmanager
+def call_context(
+    *, cancel: threading.Event | None = None, on_progress: ProgressCallback | None = None
+) -> Generator[None]:
+    """이 안에서 일어나는 모든 `engine.run`에 취소 신호·진행 알림을 건다.
+
+    파이프라인 함수마다 cancel·on_progress 인자를 끌고 다니지 않게 한다 (서버 작업 실행기용).
+    """
+    t1 = _CANCEL.set(cancel)
+    t2 = _PROGRESS.set(on_progress)
+    try:
+        yield
+    finally:
+        _CANCEL.reset(t1)
+        _PROGRESS.reset(t2)
 
 
 @dataclass
@@ -169,6 +192,8 @@ class ContextEngine:
         cancel: threading.Event | None = None,
     ) -> TaskResult[T]:
         schema = agent_schema(task.output)
+        cancel = cancel or _CANCEL.get()
+        on_progress = on_progress or _PROGRESS.get()
         opts = _CallOptions(fallback, keep_sandbox, on_progress, cancel)
         errors: list[str] = []
         previous = ""
