@@ -5,6 +5,7 @@
   echo_len  받은 프롬프트 길이·첫 글자·첨부 파일 목록을 응답
   slow      0.2초 간격으로 진행 이벤트 10개 후 응답 (heartbeat가 끊지 않아야 함)
   stall     시작 이벤트 후 출력 없이 대기 (heartbeat가 끊어야 함)
+  linger    정상 결과를 낸 뒤 끝나지 않고 대기 (실측: agy가 result 후 종료하지 않음)
   quota     한도 초과 오류 결과
   auth      인증 오류 결과
   denied    응답 없이 denied_actions만 남기고 종료
@@ -82,6 +83,10 @@ def main() -> int:
         sys.stderr.write("fatal: something broke\n")
         return 3
     if mode == "stall":
+        time.sleep(60)
+        return 0
+    if mode == "linger":
+        result("SUCCESS", '{"done": true}')
         time.sleep(60)
         return 0
     if mode == "quota":

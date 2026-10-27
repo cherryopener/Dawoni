@@ -437,6 +437,9 @@ def test_cli_exam_end_to_end(
         ),
         (r"x=3\text{일 때 최솟값 } 10", r"x=3\text{일 때 최솟값 } 9", None),
         (r"\frac{1}{", "1", None),
+        # 실측: 답 끝의 한글 괄호 설명 → 짝 안 맞는 조각 ")"에서 sympy가 IndexError를 내 해설이 죽음
+        (r"T_1=2\sqrt{\frac{R}{g}} (P의 위치와 무관)", r"T_1=2\sqrt{\frac{R}{g}}", None),
+        (r"T_1 = 2\sqrt{\frac{R}{g}} \text{ (}P\text{의 위치에 무관)}", r")(", None),
     ],
 )
 def test_answers_agree_multi_value(a: str, b: str, expected: bool | None) -> None:

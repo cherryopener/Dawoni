@@ -5,6 +5,8 @@ AIHelper에서 겪은 문제와 대책:
 - 권한 승인 대기로 5분 멈춤 → 출력 이벤트 감시(heartbeat). `idle_timeout_s` 동안 아무 줄도
   없으면 멈춘 것으로 보고 프로세스 트리째 종료한다.
 - 원인 모를 실패 → 격리 폴더에 stdin·stdout·stderr를 그대로 남긴다.
+- 최종 결과(`result`)를 내보낸 뒤 프로세스가 끝나지 않음(agy 실측) → 결과가 나오면
+  `FINAL_GRACE_S`만 기다리고 정리한다. 답은 이미 받았으므로 정상 완료로 본다.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ log = logging.getLogger(__name__)
 ProgressCallback = Callable[[str], None]
 
 _EOF = object()
+FINAL_GRACE_S = 10.0
 
 
 @dataclass(frozen=True)
@@ -195,10 +198,19 @@ def _run_in_sandbox(
     stderr_tail: deque[str] = deque(maxlen=200)
     stdout_log = sb.log_path("stdout.jsonl").open("w", encoding="utf-8")
     last_activity = time.monotonic()
+    final_at: float | None = None
+    hung_after_final = False
     stdout_done = False
     try:
         while not stdout_done:
             now = time.monotonic()
+            if final_at is not None and now - final_at > FINAL_GRACE_S:
+                log.warning(
+                    "%s: 최종 결과 후 %.0f초 동안 끝나지 않아 정리함", adapter.name, FINAL_GRACE_S
+                )
+                _kill_tree(proc)
+                hung_after_final = True
+                break
             if cancel is not None and cancel.is_set():
                 _kill_tree(proc)
                 raise AgentError(AgentErrorCode.CANCELLED)
@@ -234,6 +246,8 @@ def _run_in_sandbox(
                 continue
             p = adapter.parse_line(line)
             parsed.append(p)
+            if p.final is not None and final_at is None:
+                final_at = time.monotonic()
             if p.progress:
                 progress(p.progress)
     finally:
@@ -241,11 +255,18 @@ def _run_in_sandbox(
         # 멈춤·취소로 끝나도 stderr는 남긴다 (원인 분석용)
         sb.log_path("stderr.txt").write_text("\n".join(stderr_tail), encoding="utf-8")
 
-    try:
-        returncode = proc.wait(timeout=max(5.0, options.timeout_s - (time.monotonic() - started)))
-    except subprocess.TimeoutExpired:
-        _kill_tree(proc)
-        raise AgentError(AgentErrorCode.TIMEOUT, "출력 종료 후 프로세스가 끝나지 않음") from None
+    if hung_after_final:
+        returncode = 0  # 우리가 정리했을 뿐, CLI는 답을 끝까지 냈다
+    else:
+        try:
+            returncode = proc.wait(
+                timeout=max(5.0, options.timeout_s - (time.monotonic() - started))
+            )
+        except subprocess.TimeoutExpired:
+            _kill_tree(proc)
+            raise AgentError(
+                AgentErrorCode.TIMEOUT, "출력 종료 후 프로세스가 끝나지 않음"
+            ) from None
     # 남은 stderr 수거
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline:

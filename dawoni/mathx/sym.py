@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import cmath
 import random
-from tokenize import TokenError
 
 import sympy
 from sympy.parsing.sympy_parser import (
@@ -39,10 +38,10 @@ class ExprError(ValueError):
 def parse(expr: str) -> sympy.Expr:
     try:
         v = parse_expr(expr, transformations=_TRANSFORMS, evaluate=True)
-    except (
-        SyntaxError, TypeError, ValueError, sympy.SympifyError, AttributeError, TokenError,
-    ) as e:  # fmt: skip
-        raise ExprError(f"식을 읽을 수 없음: {expr!r} ({e})") from e
+    except Exception as e:
+        # AI가 준 글 조각을 읽는다: sympy 파서는 짝 안 맞는 괄호 등에 IndexError·KeyError까지
+        # 낸다 (실측: "…(P의 위치와 무관)"에서 해설 단계 전체가 죽음). 무엇이든 "못 읽음"으로.
+        raise ExprError(f"식을 읽을 수 없음: {expr!r} ({type(e).__name__}: {e})") from e
     if not isinstance(v, sympy.Expr):
         raise ExprError(f"식이 아님: {expr!r}")
     return v
@@ -139,7 +138,7 @@ def holds(condition: str, values: dict[str, float | int | str]) -> bool | None:
     """부등식·등식 제약이 성립하는가. 판단할 수 없으면 None."""
     try:
         e = parse_expr(condition, transformations=_TRANSFORMS, evaluate=True)
-    except SyntaxError, TypeError, ValueError, sympy.SympifyError, AttributeError:
+    except Exception:  # parse()와 같은 이유
         return None
     subs = [(sympy.Symbol(k), sympy.nsimplify(v, rational=True)) for k, v in values.items()]
     try:

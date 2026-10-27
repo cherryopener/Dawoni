@@ -34,9 +34,11 @@ class AgentSettings(_Settings):
     """CLI에 넘길 모델 이름. 없으면 CLI 기본값."""
     timeout_s: int = Field(default=600, ge=10)
     """한 번의 호출 전체 제한 시간."""
-    idle_timeout_s: int = Field(default=300, ge=5)
+    idle_timeout_s: int = Field(default=480, ge=5)
     """출력 이벤트가 이 시간 동안 없으면 멈춘 것으로 보고 중단.
-    추론형 모델은 '생각'하는 동안 이벤트가 없어 2분을 넘기기도 한다 (M3 실측) → 기본 5분."""
+    추론형 모델은 '생각'하는 동안 이벤트가 없다: M3 실측 2분 → 5분으로 했으나, 실제 시험지
+    (그림 많은 쪽 구조화·해설)에서 agy가 출력 없이 4~5분 생각하다 끊겼다 → 기본 8분.
+    호출 전체 제한(`timeout_s`, 작업별 10~15분)은 그대로라 진짜 멈춤도 그 안에서 끝난다."""
 
 
 def _default_agents() -> dict[AgentName, AgentSettings]:

@@ -30,7 +30,8 @@ CHOICE_MARKS = "①②③④⑤"
 _ANCHOR = re.compile(
     r"^\s*(?:\[\s*(서술형|단답형)\s*(\d+)\s*\]|(서술형|단답형)\s*(\d+)\s*[.)]|(\d{1,2})\s*[.．])"
 )
-_POINTS = re.compile(r"\[\s*(\d+(?:\.\d+)?)\s*점\s*\]")
+_POINTS = re.compile(r"\[\s*(?:총\s*)?(\d+(?:\.\d+)?)\s*점\s*\]")
+_TOTAL = re.compile(r"\[\s*총\s*(\d+(?:\.\d+)?)\s*점\s*\]")
 
 
 @dataclass(frozen=True)
@@ -278,14 +279,22 @@ def _header_footer(
     ]
     for r in banners:
         header_y = max(header_y, r.y1 + 1)
+    others: list[Line] = []
     for ln in lines:
         if ln.rect.cy < h * HEADER_BAND:
             in_banner = any(r.contains(ln.rect, tol=2) for r in banners)
             spans_middle = ln.rect.x0 < w / 2 < ln.rect.x1
             if in_banner or spans_middle or ln.text in repeated:
                 header_y = max(header_y, ln.rect.y1 + 2)
+            else:
+                others.append(ln)
         elif ln.rect.cy > h * FOOTER_BAND and (len(ln.text) <= 8 or ln.text in repeated):
             footer_y = min(footer_y, ln.rect.y0 - 2)
+    # 문항 번호 줄은 머리말이 아니다: 쪽마다 같은 자리의 "[총 10점]" 조각("[", "10", "점")이
+    # '반복 줄'로 잡혀 그 위의 "2. …" 줄까지 머리말로 삼키던 문제
+    tops = [ln.rect.y0 for ln in others if ln.rect.y0 < header_y and _anchor_label(ln.text)]
+    if tops:
+        header_y = min(tops) - 1
     return header_y, footer_y
 
 
@@ -428,7 +437,8 @@ def analyze(path: Path) -> DocumentLayout:
                 ]
 
     for r in regions:
-        m = _POINTS.search(r.text)
+        text = _reading_text(r.lines)
+        m = _TOTAL.search(text) or _POINTS.search(text)
         r.points = float(m.group(1)) if m else None
         r.figures.sort(key=lambda f: (f.page, round(f.rect.y0 / 20), f.rect.x0))
         for i, f in enumerate(r.figures, start=1):
@@ -436,6 +446,26 @@ def analyze(path: Path) -> DocumentLayout:
             f.near_choice = _near_choice(f, r, pages)
     layout.regions = regions
     return layout
+
+
+def _reading_text(lines: list[Line]) -> str:
+    """줄 조각을 읽는 순서로: 같은 높이의 조각은 한 줄로 묶어 왼쪽부터.
+
+    PDF가 "[총 10점]"을 "[", "10", "점", "]" 조각으로 따로 두면 추출 순서가 뒤섞인다.
+    """
+    rows: list[list[Line]] = []
+    for ln in sorted(lines, key=lambda x: (x.page, x.rect.y0)):
+        row = rows[-1] if rows else None
+        if (
+            row
+            and row[0].page == ln.page
+            and min(row[0].rect.y1, ln.rect.y1) - max(row[0].rect.y0, ln.rect.y0)
+            > 0.5 * min(row[0].rect.h, ln.rect.h)
+        ):
+            row.append(ln)
+        else:
+            rows.append([ln])
+    return "\n".join(" ".join(x.text for x in sorted(r, key=lambda x: x.rect.x0)) for r in rows)
 
 
 def _near_choice(f: Figure, r: Region, pages: list[PageInfo]) -> int | None:

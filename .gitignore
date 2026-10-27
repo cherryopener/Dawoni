@@ -14,3 +14,4 @@ frontend/dist/
 /scratch/
 .claude/settings.local.json
 /dawoni/web/
+/real_data/

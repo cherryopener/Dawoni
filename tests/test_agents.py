@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from dawoni.agents import client as client_mod
+from dawoni.agents import runner as runner_mod
 from dawoni.agents.agy import AgyAdapter
 from dawoni.agents.base import (
     AgentError,
@@ -116,6 +117,17 @@ def test_large_korean_prompt_via_stdin_with_attachments(
 def test_slow_but_active_is_not_stalled(make_fake: MakeFake, tmp_path: Path) -> None:
     res = _run(make_fake("slow"), AgentRequest(prompt="x"), tmp_path / "sb", idle=1)
     assert json.loads(res.text) == {"done": True}
+
+
+def test_lingering_after_result_is_success(
+    make_fake: MakeFake, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """agy가 result를 낸 뒤 종료하지 않아 '멈춤'으로 정상 답을 버리던 문제."""
+    monkeypatch.setattr(runner_mod, "FINAL_GRACE_S", 0.5)
+    t0 = time.monotonic()
+    res = _run(make_fake("linger"), AgentRequest(prompt="x"), tmp_path / "sb", idle=5)
+    assert json.loads(res.text) == {"done": True}
+    assert time.monotonic() - t0 < 4
 
 
 # ---------------------------------------------------------------- 실패 시나리오

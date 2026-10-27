@@ -117,6 +117,23 @@ def test_out_of_sequence_number_is_not_anchor(tmp_path: Path) -> None:
     assert "15. 본문 속 번호" in layout.region("1").text
 
 
+def test_repeated_point_fragments_do_not_hide_question_number(tmp_path: Path) -> None:
+    """실제 시험지: 쪽마다 맨 위 문항의 "[총 10점]"이 조각("[", "10", "점", "]")으로 같은
+    자리에 반복돼 머리말로 잡혔고, 그 위의 "2." 줄까지 머리말로 지워졌다."""
+    pdf = tmp_path / "frag.pdf"
+    doc = pymupdf.open()
+    for n in (1, 2, 3):
+        p = doc.new_page(width=595, height=842)
+        p.insert_text((70, 50), "2교시                 과학 영역", fontname="korea", fontsize=14)  # pyright: ignore[reportUnknownMemberType]
+        p.insert_text((50, 80), f"{n}. 다음 물음에 답하라. 총", fontname="korea", fontsize=10)  # pyright: ignore[reportUnknownMemberType]
+        for x, s in [(160, "["), (185, "10"), (200, "점"), (212, "]")]:
+            p.insert_text((x, 84), s, fontname="korea", fontsize=10)  # pyright: ignore[reportUnknownMemberType]
+        p.insert_text((50, 200), f"({n}) 소문항 본문", fontname="korea", fontsize=10)  # pyright: ignore[reportUnknownMemberType]
+    doc.save(str(pdf))  # pyright: ignore[reportUnknownMemberType]
+    layout = analyze(pdf)
+    assert [(r.label, r.points) for r in layout.regions] == [("1", 10), ("2", 10), ("3", 10)]
+
+
 # ---------------------------------------------------------------- 시험지 구조화 검증
 
 
