@@ -16,7 +16,7 @@ import {
   teacherName,
 } from "../components/ui";
 import { api, errorText, useJob, useLoad } from "../lib/api";
-import type { AgentName, DetectedAgent, Status } from "../lib/types";
+import type { AgentName, DetectedAgent, Sharing, Status, WorkspaceMode } from "../lib/types";
 
 const LOGIN_HELP: Record<AgentName, string> = {
   agy: "터미널에서 `agy`를 한 번 실행해 구독 계정으로 로그인하세요.",
@@ -29,13 +29,88 @@ const AGENT_LABEL: Record<AgentName, string> = {
   codex: "Codex CLI",
 };
 
+const MODE_LABEL: Record<WorkspaceMode, string> = { personal: "혼자 쓰기", team: "함께 쓰기 (공유 폴더)" };
+
+/** 연결한 작업공간의 모드·동기화 폴더·충돌 사본. */
+function SharingPanel() {
+  const { data, error, reload, setData } = useLoad<Sharing>("/workspace/sharing");
+  const [err, setErr] = useState<string | null>(null);
+  if (error) return <ErrorBox error={error} />;
+  if (!data) return null;
+  const setMode = (mode: WorkspaceMode) =>
+    api
+      .put<Sharing>("/workspace/mode", { mode })
+      .then(setData)
+      .catch((e: unknown) => setErr(errorText(e)));
+  const reveal = (path: string) => api.post("/files/reveal", { path }).catch((e: unknown) => setErr(errorText(e)));
+  return (
+    <Stack gap={8}>
+      <Row>
+        <span>쓰는 방식</span>
+        <Badge tone={data.mode === "team" ? "accent" : "neutral"}>{MODE_LABEL[data.mode]}</Badge>
+        {data.provider && <Badge>{data.provider} 폴더</Badge>}
+        <span style={{ flex: 1 }} />
+        <Button small onClick={() => setMode(data.mode === "team" ? "personal" : "team")}>
+          {data.mode === "team" ? "혼자 쓰기로 바꾸기" : "함께 쓰기로 바꾸기"}
+        </Button>
+        <Button small variant="ghost" onClick={reload}>
+          다시 확인
+        </Button>
+      </Row>
+      {data.mode === "personal" && data.provider && (
+        <Notice>{data.provider} 폴더입니다. 다른 강사와 함께 쓴다면 '함께 쓰기'로 바꾸세요 — 같은 시험을 동시에 열면 서로 알려 줍니다.</Notice>
+      )}
+      {data.mode === "team" && !data.provider && (
+        <Notice>클라우드 동기화 폴더로 보이지 않습니다. NAS·공유 드라이브라면 그대로 쓰셔도 됩니다.</Notice>
+      )}
+      {data.mode === "team" && (
+        <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+          설정·기록·캐시는 PC마다 따로 두고, 시험·답안·채점 결과만 폴더로 공유합니다. 강사 이름(아래 3번)을 적어 두면 누가 열었는지 보입니다.
+        </span>
+      )}
+      {data.conflicts.length > 0 && (
+        <Stack gap={4}>
+          <Notice>
+            동기화 프로그램이 만든 충돌 사본 {data.conflicts.length}개 — 두 PC에서 같은 파일을 동시에 고친 흔적입니다. 내용을 비교해 맞는 쪽을 남기고 사본을 지우세요.
+          </Notice>
+          {data.conflicts.map((c) => (
+            <Row key={c.path}>
+              <code style={{ fontSize: 12 }}>{c.path}</code>
+              <span style={{ fontSize: 12, color: "var(--text-3)" }}>원본 {c.original}</span>
+              <Button small variant="ghost" onClick={() => void reveal(c.path)}>
+                폴더에서 보기
+              </Button>
+            </Row>
+          ))}
+        </Stack>
+      )}
+      <ErrorBox error={err} />
+    </Stack>
+  );
+}
+
 function WorkspaceCard({ status, onChanged }: { status: Status; onChanged: () => void }) {
   const [path, setPath] = useState(status.workspace ?? "");
+  const [mode, setMode] = useState<WorkspaceMode>("personal");
+  const [provider, setProvider] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!path.trim()) return setProvider(null);
+    const t = setTimeout(() => {
+      api
+        .get<{ provider: string | null }>(`/workspace/sharing?path=${encodeURIComponent(path.trim())}`)
+        .then((r) => {
+          setProvider(r.provider);
+          if (r.provider) setMode("team");
+        })
+        .catch(() => setProvider(null));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [path]);
   const submit = (create: boolean) => {
     setError(null);
     api
-      .post<Status>("/workspace", { path, create })
+      .post<Status>("/workspace", { path, create, mode })
       .then(onChanged)
       .catch((e: unknown) => setError(errorText(e)));
   };
@@ -49,10 +124,13 @@ function WorkspaceCard({ status, onChanged }: { status: Status; onChanged: () =>
     <Card title="1. 작업공간">
       <Stack>
         <span style={{ color: "var(--text-2)" }}>
-          시험·학생 답안·채점 결과가 저장되는 폴더입니다. Google Drive 폴더를 고르면 다른 강사와 함께 쓸 수 있습니다.
+          시험·학생 답안·채점 결과가 저장되는 폴더입니다. 혼자 쓰면 이 PC의 폴더를, 다른 강사와 함께 쓰면 Google Drive·OneDrive·Dropbox 같은 공유 폴더를 고르세요.
         </span>
         {status.workspace_ok ? (
-          <Info>지금 작업공간: {status.workspace}</Info>
+          <>
+            <Info>지금 작업공간: {status.workspace}</Info>
+            <SharingPanel key={status.workspace ?? ""} />
+          </>
         ) : (
           <Notice>{status.workspace_error ?? "작업공간을 먼저 정하세요."}</Notice>
         )}
@@ -61,6 +139,18 @@ function WorkspaceCard({ status, onChanged }: { status: Status; onChanged: () =>
             <TextInput value={path} onChange={setPath} placeholder="/Users/이름/Documents/다워니" mono />
           </div>
           <Button onClick={choose}>폴더 고르기…</Button>
+        </Row>
+        {provider && <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>{provider} 동기화 폴더로 보입니다.</span>}
+        <Row>
+          <Check checked={mode === "personal"} onChange={(v) => v && setMode("personal")}>
+            혼자 쓰기
+          </Check>
+          <Check checked={mode === "team"} onChange={(v) => v && setMode("team")}>
+            함께 쓰기 (공유 폴더)
+          </Check>
+          <span style={{ fontSize: 12, color: "var(--text-3)" }}>새로 만들 때 적용 · 기존 작업공간은 그 폴더의 설정을 따릅니다</span>
+        </Row>
+        <Row>
           <Button onClick={() => submit(false)} disabled={!path}>
             기존 작업공간 열기
           </Button>

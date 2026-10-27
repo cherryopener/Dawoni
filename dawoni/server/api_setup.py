@@ -11,10 +11,12 @@ from pydantic import BaseModel
 from dawoni import __version__
 from dawoni.config import AGENT_NAMES, AgentName, AppConfig
 from dawoni.models.job import Job
+from dawoni.models.source import WorkspaceMode
 from dawoni.server import files
 from dawoni.server.jobs import JobContext
 from dawoni.server.state import AppState, NeedsSetup
-from dawoni.workspace import create_workspace, open_workspace
+from dawoni.sharing import cloud_provider, conflict_copies
+from dawoni.workspace import create_workspace, open_workspace, set_mode
 
 router = APIRouter(prefix="/api")
 
@@ -37,8 +39,9 @@ def status(st: AppState = State) -> dict[str, Any]:
     cfg = st.config()
     ws_ok = True
     ws_error: str | None = None
+    mode: WorkspaceMode | None = None
     try:
-        st.services()
+        mode = open_workspace(st.services().workspace.root)[1].mode
     except NeedsSetup as e:
         ws_ok, ws_error = False, str(e)
     return {
@@ -46,6 +49,8 @@ def status(st: AppState = State) -> dict[str, Any]:
         "workspace": str(cfg.workspace) if cfg.workspace else None,
         "workspace_ok": ws_ok,
         "workspace_error": ws_error,
+        "workspace_mode": mode,
+        "machine": st.machine,
         "default_agent": cfg.default_agent,
         "agents": {n: cfg.agent(n).model_dump(mode="json") for n in AGENT_NAMES},
     }
@@ -148,19 +153,44 @@ class WorkspaceBody(BaseModel):
     path: str
     create: bool = False
     name: str | None = None
+    mode: WorkspaceMode = "personal"
 
 
 @router.post("/workspace")
 def set_workspace(body: WorkspaceBody, st: AppState = State) -> dict[str, Any]:
     root = Path(body.path).expanduser()
     if body.create:
-        create_workspace(root, body.name)
+        create_workspace(root, body.name, body.mode)
     else:
         open_workspace(root)
     cfg = st.config()
     cfg.workspace = root
     st.save_config(cfg)
     return status(st)
+
+
+@router.get("/workspace/sharing")
+def sharing(path: str | None = None, st: AppState = State) -> dict[str, Any]:
+    """`path`만 주면 그 폴더가 클라우드 동기화 폴더인지만 (연결 전 안내용)."""
+    if path is not None:
+        return {"provider": cloud_provider(Path(path))}
+    ws = st.services().workspace
+    _, meta = open_workspace(ws.root)
+    return {
+        "mode": meta.mode,
+        "provider": cloud_provider(ws.root),
+        "conflicts": [c.model_dump() for c in conflict_copies(ws)],
+    }
+
+
+class ModeBody(BaseModel):
+    mode: WorkspaceMode
+
+
+@router.put("/workspace/mode")
+def put_mode(body: ModeBody, st: AppState = State) -> dict[str, Any]:
+    set_mode(st.services().workspace.root, body.mode)
+    return sharing(None, st)
 
 
 @router.post("/system/choose-folder")

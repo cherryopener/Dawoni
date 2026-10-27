@@ -37,8 +37,12 @@ class Source(DawoniModel):
     ingest: SourceIngestState = Field(default_factory=SourceIngestState)
 
 
+WorkspaceMode = Literal["personal", "team"]
+"""personal: 혼자 쓰는 폴더 · team: 여러 강사가 공유 폴더로 함께 씀."""
+
+
 class WorkspaceMeta(DawoniModel):
     schema_version: int = 1
     name: str
-    mode: Literal["personal", "team"] = "personal"
+    mode: WorkspaceMode = "personal"
     created_at: datetime = Field(default_factory=utcnow)

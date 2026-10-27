@@ -17,6 +17,7 @@ from dawoni.export.docx.builder import ExportError
 from dawoni.export.fill import FillError
 from dawoni.grading.pipeline import PipelineError
 from dawoni.ingest.workflow import IngestRefused
+from dawoni.lecture.youtube import LectureError
 from dawoni.ocr.pages import PageError
 from dawoni.paths import AppPaths
 from dawoni.server import (
@@ -25,6 +26,7 @@ from dawoni.server import (
     api_exams,
     api_figures,
     api_generate,
+    api_lecture,
     api_setup,
 )
 from dawoni.server.files import PathRefused
@@ -70,6 +72,7 @@ def create_app(paths: AppPaths, token: str, *, web_dir: Path | None = None) -> F
 
     bad_request = (
         PipelineError,
+        LectureError,
         WorkspaceError,
         IngestRefused,
         ExportError,
@@ -95,6 +98,7 @@ def create_app(paths: AppPaths, token: str, *, web_dir: Path | None = None) -> F
     app.include_router(api_calibration.router)
     app.include_router(api_generate.router)
     app.include_router(api_figures.router)
+    app.include_router(api_lecture.router)
 
     @app.get("/login")
     def login(t: str = "") -> Response:  # pyright: ignore[reportUnusedFunction]

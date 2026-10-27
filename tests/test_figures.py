@@ -23,6 +23,7 @@ from dawoni.figures.geometry import compute_points
 from dawoni.figures.render import render_figure, render_spec
 from dawoni.models.figure import FIGURE_KINDS, FigureSpec, GeometrySpec
 from dawoni.models.item import ItemContent
+from dawoni.paths import AppPaths
 
 FIX = Path(__file__).parent / "fixtures" / "figures"
 GOLDEN = FIX / "golden"
@@ -152,7 +153,7 @@ def test_render_figure_cache(tmp_path: Path) -> None:
     assert p2 != p1 and p2.exists(), "값이 바뀌면 새로 그림"
 
 
-def test_docx_uses_rendered_parametric_figure(tmp_path: Path) -> None:
+def test_docx_uses_rendered_parametric_figure(tmp_path: Path, app_paths: AppPaths) -> None:
     from dawoni.export.docx.builder import DocWriter, FigureContext
     from dawoni.export.docx.check import check_docx
 
@@ -168,7 +169,8 @@ def test_docx_uses_rendered_parametric_figure(tmp_path: Path) -> None:
     out = w.save(tmp_path / "p.docx")
     rep = check_docx(out)
     assert rep.ok and rep.images == 1 and w.warnings == []
-    assert list((tmp_path / "figures" / "_render").glob("F1_*.png")), "다시 그린 그림이 캐시에"
+    assert list((app_paths.cache / "figures").glob("F1_*.png")), "다시 그린 그림은 PC 캐시에"
+    assert not (tmp_path / "figures" / "_render").exists(), "작업공간(공유 폴더)에는 두지 않는다"
 
 
 def _engine(app_paths: Any, make_fake: Any, script: list[dict[str, Any]]) -> tuple[Any, Path]:

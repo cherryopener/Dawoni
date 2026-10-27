@@ -2,7 +2,8 @@
 
 dawoni version
 dawoni schema item-content            # AI 출력 스키마(JSON Schema) 출력
-dawoni workspace init ~/DawoniWork
+dawoni workspace init ~/DawoniWork [--shared]   # --shared: 공유 폴더로 함께 쓰기
+dawoni workspace status|mode personal|team <경로>  # 모드·클라우드 폴더·충돌 사본
 dawoni agent detect                   # 설치된 AI CLI 확인
 dawoni agent test --cli agy           # 이미지 1장 판독 연결 테스트
 dawoni rules list|add|on|off|rm|preview  # 전역 규칙 (cli_rules.py)
@@ -53,11 +54,41 @@ def _cmd_schema(args: argparse.Namespace) -> int:
 
 def _cmd_workspace_init(args: argparse.Namespace) -> int:
     try:
-        ws = create_workspace(Path(args.path).expanduser(), args.name)
+        ws = create_workspace(
+            Path(args.path).expanduser(), args.name, "team" if args.shared else "personal"
+        )
     except WorkspaceError as e:
         sys.stderr.write(f"오류: {e}\n")
         return 1
     _out(f"작업공간 준비 완료: {ws.root}")
+    from dawoni.sharing import cloud_provider
+
+    if (provider := cloud_provider(ws.root)) and not args.shared:
+        _out(
+            f"  {provider} 폴더입니다. 다른 강사와 함께 쓰려면 --shared (또는 workspace mode team)"
+        )
+    return 0
+
+
+def _cmd_workspace_status(args: argparse.Namespace) -> int:
+    from dawoni.sharing import cloud_provider, conflict_copies
+    from dawoni.workspace import open_workspace, set_mode
+
+    root = Path(args.path).expanduser()
+    try:
+        ws, meta = open_workspace(root)
+        if getattr(args, "mode", None):
+            meta = set_mode(root, args.mode)
+    except WorkspaceError as e:
+        sys.stderr.write(f"오류: {e}\n")
+        return 1
+    _out(f"{ws.root}: {'함께 쓰기 (공유 폴더)' if meta.mode == 'team' else '혼자 쓰기'}")
+    _out(f"  동기화 폴더: {cloud_provider(ws.root) or '아님 (또는 알 수 없음)'}")
+    copies = conflict_copies(ws)
+    for c in copies:
+        _out(f"  충돌 사본: {c.path}  (원본 {c.original})")
+    if not copies:
+        _out("  충돌 사본 없음")
     return 0
 
 
@@ -143,7 +174,15 @@ def build_parser() -> argparse.ArgumentParser:
     wi = wsub.add_parser("init", help="작업공간 폴더 만들기")
     wi.add_argument("path")
     wi.add_argument("--name")
+    wi.add_argument("--shared", action="store_true", help="여러 강사가 공유 폴더로 함께 씀")
     wi.set_defaults(func=_cmd_workspace_init)
+    wst = wsub.add_parser("status", help="모드·동기화 폴더·충돌 사본 확인")
+    wst.add_argument("path")
+    wst.set_defaults(func=_cmd_workspace_status)
+    wm = wsub.add_parser("mode", help="혼자 쓰기(personal) ↔ 함께 쓰기(team)")
+    wm.add_argument("mode", choices=["personal", "team"])
+    wm.add_argument("path")
+    wm.set_defaults(func=_cmd_workspace_status)
 
     ap = sub.add_parser("agent", help="AI CLI 연결")
     asub = ap.add_subparsers(dest="agent_command", required=True)
@@ -161,7 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ui.set_defaults(func=_cmd_ui)
 
-    from dawoni import cli_exam, cli_export, cli_fig, cli_gen, cli_ingest, cli_rules
+    from dawoni import cli_exam, cli_export, cli_fig, cli_gen, cli_ingest, cli_lecture, cli_rules
 
     cli_rules.register(sub)
     cli_exam.register(sub)
@@ -169,6 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
     cli_export.register(sub)
     cli_gen.register(sub)
     cli_fig.register(sub)
+    cli_lecture.register(sub)
     return p
 
 

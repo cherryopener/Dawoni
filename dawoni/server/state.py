@@ -6,9 +6,12 @@ import threading
 from dataclasses import dataclass, field
 
 from dawoni.config import AppConfig, load_config, save_config
+from dawoni.lecture.workflow import Loader
+from dawoni.lecture.youtube import load_lecture
 from dawoni.paths import AppPaths
 from dawoni.server.jobs import JobManager
 from dawoni.services import Services, open_services
+from dawoni.sharing import machine_id
 from dawoni.workspace import WorkspaceError
 
 
@@ -21,6 +24,10 @@ class AppState:
     paths: AppPaths
     token: str
     jobs: JobManager
+    lecture_loader: Loader = field(default=load_lecture)
+    """유튜브 자막 받기 (시험에서는 가짜로 바꾼다)."""
+    machine: str = ""
+    """이 PC의 ID (공유 폴더의 '사용 중' 표식 이름)."""
     _services: Services | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -28,7 +35,10 @@ class AppState:
     def create(cls, paths: AppPaths, token: str) -> AppState:
         paths.ensure()
         cfg = load_config(paths)
-        return cls(paths=paths, token=token, jobs=JobManager(cfg.max_parallel_jobs))
+        return cls(
+            paths=paths, token=token, jobs=JobManager(cfg.max_parallel_jobs),
+            machine=machine_id(paths),
+        )  # fmt: skip
 
     def config(self) -> AppConfig:
         return load_config(self.paths)

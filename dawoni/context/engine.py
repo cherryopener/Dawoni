@@ -39,7 +39,9 @@ from dawoni.context.tasks import TaskDef
 log = logging.getLogger(__name__)
 
 DEFAULT_BUDGET_TOKENS = 60_000
-TRANSIENT_ERRORS = frozenset({AgentErrorCode.STALLED})
+TRANSIENT_ERRORS = frozenset({AgentErrorCode.STALLED, AgentErrorCode.PERMISSION_DENIED})
+"""새 세션으로 한 번 더 해 볼 오류. 권한 거부: 가끔 쓸데없는 명령(`echo test` 등)을 시도했다가
+막혀 빈 응답을 낸다 — 막는 것은 그대로(샌드박스), 다시 물을 뿐."""
 _PREVIOUS_CLIP = 4_000
 
 _CANCEL: ContextVar[threading.Event | None] = ContextVar("dawoni_cancel", default=None)
@@ -237,11 +239,16 @@ class ContextEngine:
                 except AgentError as e:
                     if e.code not in TRANSIENT_ERRORS or transient_left <= 0:
                         raise
-                    # 멈춤은 일시적인 경우가 많다: 새 세션으로 한 번 더 (수리 횟수와 별개)
+                    # 일시적인 경우가 많다: 새 세션으로 한 번 더 (수리 횟수와 별개)
                     transient_left -= 1
                     log.warning("%s 시도 %d 일시 오류(%s) — 재시도", task.name, attempt, e.code)
                     if on_progress:
-                        on_progress(f"응답이 멈춰 새 세션으로 다시 시도합니다 ({e.code})")
+                        why = (
+                            "AI가 허용되지 않은 작업을 시도해 막았습니다"
+                            if e.code == AgentErrorCode.PERMISSION_DENIED
+                            else "응답이 멈췄습니다"
+                        )
+                        on_progress(f"{why} — 새 세션으로 다시 시도합니다 ({e.code})")
                     res = self._call(req, pinned, model if pinned == agent else None, opts)
             except AgentError as e:
                 rec.agent = e.agent

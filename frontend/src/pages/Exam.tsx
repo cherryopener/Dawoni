@@ -1,7 +1,8 @@
-import { Badge, Loading, Button, ErrorBox, Row, Stack, Tabs } from "../components/ui";
-import { useLoad } from "../lib/api";
+import { useEffect, useState } from "react";
+import { Badge, Loading, Button, ErrorBox, Notice, Row, Stack, Tabs, teacherName } from "../components/ui";
+import { api, useLoad } from "../lib/api";
 import { go } from "../lib/router";
-import type { Exam, ExamSummary, QuestionState, Scope } from "../lib/types";
+import type { Exam, ExamSummary, Presence, QuestionState, Scope } from "../lib/types";
 import { SummaryBadges } from "./Exams";
 import { AnswersTab } from "./exam/Answers";
 import { CalibrationTab } from "./exam/Calibration";
@@ -18,12 +19,39 @@ export type ExamDetail = {
   summary: ExamSummary;
 };
 
+/** 함께 쓰는 폴더에서 같은 시험을 연 다른 PC (1분마다 표식 갱신). */
+function usePresence(examId: string): Presence[] {
+  const [others, setOthers] = useState<Presence[]>([]);
+  useEffect(() => {
+    let alive = true;
+    const beat = () =>
+      api
+        .post<{ others: Presence[] }>(`/exams/${examId}/presence`, { teacher: teacherName() || null })
+        .then((r) => alive && setOthers(r.others))
+        .catch(() => undefined);
+    beat();
+    const t = setInterval(beat, 60_000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+      api.del(`/exams/${examId}/presence`).catch(() => undefined);
+    };
+  }, [examId]);
+  return others;
+}
+
+function ago(at: string): string {
+  const m = Math.max(0, Math.round((Date.now() - new Date(at).getTime()) / 60_000));
+  return m < 1 ? "방금" : `${m}분 전`;
+}
+
 type Tab = "questions" | "rubrics" | "answers" | "review" | "calibration" | "generate" | "export";
 
 export function ExamPage({ id, tab }: { id: string; tab?: string }) {
   const { data, error, reload } = useLoad<ExamDetail>(`/exams/${id}`);
   const scope = useLoad<Scope>(data ? `/scopes/${data.exam.scope_id}` : null);
   const current = (tab ?? "questions") as Tab;
+  const others = usePresence(id);
   if (error) return <ErrorBox error={error} />;
   if (!data) return <Loading />;
   const s = data.summary;
@@ -69,6 +97,11 @@ export function ExamPage({ id, tab }: { id: string; tab?: string }) {
         <Badge>{data.scope.level}</Badge>
       </Row>
       <SummaryBadges s={s} />
+      {others.length > 0 && (
+        <Notice>
+          {others.map((o) => `${o.teacher ?? "이름 없는 강사"}(${o.host}, ${ago(o.at)})`).join(", ")}도 이 시험을 열어 두었습니다. 같은 문항의 루브릭·점수를 동시에 고치면 한쪽이 덮어써질 수 있으니 나눠서 작업하세요.
+        </Notice>
+      )}
       <Tabs value={current} onChange={(t) => go("exams", id, t)} tabs={tabs} />
       {current === "questions" && <QuestionsTab {...props} />}
       {current === "rubrics" && <RubricsTab {...props} />}

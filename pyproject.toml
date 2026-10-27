@@ -20,9 +20,11 @@ dependencies = [
     "python-docx>=1.2.0",
     "python-multipart>=0.0.32",
     "pywebview>=6.2.1 ; sys_platform == 'darwin'",
+    "qrcode>=8.2",
     "schemdraw>=0.23",
     "sympy>=1.14",
     "uvicorn>=0.54.0",
+    "youtube-transcript-api>=1.2.4",
 ]
 
 [project.scripts]

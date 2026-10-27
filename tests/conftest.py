@@ -13,6 +13,12 @@ import pytest
 from dawoni.paths import ENV_HOME, AppPaths
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """앱 데이터 폴더(캐시 등)는 늘 테스트 임시 폴더로 — 사용자 폴더에 쓰지 않게."""
+    monkeypatch.setenv(ENV_HOME, str(tmp_path / "app"))
+
+
 @pytest.fixture
 def app_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AppPaths:
     """테스트마다 독립된 앱 데이터 폴더 (실제 사용자 설정을 건드리지 않음)."""

@@ -12,7 +12,7 @@ import pytest
 from pydantic import Field, ValidationError
 from tests_support import fake_prompts
 
-from dawoni.agents import AgentClient, AgentError
+from dawoni.agents import AgentClient, AgentError, AgentErrorCode
 from dawoni.cli import main
 from dawoni.config import AppConfig, save_config
 from dawoni.context import (
@@ -436,3 +436,24 @@ def test_stall_is_retried_once_in_new_session(
     assert res.value.score == 7 and res.attempts == 1
     assert len(fake_prompts(exe)) == 2
     assert [r["ok"] for r in log.read()] == [True]
+
+
+def test_permission_denied_is_retried_once(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path
+) -> None:
+    """agy가 쓸데없이 `echo test` 같은 명령을 시도해 막히면 빈 응답 → 새 세션으로 한 번 더."""
+    exe = make_fake("script", script=[{"denied": True}, {"response": json.dumps(GOOD)}])
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    cfg.agents["claude"].enabled = False
+    cfg.agents["codex"].enabled = False
+    engine = ContextEngine(AgentClient(cfg, app_paths), calllog=CallLog(tmp_path / "calls.jsonl"))
+    assert engine.run(SIMPLE, VARS).value.score == 7
+    assert len(fake_prompts(exe)) == 2
+
+    twice = make_fake("script", script=[{"denied": True}, {"denied": True}])
+    cfg.agents["agy"].executable = str(twice)
+    engine = ContextEngine(AgentClient(cfg, app_paths), calllog=CallLog(tmp_path / "c2.jsonl"))
+    with pytest.raises(AgentError) as ei:
+        engine.run(SIMPLE, VARS)
+    assert ei.value.code == AgentErrorCode.PERMISSION_DENIED, "두 번 연속이면 그대로 알림"

@@ -245,6 +245,8 @@ export type Status = {
   workspace: string | null;
   workspace_ok: boolean;
   workspace_error: string | null;
+  workspace_mode: WorkspaceMode | null;
+  machine: string;
   default_agent: AgentName;
   agents: Record<AgentName, { enabled: boolean; model: string | null; executable: string | null }>;
 };
@@ -386,3 +388,36 @@ export type GeneratedSet = {
   skill_ids: string[];
   created_at: string;
 };
+
+// ---------------------------------------------------------------- 강의 요약 (M12)
+
+export type SummarySection = { heading: string; start_s: number; bullets: string[]; formulas: string[]; concept_ids: string[] };
+export type LectureSummary = {
+  id: string;
+  title: string;
+  overview: string;
+  sections: SummarySection[];
+  key_formulas: string[];
+  tips: string[];
+  review_questions: string[];
+  video_id: string;
+  url: string;
+  video_title: string;
+  channel: string | null;
+  duration_s: number;
+  scope_id: string | null;
+  pages: 1 | 2;
+  covered: string[];
+  missing: string[];
+  beyond: string[];
+  caption_generated: boolean;
+  agent: string | null;
+  model: string | null;
+  created_at: string;
+};
+
+// ---------------------------------------------------------------- 함께 쓰기 (M12)
+
+export type WorkspaceMode = "personal" | "team";
+export type Sharing = { mode: WorkspaceMode; provider: string | null; conflicts: { path: string; original: string }[] };
+export type Presence = { machine: string; teacher: string | null; host: string; at: string };

@@ -9,6 +9,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from dawoni import sharing
 from dawoni.cli_exam import parse_answer_text
 from dawoni.export.docx.documents import KeyOptions, PaperOptions
 from dawoni.export.docx.export import ExportKind, export_exam
@@ -38,6 +39,7 @@ from dawoni.server.api_setup import State
 from dawoni.server.jobs import JobContext
 from dawoni.server.state import AppState
 from dawoni.services import Services
+from dawoni.workspace import open_workspace
 
 router = APIRouter(prefix="/api/exams")
 
@@ -537,3 +539,29 @@ def export(exam_id: str, body: ExportBody, st: AppState = State) -> dict[str, An
         "warnings": res.warnings,
         "math_fallbacks": len(res.math_fallbacks),
     }
+
+
+# ---------------------------------------------------------------- 함께 쓰기 (M12)
+
+
+class PresenceBody(BaseModel):
+    teacher: str | None = None
+
+
+@router.post("/{exam_id}/presence")
+def presence(exam_id: str, body: PresenceBody, st: AppState = State) -> dict[str, Any]:
+    """화면이 시험을 연 동안 1분마다 부른다. 함께 쓰는 폴더면 다른 PC의 표식을 돌려준다."""
+    svc, store = _store(st, exam_id)
+    store.exam()
+    if open_workspace(svc.workspace.root)[1].mode != "team":
+        return {"mode": "personal", "others": []}
+    sharing.mark_in_use(svc.workspace, exam_id, st.machine, body.teacher)
+    others = sharing.others_using(svc.workspace, exam_id, st.machine)
+    return {"mode": "team", "others": [o.model_dump(mode="json") for o in others]}
+
+
+@router.delete("/{exam_id}/presence")
+def leave(exam_id: str, st: AppState = State) -> dict[str, bool]:
+    svc, _ = _store(st, exam_id)
+    sharing.release(svc.workspace, exam_id, st.machine)
+    return {"ok": True}

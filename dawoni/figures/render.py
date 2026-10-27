@@ -63,8 +63,17 @@ def item_values(item: ItemContent) -> dict[str, float]:
     return {k: v.value for k, v in item.variables.items()}
 
 
-def render_figure(fig: Figure, item: ItemContent, cache_dir: Path) -> Path:
+def default_cache() -> Path:
+    """다시 그린 그림 캐시는 PC마다 (앱 데이터 폴더). 공유 작업공간에 두면 PC마다 동기화된다."""
+    from dawoni.paths import AppPaths
+
+    return AppPaths.default().cache / "figures"
+
+
+def render_figure(fig: Figure, item: ItemContent, cache_dir: Path | None = None) -> Path:
     """파라미터 그림 → 캐시된 PNG 경로. 스펙이 없으면 FigureError."""
+    cache_dir = cache_dir or default_cache()
+    cache_dir.mkdir(parents=True, exist_ok=True)
     if fig.spec is None:
         raise FigureError(f"그림 {fig.id}: 스펙이 없습니다")
     values = item_values(item)

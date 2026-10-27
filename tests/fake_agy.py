@@ -67,6 +67,9 @@ def main() -> int:
         if entry.get("stall"):
             time.sleep(60)
             return 0
+        if entry.get("denied"):
+            result("SUCCESS", "", denied_actions=[{"action": "command"}])
+            return 0
         extra: dict[str, object] = {}
         if schema and "structured" in entry:
             extra["structured_output"] = entry["structured"]

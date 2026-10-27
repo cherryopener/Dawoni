@@ -6,6 +6,7 @@ import { go, useRoute } from "./lib/router";
 import type { Job, Status } from "./lib/types";
 import { ExamPage } from "./pages/Exam";
 import { ExamsPage } from "./pages/Exams";
+import { LecturesPage } from "./pages/Lectures";
 import { RulesPage } from "./pages/Rules";
 import { ScopeEditPage, ScopesPage } from "./pages/Scopes";
 import { SetupPage } from "./pages/Setup";
@@ -19,6 +20,7 @@ const JOB_NAMES: Record<string, string> = {
   rubric: "루브릭 초안",
   scan: "손글씨 판독",
   grade: "채점",
+  lecture_summary: "강의 요약",
 };
 
 function JobsButton() {
@@ -67,6 +69,7 @@ function JobsButton() {
 const NAV: { key: string; label: string }[] = [
   { key: "exams", label: "시험 · 채점" },
   { key: "scopes", label: "범위 프로필" },
+  { key: "lectures", label: "강의 요약" },
   { key: "rules", label: "전역 규칙" },
   { key: "setup", label: "연결 · 설정" },
 ];
@@ -104,6 +107,7 @@ export function App() {
   else if (page === "rules") body = <RulesPage />;
   else if (page === "scopes" && route[1]) body = <ScopeEditPage id={route[1]} />;
   else if (page === "scopes") body = <ScopesPage />;
+  else if (page === "lectures") body = <LecturesPage id={route[1]} />;
   else if (page === "exams" && route[1]) body = <ExamPage id={route[1]} tab={route[2]} />;
   else body = <ExamsPage />;
 

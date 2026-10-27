@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import APIRouter
@@ -32,10 +31,10 @@ def _figure(item: ItemContent, fid: str) -> Figure:
     raise KeyError(f"그림 {fid} 없음")
 
 
-def _render(item: ItemContent, fid: str, cache: Path) -> FileResponse:
+def _render(item: ItemContent, fid: str) -> FileResponse:
     fig = _figure(item, fid)
     try:
-        return FileResponse(render_figure(fig, item, cache), headers={"Cache-Control": "no-store"})
+        return FileResponse(render_figure(fig, item), headers={"Cache-Control": "no-store"})
     except FigureError as e:
         raise ValueError(f"그림 {fid}: {e}") from e
 
@@ -44,14 +43,14 @@ def _render(item: ItemContent, fid: str, cache: Path) -> FileResponse:
 def render_exam_figure(exam_id: str, number: str, fid: str, st: AppState = State) -> FileResponse:
     _, store = _store(st, exam_id)
     q = store.exam().question(number)
-    return _render(q.item, fid, store.root / "figures" / "_render")
+    return _render(q.item, fid)
 
 
 @router.get("/generated/{gen_id}/figures/{fid}/render")
 def render_generated_figure(gen_id: str, fid: str, st: AppState = State) -> FileResponse:
     ws = st.services().workspace
     s = GenStore(ws).get(gen_id)
-    return _render(s.item, fid, ws.bank / "generated" / "_render")
+    return _render(s.item, fid)
 
 
 def _replace_figure(store: ExamStore, number: str, fig: Figure) -> Figure:

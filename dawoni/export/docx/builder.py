@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import math as pymath
 import re
-import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,7 +28,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.section import Section
-from docx.shared import Cm, Emu, Pt
+from docx.shared import Cm, Emu, Pt, RGBColor
 from docx.table import Table, _Cell
 from docx.text.paragraph import Paragraph
 from lxml import etree
@@ -560,9 +559,8 @@ class DocWriter:
             from dawoni.figures.common import FigureError
             from dawoni.figures.render import render_figure
 
-            cache = (ctx.base_dir or Path(tempfile.gettempdir())) / "figures" / "_render"
             try:
-                return render_figure(fig, ctx.item, cache)
+                return render_figure(fig, ctx.item)
             except FigureError as e:
                 self.warnings.append(f"그림 {fig.id}: 다시 그리지 못해 원본을 씀 ({e})")
         if fig.orig is None:
@@ -804,3 +802,20 @@ class DocWriter:
             self._keep_together(mark)
         gap = self.par(space_after_pt=0, line_spacing=1.0)
         gap.paragraph_format.space_before = Pt(10)
+
+    # ------------------------------------------------ 링크
+
+    def hyperlink(
+        self, p: Paragraph, url: str, text: str, *, bold: bool = False, size_pt: float | None = None
+    ) -> None:
+        """바깥 주소로 가는 링크 (예: 영상의 그 시각). 글자 런은 add_run으로 만들어 옮긴다."""
+        from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+        rid = p.part.relate_to(url, RT.HYPERLINK, is_external=True)
+        link = _el("w:hyperlink")
+        link.set(qn("r:id"), rid)
+        run = add_run(p, text, self.fonts, bold=bold, size_pt=size_pt, underline=True)
+        run.font.color.rgb = RGBColor(0x1F, 0x4E, 0xB4)
+        r = _x(run._r)
+        r.addprevious(link)
+        link.append(r)
