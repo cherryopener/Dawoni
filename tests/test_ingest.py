@@ -210,6 +210,12 @@ def test_check_page_problems(exam_pdf: Path) -> None:
         for p in problems(lambda d: d["questions"][1]["figures"].append(
             {"id": "F9", "role": "stem", "caption": "x"}))
     )  # fmt: skip
+    assert any(
+        "Word 수식으로 바꿀 수 없음" in p
+        for p in problems(
+            lambda d: d["questions"][0]["stem"][0]["runs"].append({"t": "math", "v": "\\frac{1}{"})
+        )
+    )
 
 
 def test_to_item_uses_raster_crops_and_captions_as_notes(exam_pdf: Path) -> None:

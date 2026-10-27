@@ -400,6 +400,12 @@ def test_cli_exam_end_to_end(
     assert main(["exam", *w, "report", exam_id]) == 0
     out = capsys.readouterr().out
     assert "문항 1: 4/4" in out and "합계: 4/4" in out and "“(x-2)^2+3”" in out
+    for kind in ("paper", "key", "report", "scores"):
+        assert main(["export", *w, kind, exam_id]) == 0, kind
+    assert main(["export", *w, "key", exam_id, "--with-rubric"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("저장:") == 5 and "✗" not in out
+    assert len(list(ws.exports.glob("*.docx"))) == 4
     store = ExamStore(ws, exam_id)
     assert store.grade("A", "1") is not None
     assert store.transcript("A", "1") == Transcript(

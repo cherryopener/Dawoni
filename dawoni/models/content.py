@@ -170,3 +170,24 @@ def iter_runs(blocks: list[Block]) -> list[TextRun | MathRun]:
 
 def figure_ids_in(blocks: list[Block]) -> list[str]:
     return [b.figure_id for b in blocks if isinstance(b, FigureBlock)]
+
+
+_HANGUL = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣ]")
+_INLINE_MATH = re.compile(r"\\\((.+?)\\\)|(?<![\\$])\$(?!\$)(.+?)(?<!\\)\$", re.DOTALL)
+
+
+def runs_from_text(s: str) -> list[TextRun | MathRun]:
+    """AI가 쓴 문장 안의 `\\( … \\)`·`$ … $`를 수식 런으로 나눈다 (해설 설명, 판독 줄 등)."""
+    out: list[TextRun | MathRun] = []
+    pos = 0
+    for m in _INLINE_MATH.finditer(s):
+        latex = (m.group(1) or m.group(2) or "").strip()
+        if not latex or (m.group(2) is not None and _HANGUL.search(latex)):
+            continue  # `$5와 $3` 같은 금액 표기는 수식이 아님
+        if m.start() > pos:
+            out.append(text(s[pos : m.start()]))
+        out.append(math(latex))
+        pos = m.end()
+    if pos < len(s):
+        out.append(text(s[pos:]))
+    return out

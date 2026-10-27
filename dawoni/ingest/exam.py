@@ -7,6 +7,7 @@
 - 그림 ID는 레이아웃이 찾은 것만, 모두 역할을 받아야 함
 - 레이아웃이 ①~⑤ 옆에서 찾은 그림은 그 번호의 선지여야 함
 - 본문의 한글이 PDF 글자에 있어야 함 (지어낸 문장 차단)
+- 모든 식이 Word 수식(OMML)으로 바뀔 것 (출력 시점 실패 방지)
 - 최종 문항은 `ItemContent` 검증 통과 (그림 선지 규칙 등)
 """
 
@@ -25,8 +26,9 @@ from dawoni.grading.render import blocks_text, runs_text
 from dawoni.grading.store import safe_name
 from dawoni.ingest.grounding import hangul_outside
 from dawoni.ingest.layout import DocumentLayout, Region, render_clip
+from dawoni.mathx.omml import default_converter
 from dawoni.models.base import DawoniModel
-from dawoni.models.content import Block
+from dawoni.models.content import Block, MathRun, iter_runs
 from dawoni.models.grading import ExamQuestion
 from dawoni.models.item import Choice, ItemContent, ItemType
 
@@ -182,6 +184,9 @@ def check_page(out: PageExtraction, regions: list[Region], subject: str | None) 
                 f"문항 {q.label}: 본문에 PDF 글자에 없는 한글이 {outside:.0%} 들어갔다. "
                 "PDF 글자를 기준으로 그대로 옮길 것"
             )
+        latex = [x.v for x in iter_runs(q.stem) if isinstance(x, MathRun)]
+        latex += [x.v for c in q.choices for x in c.runs if isinstance(x, MathRun)]
+        problems += [f"문항 {q.label}: {m}" for m in default_converter().problems(latex)]
         try:
             to_item(q, r, subject)
         except ValidationError as e:

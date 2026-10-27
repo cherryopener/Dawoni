@@ -83,6 +83,20 @@ def check_solution_scope(
     return problems
 
 
+def check_solution_math(d: SolutionDraft) -> list[str]:
+    """해설의 모든 식이 Word 수식(OMML)으로 바뀌는가 (출력 시점 실패 방지, PLAN §7-2)."""
+    from dawoni.mathx.omml import default_converter
+    from dawoni.models.content import MathRun, runs_from_text
+
+    latex: list[str] = [d.final_answer.latex]
+    for steps in [d.steps, *(a.steps for a in d.alternatives)]:
+        for st in steps:
+            if st.math:
+                latex.append(st.math)
+            latex += [r.v for r in runs_from_text(st.explanation) if isinstance(r, MathRun)]
+    return default_converter().problems(latex)
+
+
 def normalize_latex(s: str) -> str:
     s = unicodedata.normalize("NFKC", s)
     for cmd in (r"\left", r"\right", r"\displaystyle", r"\,", r"\;", r"\:", r"\!", r"\ "):

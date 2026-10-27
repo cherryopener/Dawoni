@@ -14,5 +14,6 @@ uv run ruff check .
 uv run pyright
 ```
 
-- Python 3.16 (`.python-version`), Node 26 (프론트엔드, M7부터)
+- Python 3.15 (`.python-version`), Node 26 (프론트엔드, M7부터)
+- 수식 → Word 변환용 pandoc은 `pypandoc-binary`로 함께 설치됨
 - 실제 AI CLI를 호출하는 테스트는 기본 제외: `uv run pytest -m agent`

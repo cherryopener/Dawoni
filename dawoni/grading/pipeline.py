@@ -85,9 +85,10 @@ def solve_question(
     model: str | None = None,
 ) -> ScopedSolution:
     def check(d: SolutionDraft) -> list[str]:
+        problems = checks.check_solution_math(d)
         if d.out_of_scope_note:
-            return []  # 범위 안에서 못 푼다는 판단은 수리하지 않고 강사에게 알린다
-        return checks.check_solution_scope(d, scope)
+            return problems  # 범위 안에서 못 푼다는 판단은 수리하지 않고 강사에게 알린다
+        return problems + checks.check_solution_scope(d, scope)
 
     task = dataclasses.replace(SOLVE, validator=check)
     inp = TaskInput(

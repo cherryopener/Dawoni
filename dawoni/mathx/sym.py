@@ -7,6 +7,7 @@ sympy 파서만 쓴다.
 
 from __future__ import annotations
 
+import cmath
 import random
 
 import sympy
@@ -68,3 +69,22 @@ def equivalent(a: str, b: str, *, samples: int = 8, seed: int = 0) -> bool | Non
         if checked >= samples:
             break
     return True if checked else None
+
+
+def evaluate(expr: str, values: dict[str, float]) -> float:
+    """변수 값을 넣어 수치로 계산. 남는 기호가 있거나 실수가 아니면 ExprError."""
+    e = parse(expr)
+    subs = {sympy.Symbol(k): sympy.nsimplify(v) for k, v in values.items()}
+    v = e.subs(list(subs.items()))
+    left = sorted(str(s) for s in v.free_symbols)
+    if left:
+        raise ExprError(f"값이 없는 변수: {left} ({expr!r})")
+    try:
+        c = complex(sympy.N(v))
+    except (TypeError, ValueError) as err:
+        raise ExprError(f"계산할 수 없음: {expr!r}") from err
+    if not cmath.isfinite(c):
+        raise ExprError(f"값이 정의되지 않음 (0으로 나눔 등): {expr!r}")
+    if abs(c.imag) > 1e-12:
+        raise ExprError(f"실수가 아님: {expr!r} = {c}")
+    return c.real

@@ -148,11 +148,12 @@ def build_parser() -> argparse.ArgumentParser:
     at.add_argument("--keep", action="store_true", help="성공해도 격리 폴더 보존")
     at.set_defaults(func=_cmd_agent_test)
 
-    from dawoni import cli_exam, cli_ingest, cli_rules
+    from dawoni import cli_exam, cli_export, cli_ingest, cli_rules
 
     cli_rules.register(sub)
     cli_exam.register(sub)
     cli_ingest.register(sub)
+    cli_export.register(sub)
     return p
 
 
