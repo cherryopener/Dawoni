@@ -21,7 +21,7 @@ from dawoni.generate.search import SearchResult, search
 from dawoni.grading import checks as gchecks
 from dawoni.grading.pipeline import PipelineError, derive_rubric, solve_question
 from dawoni.grading.render import question_text, scope_layer, solution_text
-from dawoni.mathx.sym import equivalent, to_latex
+from dawoni.mathx.sym import ExprError, equivalent, parse, to_latex
 from dawoni.models.generation import (
     ExtensionProposals,
     GeneratedSet,
@@ -171,9 +171,9 @@ def symbolic_draft(
             material=_material(src, src_sol),
         ),
     ).value
-    item = t.item.model_copy(
-        update={"answer": ValueAnswer(kind="value", latex=t.answer_expr, expr=t.answer_expr)}
-    )
+    # 문자 답식은 expr에 두지 않는다 (ItemContent는 expr의 문자를 '정의된 변수'로 요구)
+    latex = sym_latex(t.answer_expr)
+    item = t.item.model_copy(update={"answer": ValueAnswer(kind="value", latex=latex)})
     cond = f" (조건: {', '.join(t.assumptions)})" if t.assumptions else ""
     return Draft(
         item=ItemContent.model_validate(item.model_dump()),
@@ -318,6 +318,13 @@ def novel_b_draft(
 # ---------------------------------------------------------------- 마무리: 독립 풀이 → 비교 → 루브릭
 
 
+def sym_latex(expr: str) -> str:
+    try:
+        return to_latex(parse(expr))
+    except ExprError:
+        return expr
+
+
 def _agree(draft: Draft, final: FinalAnswer) -> tuple[bool | None, str]:
     if draft.expected_label is not None:
         got = gc.choice_label_of(final.latex)
@@ -325,9 +332,20 @@ def _agree(draft: Draft, final: FinalAnswer) -> tuple[bool | None, str]:
     if draft.expected_expr and final.expr:
         same = equivalent(draft.expected_expr, final.expr)
         return same, f"{draft.expected_expr} / 재풀이 {final.expr}"
+    if draft.expected_expr:
+        # 재풀이가 답을 문장으로만 쓴 경우 ("x=3일 때 최솟값 10"): 답을 뜻하는 말 뒤의 값으로 비교
+        got = gc.answer_values(final.latex)
+        if got:
+            same = any(equivalent(draft.expected_expr, g) for g in got)
+            return (
+                same,
+                f"\\({draft.expected_latex or draft.expected_expr}\\) / 재풀이 \\({final.latex}\\)",
+            )
     if draft.expected_latex:
         same = gchecks.normalize_latex(draft.expected_latex) == gchecks.normalize_latex(final.latex)
-        return (True if same else None), f"{draft.expected_latex} / 재풀이 {final.latex}"
+        return (
+            True if same else None
+        ), f"\\({draft.expected_latex}\\) / 재풀이 \\({final.latex}\\)"
     return None, "기대한 답 없음"
 
 
@@ -349,11 +367,17 @@ def finish(
         warnings.append(f"범위 안에서 풀 수 없다는 판단: {indep.out_of_scope_note}")
     if draft.solution is not None:
         same = gchecks.answers_agree(draft.solution.final_answer, indep.final_answer)
-        detail = f"{draft.solution.final_answer.latex} / 재풀이 {indep.final_answer.latex}"
+        detail = (
+            f"\\({draft.solution.final_answer.latex}\\) / 재풀이 \\({indep.final_answer.latex}\\)"
+        )
         base = draft.solution
     else:
         same, detail = _agree(draft, indep.final_answer)
         base = indep
+    if indep.out_of_scope_note and same:
+        # 범위 밖이라는 판단과 함께 낸 답은 확인으로 치지 않는다 (범위 프로필이 문항과 다를 수 있음)
+        same = None
+        detail += ", 단 독립 풀이가 범위 밖이라고 판단"
     if same:
         notes.append(f"독립 풀이와 답 일치 ({detail})")
     elif same is None:
@@ -365,7 +389,7 @@ def finish(
         question_number=q.number,
         scope_version=scope.version,
         verified=same is True,
-        check_notes=[*notes, *warnings],
+        check_notes=list(warnings),  # 확인 성공은 verified로 (화면은 check_notes를 경고로 표시)
     )
     rubric: RubricDraft | None = None
     if same is True:

@@ -420,3 +420,27 @@ def test_cli_exam_end_to_end(
         ],
         confirmed=True,
     )
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "expected"),
+    [
+        (
+            r"q = \frac{A}{2B}\text{일 때 최댓값 } \frac{A^2}{4B}",
+            r"q = \frac{A}{2B}, \quad R = \frac{A^2}{4B}",
+            True,
+        ),
+        (
+            r"x=4\text{일 때 최댓값 } 11, \; x=1\text{일 때 최솟값 } 2",
+            r"x=1\text{일 때 최솟값 } 2, x=4\text{일 때 최댓값 } 11",
+            True,
+        ),
+        (r"x=3\text{일 때 최솟값 } 10", r"x=3\text{일 때 최솟값 } 9", None),
+        (r"\frac{1}{", "1", None),
+    ],
+)
+def test_answers_agree_multi_value(a: str, b: str, expected: bool | None) -> None:
+    """여러 값으로 된 답(문장 답)도 값 집합으로 비교 (M9 실측: 신규 B 독립 풀이)."""
+    from dawoni.models.grading import FinalAnswer
+
+    assert checks.answers_agree(FinalAnswer(latex=a), FinalAnswer(latex=b)) is expected

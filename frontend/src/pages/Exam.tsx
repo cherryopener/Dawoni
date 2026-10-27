@@ -6,6 +6,7 @@ import { SummaryBadges } from "./Exams";
 import { AnswersTab } from "./exam/Answers";
 import { CalibrationTab } from "./exam/Calibration";
 import { ExportTab } from "./exam/Export";
+import { GenerateTab } from "./exam/Generate";
 import { QuestionsTab } from "./exam/Questions";
 import { ReviewTab } from "./exam/Review";
 import { RubricsTab } from "./exam/Rubrics";
@@ -17,7 +18,7 @@ export type ExamDetail = {
   summary: ExamSummary;
 };
 
-type Tab = "questions" | "rubrics" | "answers" | "review" | "calibration" | "export";
+type Tab = "questions" | "rubrics" | "answers" | "review" | "calibration" | "generate" | "export";
 
 export function ExamPage({ id, tab }: { id: string; tab?: string }) {
   const { data, error, reload } = useLoad<ExamDetail>(`/exams/${id}`);
@@ -53,7 +54,8 @@ export function ExamPage({ id, tab }: { id: string; tab?: string }) {
       ),
     },
     { value: "calibration", label: <>5. 보정</> },
-    { value: "export", label: <>6. 출력</> },
+    { value: "generate", label: <>6. 문항 제작</> },
+    { value: "export", label: <>7. 출력</> },
   ];
   const props = { detail: data, scope: scope.data, reload };
   return (
@@ -73,6 +75,7 @@ export function ExamPage({ id, tab }: { id: string; tab?: string }) {
       {current === "answers" && <AnswersTab {...props} />}
       {current === "review" && <ReviewTab {...props} />}
       {current === "calibration" && <CalibrationTab {...props} />}
+      {current === "generate" && <GenerateTab {...props} />}
       {current === "export" && <ExportTab {...props} />}
     </Stack>
   );

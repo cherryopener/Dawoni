@@ -62,7 +62,7 @@ function StatTiles({ s, compact }: { s: AgreementStats; compact?: boolean }) {
   );
 }
 
-function RubricPreview({ r }: { r: RubricDraft }) {
+export function RubricPreview({ r }: { r: RubricDraft }) {
   return (
     <Stack gap={6}>
       <table className={tableClass}>

@@ -23,7 +23,7 @@ from dawoni.grading.pipeline import PipelineError
 from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.generation import NovelDraft, NumericTemplate, RewriteDraft, SymbolicTemplate
 from dawoni.models.grading import Exam, ExamQuestion, ScopedSolution, SolutionDraft
-from dawoni.models.item import ChoiceAnswer, ItemContent, Variable
+from dawoni.models.item import ChoiceAnswer, ItemContent, ValueAnswer, Variable
 from dawoni.models.scope import ExtensionConcept, ScopeProfile
 from dawoni.paths import AppPaths
 from dawoni.services import Services, open_services
@@ -309,3 +309,32 @@ def test_novel_draft_model_requires_solution() -> None:
     RewriteDraft.model_validate(
         {"item": FIG_SOURCE["item"], "expected_answer": "3", "change_note": "x"}
     )
+
+
+def test_out_of_scope_resolve_is_not_verified(env: Any) -> None:
+    oos = {**solved("3", "3"), "out_of_scope_note": "범위 밖 개념이 필요"}
+    t = template()
+    ans = str(search(t, count=1).found[0].answer)
+    oos["final_answer"] = {"latex": ans, "expr": ans}
+    svc, store, _ = env([Q1_TEMPLATE, oos])
+    s = generate(svc, store, "1", "numeric", opts=gp.Options(count=1))[0]
+    assert not s.solution.verified and s.rubric is None
+    assert any("범위 밖이라고 판단" in w for w in s.warnings)
+
+
+def test_answer_values_from_sentence() -> None:
+    assert gc.answer_values(r"x=3\text{일 때 최솟값 } 10") == ["10"]
+    assert gc.answer_values(r"\text{최댓값은 } \frac{3}{2}") == ["(3)/(2)"]
+    assert gc.answer_values("10") == []
+
+
+def test_generate_symbolic(env: Any) -> None:
+    tpl = {
+        "item": {"item_type": "essay", "stem": [{"type": "paragraph", "runs": [
+            T("상수 "), M(r"a \ge 0"), T("에 대하여 이차함수 "), M("y=x^2-2ax+7"), T("의 최솟값을 a로 나타내시오.")]}]},
+        "answer_expr": "7 - a**2", "assumptions": ["a >= 0"], "note": "일차항 계수를 문자로",
+    }  # fmt: skip
+    svc, store, _ = env([tpl, solved("7-a^2", "7 - a**2"), RUBRIC_OK])
+    s = generate(svc, store, "1", "symbolic")[0]
+    assert s.solution.verified and s.rubric is not None
+    assert isinstance(s.item.answer, ValueAnswer) and s.item.answer.latex == "7 - a^{2}"

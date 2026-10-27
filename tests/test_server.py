@@ -290,3 +290,64 @@ def test_calibration_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Pat
     assert new["version"] == 2 and new["status"] == "draft", "승인된 루브릭을 고치면 새 버전 초안"
     agree = c.get(f"{base}/agreement").json()
     assert agree["overall"]["n"] == 1 and agree["questions"]["1"]["bias"] == 2
+
+
+def test_generate_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path) -> None:
+    from test_generate import Q1_TEMPLATE, solved, template
+
+    from dawoni.generate.search import search
+    from dawoni.grading.store import ExamStore
+    from dawoni.models.grading import ScopedSolution, SolutionDraft
+    from dawoni.paths import WorkspacePaths
+
+    ans = str(search(template(), count=1).found[0].answer)
+    script = [Q1_TEMPLATE, solved(ans, ans), RUBRIC_OK]
+    exe = make_fake(
+        "script", script=[{"response": json.dumps(r, ensure_ascii=False)} for r in script]
+    )
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    save_config(app_paths, cfg)
+    c = _client(app_paths)
+    ws_root = tmp_path / "ws"
+    c.post("/api/workspace", json={"path": str(ws_root), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q1 = read_json(FIX / "questions.json")[:1]
+    eid = c.post(
+        "/api/exams", json={"title": "원본", "scope_id": scope["id"], "questions": q1}
+    ).json()["id"]
+    ExamStore(WorkspacePaths(ws_root), eid).save_solution(
+        ScopedSolution(
+            **SolutionDraft.model_validate(SOL_OK).model_dump(),
+            question_number="1",
+            scope_version=1,
+        )
+    )
+    bad = c.post(f"/api/exams/{eid}/generate", json={"question": "1", "kind": "novel_b"})
+    assert bad.status_code == 200, "확장 개념 없음은 작업 안에서 실패로 알림"
+    assert "확장 개념이 필요" in _wait(c, bad.json())["error"]["message"]
+
+    job = _wait(
+        c,
+        c.post(
+            f"/api/exams/{eid}/generate", json={"question": "1", "kind": "numeric", "count": 1}
+        ).json(),
+    )
+    assert job["status"] == "succeeded" and job["result"]["verified"] == 1, job
+    sets = c.get(f"/api/exams/{eid}/generated").json()
+    assert len(sets) == 1 and sets[0]["status"] == "draft" and sets[0]["rubric"]
+    gid = sets[0]["id"]
+    r = c.post("/api/generated/to-exam", json={"ids": [gid], "title": "동형"})
+    assert r.status_code == 400 and "승인하지 않은" in r.json()["detail"]
+    assert (
+        c.put(f"/api/generated/{gid}/review", json={"status": "approved", "by": "김선생"}).json()[
+            "status"
+        ]
+        == "approved"
+    )
+    new = c.post("/api/generated/to-exam", json={"ids": [gid], "title": "동형"}).json()
+    detail = c.get(f"/api/exams/{new['id']}").json()
+    assert (
+        detail["questions"][0]["solution"]["verified"]
+        and detail["questions"][0]["rubric"]["status"] == "draft"
+    )

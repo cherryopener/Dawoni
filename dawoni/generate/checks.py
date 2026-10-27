@@ -262,3 +262,18 @@ def check_novel_b(d: NovelDraft, scope: ScopeProfile, ext: ExtensionConcept) -> 
         elif normalize_text(quote) not in passage:
             problems.append(f"{xid}의 정의 인용 '{quote[:40]}'이 제시문에 그대로 없다")
     return problems
+
+
+_ANSWER_WORDS = r"(?:최솟값|최댓값|최소값|최대값|값|답|넓이|길이|개수)"
+_NUM = r"-?\s*(?:\\[dt]?frac\{-?\d+\}\{\d+\}|\d+(?:\.\d+)?(?:/\d+)?)"
+
+
+def answer_values(latex: str) -> list[str]:
+    """문장으로 쓴 답에서 '최솟값 10', '최댓값은 \\frac{3}{2}' 같은 값을 sympy 식으로 꺼낸다."""
+    plain = re.sub(r"\\text\{([^{}]*)\}", r" \1 ", latex)
+    out: list[str] = []
+    for m in re.finditer(rf"{_ANSWER_WORDS}\s*(?:은|는|이|가|=)?\s*({_NUM})", plain):
+        v = m.group(1).replace(" ", "")
+        f = re.fullmatch(r"(-?)\\[dt]?frac\{(-?\d+)\}\{(\d+)\}", v)
+        out.append(f"{f.group(1)}({f.group(2)})/({f.group(3)})" if f else v)
+    return out

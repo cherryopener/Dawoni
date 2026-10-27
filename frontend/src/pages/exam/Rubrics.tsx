@@ -43,7 +43,7 @@ function Steps({ steps, scope }: { steps: SolutionStep[]; scope: Scope | null })
   );
 }
 
-function SolutionView({ sol, scope }: { sol: Solution; scope: Scope | null }) {
+export function SolutionView({ sol, scope }: { sol: Solution; scope: Scope | null }) {
   return (
     <Stack gap={8}>
       <Row>
@@ -52,7 +52,9 @@ function SolutionView({ sol, scope }: { sol: Solution; scope: Scope | null }) {
       </Row>
       {sol.out_of_scope_note && <Notice>범위 안에서 풀기 어렵다는 AI 판단: {sol.out_of_scope_note}</Notice>}
       {sol.check_notes.map((n, i) => (
-        <Notice key={i}>{n}</Notice>
+        <Notice key={i}>
+          <Loose text={n} />
+        </Notice>
       ))}
       <Steps steps={sol.steps} scope={scope} />
       <div>

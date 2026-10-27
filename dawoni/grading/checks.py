@@ -117,7 +117,64 @@ def answers_agree(a: FinalAnswer, b: FinalAnswer) -> bool | None:
             return same
     if normalize_latex(a.latex) == normalize_latex(b.latex):
         return True
+    # 여러 값으로 된 답: "q=\\frac{A}{2B}일 때 최댓값 \\frac{A^2}{4B}" ↔ "q=\\frac{A}{2B}, R=…"
+    va, vb = latex_values(a.latex), latex_values(b.latex)
+    if va and vb and _same_values(va, vb):
+        return True
     return None
+
+
+_SPACES = re.compile(r"\\(?:left|right|displaystyle|quad|qquad|,|;|:|!|\s)")
+
+
+def latex_to_expr(s: str) -> str:
+    """간단한 LaTeX 식 → sympy 식 (분수·근호·거듭제곱·곱 기호). 완전한 변환기는 아님."""
+    t = _SPACES.sub(" ", s)
+    t = t.replace("\\cdot", "*").replace("\\times", "*").replace("\\pi", "pi")
+    for _ in range(10):  # 안쪽부터 \frac{…}{…}, \sqrt{…}
+        n = re.sub(r"\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}", r"((\1)/(\2))", t)
+        n = re.sub(r"\\sqrt\{([^{}]*)\}", r"sqrt(\1)", n)
+        n = re.sub(r"\^\{([^{}]*)\}", r"**(\1)", n)
+        if n == t:
+            break
+        t = n
+    t = re.sub(r"\^(\w)", r"**\1", t)
+    return t.replace("{", "(").replace("}", ")")
+
+
+def latex_values(latex: str) -> list[str]:
+    """답에 들어 있는 값들: 글(\\text·한글)·쉼표로 나눈 조각마다 마지막 '=' 오른쪽."""
+    plain = re.sub(r"\\text\{[^{}]*\}", " , ", latex)
+    plain = re.sub(r"[가-힣]+", " , ", plain)
+    out: list[str] = []
+    for seg in re.split(r",|\\quad|\\qquad|;", plain):
+        seg = seg.strip()
+        if not seg:
+            continue
+        rhs = seg.split("=")[-1].strip()
+        if not rhs or re.search(r"\\(?:le|ge|lt|gt|neq)|[<>]", rhs):
+            continue
+        expr = latex_to_expr(rhs)
+        try:
+            from dawoni.mathx.sym import parse
+
+            parse(expr)
+        except ValueError:
+            continue
+        out.append(expr)
+    return out
+
+
+def _same_values(a: list[str], b: list[str]) -> bool:
+    if len(a) != len(b):
+        return False
+    rest = list(b)
+    for x in a:
+        hit = next((y for y in rest if equivalent(x, y) is True), None)
+        if hit is None:
+            return False
+        rest.remove(hit)
+    return True
 
 
 # ---------------------------------------------------------------- 루브릭

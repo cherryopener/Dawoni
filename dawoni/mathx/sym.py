@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import cmath
 import random
+from tokenize import TokenError
 
 import sympy
 from sympy.parsing.sympy_parser import (
@@ -28,7 +29,9 @@ class ExprError(ValueError):
 def parse(expr: str) -> sympy.Expr:
     try:
         v = parse_expr(expr, transformations=_TRANSFORMS, evaluate=True)
-    except (SyntaxError, TypeError, ValueError, sympy.SympifyError, AttributeError) as e:
+    except (
+        SyntaxError, TypeError, ValueError, sympy.SympifyError, AttributeError, TokenError,
+    ) as e:  # fmt: skip
         raise ExprError(f"식을 읽을 수 없음: {expr!r} ({e})") from e
     if not isinstance(v, sympy.Expr):
         raise ExprError(f"식이 아님: {expr!r}")

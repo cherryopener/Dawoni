@@ -356,3 +356,32 @@ export type RubricSuggestion = {
   revised: RubricDraft | null;
   no_change_reason: string | null;
 };
+
+// ---------------------------------------------------------------- 문항 제작 (M9)
+
+export type GenKind = "numeric" | "symbolic" | "condition" | "novel_a" | "novel_b";
+export type Extension = {
+  id: string;
+  name: string;
+  definition: string;
+  assumptions: string[];
+  expected_inference?: string | null;
+};
+export type GeneratedSet = {
+  id: string;
+  kind: GenKind;
+  source: { exam_id: string; question_number: string };
+  scope_id: string;
+  points: number;
+  item: Item;
+  solution: Solution;
+  rubric: RubricDraft | null;
+  status: "draft" | "approved" | "rejected";
+  checks: string[];
+  warnings: string[];
+  note: string | null;
+  values: Record<string, number> | null;
+  extension: Extension | null;
+  skill_ids: string[];
+  created_at: string;
+};
