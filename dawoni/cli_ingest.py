@@ -1,7 +1,7 @@
 """`dawoni ingest …` — 교재·시험지 PDF DB화 (M5).
 
 dawoni ingest layout 시험지.pdf [--overlay 폴더]   # AI 없이 레이아웃만 (영역·그림 표시)
-dawoni ingest exam 시험지.pdf --title 중간고사 --scope <범위ID> [--force]
+dawoni ingest exam 시험지.pdf --title 중간고사 --scope <범위ID> [--force] [--key-pages 6|none]
 dawoni ingest textbook 교재.pdf --title "이차함수의 최대·최소" --level "고1" [--pages 12-20]
 """
 
@@ -118,6 +118,14 @@ def _cli_progress(done: int, total: int, message: str) -> None:
         sys.stderr.write(f"  … {message}\n")
 
 
+def parse_key_pages(spec: str | None) -> list[int] | None:
+    if spec is None:
+        return None  # 자동
+    if spec.strip().lower() in ("none", "no", "없음", ""):
+        return []
+    return parse_pages(spec)
+
+
 def _cmd_exam(args: argparse.Namespace) -> int:
     svc = _svc(args)
     res = ingest_exam_pdf(
@@ -127,6 +135,7 @@ def _cmd_exam(args: argparse.Namespace) -> int:
         scope_id=args.scope,
         subject=args.subject,
         force=args.force,
+        key_pages=parse_key_pages(args.key_pages),
         progress=_cli_progress,
     )
     print_layout(res.layout)
@@ -136,7 +145,19 @@ def _cmd_exam(args: argparse.Namespace) -> int:
         kind = {"multiple_choice": "선택형", "short_answer": "단답형", "essay": "서술형"}[
             q.item.item_type
         ]
-        _out(f"- {q.number} [{kind}, {q.points:g}점] 그림 {len(q.item.figures)}개")
+        parts = (
+            "  소문항 " + ", ".join(f"{p.label} {p.points:g}점" for p in q.parts) if q.parts else ""
+        )
+        _out(f"- {q.number} [{kind}, {q.points:g}점] 그림 {len(q.item.figures)}개{parts}")
+    if res.key_pages:
+        _out(
+            f"해설지: {', '.join(map(str, res.key_pages))}쪽 → {len(res.keys)}문항 "
+            "(모범 답안·부분 점수, `exam show`로 확인)"
+        )
+    else:
+        _out(
+            "해설지: 없음 — 루브릭이 AI 풀이만으로 만들어집니다 (`exam key`로 나중에 붙일 수 있음)"
+        )
     for w in res.warnings:
         _out(f"  ! {w}")
     _out("문항 내용은 `exam show`로 확인하고, 다음은 `exam solve`입니다.")
@@ -202,6 +223,10 @@ def register(sub: Any) -> None:
     ex.add_argument("--scope", required=True)
     ex.add_argument("--subject")
     ex.add_argument("--force", action="store_true", help="이미 DB화한 자료도 다시")
+    ex.add_argument(
+        "--key-pages",
+        help="해설지 쪽 (예: 6). 없으면 '부분 점수' 표시로 자동으로 찾고, 'none'이면 해설지 없음",
+    )
     ex.set_defaults(func=_wrap(_cmd_exam))
 
     tb = isub.add_parser("textbook", help="교재 PDF → 범위 프로필 초안")

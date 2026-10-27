@@ -41,6 +41,7 @@ function NewExam({ scopes, onCreated }: { scopes: ScopeSummary[]; onCreated: (id
   const [title, setTitle] = useState("");
   const [scopeId, setScopeId] = useState(scopes[0]?.id ?? "");
   const [force, setForce] = useState(false);
+  const [keyPages, setKeyPages] = useState("");
   const [json, setJson] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const job = useJob((j) => onCreated((j.result as { exam_id: string }).exam_id));
@@ -53,6 +54,7 @@ function NewExam({ scopes, onCreated }: { scopes: ScopeSummary[]; onCreated: (id
     f.append("title", title);
     f.append("scope_id", scopeId);
     f.append("force", String(force));
+    f.append("key_pages", keyPages);
     void job.run(() => api.upload("/exams/from-pdf", f));
   };
   const fromJson = () => {
@@ -107,6 +109,12 @@ function NewExam({ scopes, onCreated }: { scopes: ScopeSummary[]; onCreated: (id
                 이미 DB화한 파일이어도 다시
               </Check>
             </Row>
+            <Field
+              label="해설지 쪽"
+              hint="시험지 PDF 안의 모범 답안·부분 점수 쪽 (예: 6). 비우면 '부분 점수' 표시로 자동으로 찾고, 없음이면 none. 해설지가 따로 있으면 시험을 만든 뒤 루브릭 탭에서 붙입니다."
+            >
+              <TextInput value={keyPages} onChange={setKeyPages} placeholder="자동" />
+            </Field>
             <Row>
               <Button variant="primary" onClick={fromPdf} disabled={!file || !title || job.running}>
                 시험지 DB화

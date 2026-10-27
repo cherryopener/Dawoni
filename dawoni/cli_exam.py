@@ -5,7 +5,9 @@
     dawoni exam solve <시험ID> [-q 3] [--verify]    # 범위 해설 (+ 독립 재풀이)
     dawoni exam rubric <시험ID> [-q 3]             # 해설 → 루브릭 초안
     dawoni exam show <시험ID> -q 3                 # 해설·루브릭 보기
-    dawoni exam approve <시험ID> -q 3 --by 김선생   # 루브릭 승인 (강사 단계)
+    dawoni exam key <시험ID> 해설지.pdf [--pages 6]  # 강사 해설지(모범 답안·부분 점수) 붙이기
+    dawoni exam key-confirm <시험ID> [-q 3] --by 김선생  # 해설지 판독을 원본과 비교해 확인
+    dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1] [--reject A2]  # 루브릭 승인
     dawoni exam answer <시험ID> --student 홍길동 -q 3 answer.txt   # 입력한 답안(확인된 판독문)
     dawoni exam scan <시험ID> --student 홍길동 사진1.jpg 사진2.jpg [--cross]  # 손글씨 판독(미확인)
     dawoni exam transcript <시험ID> --student 홍길동 -q 3 [--confirm] [--replace 고친답안.txt]
@@ -27,10 +29,22 @@ from dawoni.config import AGENT_NAMES
 from dawoni.context import TaskFailed
 from dawoni.fsio import read_json
 from dawoni.grading import workflow
-from dawoni.grading.pipeline import PipelineError, SecondOpinion, approve_rubric
-from dawoni.grading.render import rubric_text, solution_text
+from dawoni.grading.pipeline import (
+    PipelineError,
+    SecondOpinion,
+    approve_rubric,
+    decide_candidates,
+)
+from dawoni.grading.render import key_text, rubric_text, solution_text
 from dawoni.grading.store import ExamStore, ScopeStore
-from dawoni.models.grading import Exam, ExamQuestion, Transcript, TranscriptLine
+from dawoni.models.grading import (
+    Exam,
+    ExamQuestion,
+    GradeResult,
+    Rubric,
+    Transcript,
+    TranscriptLine,
+)
 from dawoni.models.scope import ScopeProfile
 from dawoni.ocr.pages import PageError
 from dawoni.services import Services, open_services
@@ -124,6 +138,39 @@ def _cmd_solve(args: argparse.Namespace) -> int:
     return 0
 
 
+VERDICT_TEXT = {
+    "same": "해설지와 같음",
+    "ai_wrong": "AI 풀이 오답 → 해설지 따름",
+    "other_valid": "AI 답도 정답일 수 있음 → 후보",
+    "key_doubt": "해설지·문제에 의문",
+}
+CHECK_TEXT = {
+    "valid": "검산 통과",
+    "invalid": "검산 실패",
+    "unsure": "해석에 따라 다름",
+    None: "검산 안 함",
+}
+STATUS_TEXT = {"proposed": "강사 미확인", "accepted": "인정", "rejected": "제외"}
+
+
+def _rubric_review(r: Rubric) -> list[str]:
+    out = [f"  {'해설지 기준' if r.based_on_key else '해설지 없음 (AI 풀이 기준)'}"]
+    for c in r.checks:
+        mark = "" if c.verdict == "same" else " ⚠"
+        out.append(f"  {c.part or '전체'}: {VERDICT_TEXT[c.verdict]}{mark}")
+        if c.verdict != "same":
+            out.append(f"      해설지 {c.key_answer} / AI {c.ai_answer}")
+            if c.note:
+                out.append(f"      {c.note}")
+    for a in r.candidates:
+        out.append(
+            f"  정답 후보 {a.id} ({a.part or '전체'}): {a.answer} — {CHECK_TEXT[a.check]}, "
+            f"{STATUS_TEXT[a.status]}"
+        )
+    out += [f"  ! {n}" for n in r.review_notes]
+    return out
+
+
 def _cmd_rubric(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
@@ -132,7 +179,42 @@ def _cmd_rubric(args: argparse.Namespace) -> int:
             f"문항 {r.question_number}: 루브릭 초안 v{r.version} — "
             f"항목 {len(r.items)}개, 합계 {r.total:g}점"
         )
-    _out("검토 후 `exam approve`로 승인해야 채점할 수 있습니다.")
+        for line in _rubric_review(r):
+            _out(line)
+    _out("검토 후 `exam approve`로 승인해야 채점할 수 있습니다 (정답 후보는 --accept/--reject).")
+    return 0
+
+
+def _cmd_key(args: argparse.Namespace) -> int:
+    from dawoni.cli_ingest import parse_pages
+    from dawoni.ingest.workflow import attach_answer_key
+
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    res = attach_answer_key(
+        svc, store, Path(args.file), parse_pages(args.pages), progress=_cli_progress
+    )
+    exam = store.exam()
+    for k in res.keys:
+        _out(key_text(k, exam.question(k.question_number)))
+        _out()
+    for w in res.warnings:
+        _out(f"  ! {w}")
+    _out("해설지를 반영하려면 `exam rubric`으로 루브릭을 다시 만드세요.")
+    return 0
+
+
+def _cmd_key_confirm(args: argparse.Namespace) -> int:
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    for q in _questions(store.exam(), args.q):
+        k = store.answer_key(q.number)
+        if k is None:
+            _out(f"문항 {q.number}: 해설지 없음")
+            continue
+        store.save_key(k.model_copy(update={"confirmed": True, "confirmed_by": args.by}))
+        _out(f"문항 {q.number}: 해설지 확인")
+    _out("해설지를 고쳤다면 `exam rubric`으로 루브릭을 다시 만드세요.")
     return 0
 
 
@@ -141,11 +223,16 @@ def _cmd_show(args: argparse.Namespace) -> int:
     store = ExamStore(svc.workspace, args.exam)
     for q in _questions(store.exam(), args.q):
         _out(f"=== 문항 {q.number} ===")
+        key = store.answer_key(q.number)
+        if key:
+            _out(key_text(key, q) + "\n")
         sol = store.solution(q.number)
-        _out(solution_text(sol) if sol else "(해설 없음)")
+        _out(solution_text(sol, "[AI 풀이]" if key else "[모범 해설]") if sol else "(해설 없음)")
         r = store.rubric(q.number)
         if r:
-            _out(f"\n{rubric_text(r)}\n상태: {r.status} v{r.version}")
+            _out(f"\n{rubric_text(r, q.parts)}\n상태: {r.status} v{r.version}")
+            for line in _rubric_review(r):
+                _out(line)
         _out()
     return 0
 
@@ -157,8 +244,17 @@ def _cmd_approve(args: argparse.Namespace) -> int:
         r = store.rubric(q.number)
         if r is None:
             return _err(f"문항 {q.number}: 루브릭이 없습니다.")
-        store.save_rubric(approve_rubric(r, args.by))
-        _out(f"문항 {q.number}: 루브릭 v{r.version} 승인")
+        mine = {c.id for c in r.candidates}
+        r = decide_candidates(
+            r, [a for a in args.accept if a in mine], [x for x in args.reject if x in mine]
+        )
+        r = approve_rubric(r, args.by)
+        store.save_rubric(r)
+        pending = [c.id for c in r.candidates if c.status == "proposed"]
+        left = ""
+        if pending:
+            left = f" (미확인 정답 후보 {', '.join(pending)} — 학생 답이 같으면 검토 필요)"
+        _out(f"문항 {q.number}: 루브릭 v{r.version} 승인{left}")
     return 0
 
 
@@ -289,6 +385,18 @@ def _cmd_grade(args: argparse.Namespace) -> int:
     return 0
 
 
+def _part_totals(store: ExamStore, q: ExamQuestion, g: GradeResult) -> str:
+    r = store.rubric(q.number)
+    if not q.parts or r is None:
+        return ""
+    got = {j.rubric_item_id: j.awarded for j in g.judgements}
+    cells = [
+        f"{p.label} {sum(got.get(i.id, 0) for i in r.part_items(p.label)):g}/{p.points:g}"
+        for p in q.parts
+    ]
+    return "  (" + ", ".join(cells) + ")"
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
@@ -305,7 +413,8 @@ def _cmd_report(args: argparse.Namespace) -> int:
             total += g.total
             maximum += g.max_points
             review = " ⚠ 검토 필요" if g.status == "needs_review" else ""
-            _out(f"- 문항 {q.number}: {g.total:g}/{g.max_points:g}{review}")
+            parts = _part_totals(store, q, g)
+            _out(f"- 문항 {q.number}: {g.total:g}/{g.max_points:g}{review}{parts}")
             for j in g.judgements:
                 q_text = " / ".join(j.evidence_quote.split("\n")) if j.evidence_quote else ""
                 quote = f" — “{q_text}”" if q_text else ""
@@ -365,7 +474,17 @@ def register(sub: Any) -> None:
     with_q(es.add_parser("show", help="해설·루브릭 보기")).set_defaults(func=_wrap(_cmd_show))
     a = with_q(es.add_parser("approve", help="루브릭 승인"))
     a.add_argument("--by")
+    a.add_argument("--accept", action="append", default=[], help="인정할 정답 후보 ID (예: A1)")
+    a.add_argument("--reject", action="append", default=[], help="제외할 정답 후보 ID")
     a.set_defaults(func=_wrap(_cmd_approve))
+    k = es.add_parser("key", help="강사 해설지(모범 답안·부분 점수) 붙이기")
+    k.add_argument("exam")
+    k.add_argument("file", help="해설지 PDF (시험지 PDF의 해설 쪽이어도 됨)")
+    k.add_argument("--pages", help="해설 쪽 (예: 6 또는 5-6). 없으면 '부분 점수' 표시로 찾음")
+    k.set_defaults(func=_wrap(_cmd_key))
+    kc = with_q(es.add_parser("key-confirm", help="해설지 판독 확인 (원본과 비교한 뒤)"))
+    kc.add_argument("--by")
+    kc.set_defaults(func=_wrap(_cmd_key_confirm))
 
     an = es.add_parser("answer", help="답안 입력 (확인된 판독문으로 저장)")
     an.add_argument("exam")

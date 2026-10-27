@@ -47,7 +47,32 @@ export type Item = {
   figures: Figure[];
 };
 
-export type ExamQuestion = { number: string; points: number; item: Item };
+export type ExamPart = { label: string; points: number; kind?: "essay" | "short_answer" | null };
+export type ExamQuestion = { number: string; points: number; item: Item; parts?: ExamPart[] };
+
+export type KeyPart = {
+  label: string;
+  answer?: string | null;
+  answer_expr?: string | null;
+  solution: string;
+  credit_policy: "listed" | "none" | "range" | "unspecified";
+  credits: { what: string; points: number }[];
+  credit_min?: number | null;
+  credit_max?: number | null;
+  zero_if: string[];
+  credit_text?: string | null;
+};
+export type AnswerKey = {
+  question_number: string;
+  parts: KeyPart[];
+  source: string;
+  pages?: string[];
+  confirmed?: boolean;
+  confirmed_by?: string | null;
+  doubtful?: string[];
+  notes: string[];
+  warnings: string[];
+};
 export type Exam = {
   id: string;
   title: string;
@@ -91,6 +116,7 @@ export type SolutionStep = { explanation: string; math?: string | null; uses: st
 export type Solution = {
   steps: SolutionStep[];
   final_answer: { latex: string; expr?: string | null };
+  part_answers?: { label: string; latex: string; expr?: string | null }[];
   alternatives: { summary: string; steps: SolutionStep[] }[];
   out_of_scope_note?: string | null;
   question_number: string;
@@ -104,15 +130,42 @@ export type RubricItem = {
   criterion: string;
   evidence_hint: string;
   solution_steps: number[];
+  part?: string | null;
+  key_credit?: number | null;
+};
+export type PartCheck = {
+  part: string;
+  key_answer: string;
+  ai_answer: string;
+  verdict: "same" | "ai_wrong" | "other_valid" | "key_doubt";
+  note: string;
+  key_check?: "valid" | "invalid" | "unsure" | null;
+  key_check_note?: string | null;
+  ai_check?: "valid" | "invalid" | "unsure" | null;
+  ai_check_note?: string | null;
+};
+export type AnswerCandidate = {
+  id: string;
+  part: string;
+  answer: string;
+  argument: string;
+  item_ids: string[];
+  status: "proposed" | "accepted" | "rejected";
+  check?: "valid" | "invalid" | "unsure" | null;
+  check_note?: string | null;
 };
 export type RubricDraft = {
   items: RubricItem[];
-  partial: { item_id: string; condition: string; points: number }[];
+  partial: { item_id: string; condition: string; points: number; from_key?: boolean }[];
   accepted_alternatives: { description: string; item_ids: string[] }[];
   never_deduct: string[];
+  checks?: PartCheck[];
+  candidates?: AnswerCandidate[];
 };
 export type Rubric = RubricDraft & {
   question_number: string;
+  based_on_key?: boolean;
+  review_notes?: string[];
   version: number;
   status: "draft" | "approved";
   approved_by?: string | null;
@@ -183,7 +236,15 @@ export type QuestionState = {
     out_of_scope_note: string | null;
     final_answer: string;
   };
-  rubric: null | { status: "draft" | "approved"; version: number; total: number; items: number };
+  has_key?: boolean;
+  rubric: null | {
+    status: "draft" | "approved";
+    version: number;
+    total: number;
+    items: number;
+    based_on_key?: boolean;
+    attention?: number;
+  };
 };
 
 export type ExamSummary = {

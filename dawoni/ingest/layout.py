@@ -15,6 +15,7 @@ AIHelper에서 터졌던 문제를 구조로 막는다 (PLAN §10):
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -373,7 +374,30 @@ def _anchors(pages: list[PageInfo]) -> list[Anchor]:
     return found
 
 
-def analyze(path: Path) -> DocumentLayout:
+_KEY_MARK = re.compile(r"부분\s*점수|정답\s*및\s*해설|모범\s*답안|채점\s*기준")
+"""조각난 PDF 글("부분 점수" / "[" / ": 1~5" / "]")에서도 잡히게 괄호·쌍점은 보지 않는다."""
+
+
+def find_key_pages(path: Path) -> list[int]:
+    """해설지 쪽 (1부터): "[부분 점수: …]", "정답 및 해설" 같은 표시가 있는 쪽.
+
+    시험지 PDF 뒤에 해설을 붙여 두는 경우가 흔하다 — 문항 영역에서 빼고 해설지로 읽는다.
+    """
+    with pymupdf.open(path) as doc:
+        return [
+            i + 1
+            for i in range(doc.page_count)
+            if _KEY_MARK.search(str(doc.load_page(i).get_text()))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        ]
+
+
+def page_count(path: Path) -> int:
+    with pymupdf.open(path) as doc:
+        return int(doc.page_count)
+
+
+def analyze(path: Path, *, exclude: Collection[int] = ()) -> DocumentLayout:
+    """`exclude`: 문항 영역에서 뺄 쪽 (해설지 쪽 등)."""
     doc = pymupdf.open(path)
     with doc:
         # 여러 쪽 위·아래 띠에 똑같이 나오는 줄 (쪽마다 반복되는 머리말·꼬리말)
@@ -397,14 +421,15 @@ def analyze(path: Path) -> DocumentLayout:
         layout.warnings.append("글자 정보가 거의 없는 PDF (스캔본) — 이미지로만 판독해야 합니다.")
         return layout
 
-    anchors = _anchors(pages)
+    question_pages = [p for p in pages if p.number not in exclude]
+    anchors = _anchors(question_pages)
     if not anchors:
         layout.warnings.append("문항 번호를 찾지 못했습니다.")
         return layout
 
     regions: list[Region] = []
     current: Region | None = None
-    for p in pages:
+    for p in question_pages:
         for col, (a, b) in enumerate(p.columns):
             col_anchors = [x for x in anchors if x.page == p.number and x.column == col]
             starts = [x.line.rect.y0 - 2 for x in col_anchors]

@@ -9,7 +9,9 @@ import re
 import unicodedata
 
 from dawoni.mathx.sym import equivalent
+from dawoni.models.answer_key import AnswerKey
 from dawoni.models.grading import (
+    ExamQuestion,
     FinalAnswer,
     GradeOutput,
     RubricDraft,
@@ -180,11 +182,50 @@ def _same_values(a: list[str], b: list[str]) -> bool:
 # ---------------------------------------------------------------- 루브릭
 
 
-def check_rubric(draft: RubricDraft, question_points: float, solution: SolutionDraft) -> list[str]:
+def check_part_answers(d: SolutionDraft, q: ExamQuestion) -> list[str]:
+    """소문항이 있으면 소문항마다 답 (해설지와 소문항별로 비교하기 위해)."""
+    if not q.parts:
+        return []
+    want = [p.label for p in q.parts]
+    got = [a.label for a in d.part_answers]
+    missing = [x for x in want if x not in got]
+    extra = [x for x in got if x not in want]
+    out: list[str] = []
+    if missing:
+        out.append(f"소문항 {missing}의 답(part_answers)이 없다. 소문항마다 최종 답을 적을 것")
+    if extra:
+        out.append(f"part_answers의 소문항 표시 {extra}는 문항에 없다. {want} 중에서 쓸 것")
+    return out
+
+
+def ai_part_answer(solution: SolutionDraft, label: str) -> FinalAnswer | None:
+    if not label:
+        return solution.final_answer
+    return next((a for a in solution.part_answers if a.label == label), None)
+
+
+def key_answer_agrees(key_answer: str | None, key_expr: str | None, ai: FinalAnswer) -> bool | None:
+    """해설지 답과 AI 답이 같은가 (코드로 판단할 수 없으면 None)."""
+    if not key_answer and not key_expr:
+        return None
+    latex = (key_answer or "").replace("\\(", "").replace("\\)", "")
+    return answers_agree(FinalAnswer(latex=latex or key_expr or "", expr=key_expr), ai)
+
+
+def check_rubric(
+    draft: RubricDraft,
+    q: ExamQuestion,
+    solution: SolutionDraft,
+    key: AnswerKey | None = None,
+    *,
+    strict: bool = True,
+) -> list[str]:
+    """`strict`: AI가 만든 루브릭 — 소문항 배점·해설지 부분 점수 구조까지 지켜야 한다.
+    강사가 고친 루브릭(`strict=False`)은 합계와 소문항 표시만 본다 (강사가 기준을 정함)."""
     problems: list[str] = []
-    if abs(draft.total - question_points) > 1e-9:
+    if abs(draft.total - q.points) > 1e-9:
         problems.append(
-            f"루브릭 항목 배점의 합({draft.total:g})이 문항 배점({question_points:g})과 다르다. "
+            f"루브릭 항목 배점의 합({draft.total:g})이 문항 배점({q.points:g})과 다르다. "
             "합이 정확히 같도록 배점을 나눌 것"
         )
     n_steps = len(solution.steps)
@@ -193,6 +234,99 @@ def check_rubric(draft: RubricDraft, question_points: float, solution: SolutionD
         if bad:
             problems.append(
                 f"{item.id}의 solution_steps {bad}는 해설 단계 범위(1~{n_steps}) 밖이다"
+            )
+    labels = [p.label for p in q.parts]
+    for item in draft.items:
+        if labels and item.part not in labels:
+            problems.append(
+                f"{item.id}의 part '{item.part}'는 소문항 표시 {labels} 중 하나여야 한다"
+            )
+        if not labels and item.part:
+            problems.append(f"{item.id}: 이 문항은 소문항이 없다. part는 null로 둘 것")
+    if not strict:
+        return problems
+    for part in q.parts:
+        items = draft.part_items(part.label)
+        got = sum(i.points for i in items)
+        if not items:
+            problems.append(f"소문항 {part.label}의 채점 항목이 없다")
+        elif abs(got - part.points) > 1e-9:
+            problems.append(
+                f"소문항 {part.label} 항목 배점의 합({got:g})이 "
+                f"소문항 배점({part.points:g})과 다르다"
+            )
+    if key is not None:
+        problems += _check_against_key(draft, q, solution, key)
+    return problems
+
+
+def _check_against_key(
+    draft: RubricDraft, q: ExamQuestion, solution: SolutionDraft, key: AnswerKey
+) -> list[str]:
+    problems: list[str] = []
+    by_part = {c.part: c for c in draft.checks}
+    partial_items = {p.item_id for p in draft.partial}
+    for kp in key.parts:
+        name = f"소문항 {kp.label}" if kp.label else "문항"
+        items = draft.part_items(kp.label)
+        part = q.part(kp.label)
+        points = part.points if part else q.points
+        if kp.answer or kp.solution:
+            check = by_part.get(kp.label)
+            if check is None:
+                problems.append(
+                    f"{name}: checks에 해설지 답과 AI 풀이 답의 비교가 없다 (part '{kp.label}')"
+                )
+            else:
+                ai = ai_part_answer(solution, kp.label)
+                same = key_answer_agrees(kp.answer, kp.answer_expr, ai) if ai else None
+                if same is True and check.verdict != "same":
+                    problems.append(
+                        f"{name}: 코드로 비교하면 해설지 답과 AI 답이 같다. verdict는 same"
+                    )
+                if same is False and check.verdict == "same":
+                    problems.append(
+                        f"{name}: 코드로 비교하면 해설지 답({kp.answer})과 "
+                        f"AI 답({ai.latex if ai else ''})이 다르다. 어느 쪽이 맞는지 검토해 "
+                        "ai_wrong / other_valid / key_doubt 중에서 고를 것"
+                    )
+                if check.verdict == "other_valid" and not any(
+                    c.part == kp.label for c in draft.candidates
+                ):
+                    problems.append(
+                        f"{name}: other_valid라면 그 답을 candidates에 후보로 올릴 것 (검산 포함)"
+                    )
+        if kp.credit_policy == "none":
+            if len(items) != 1:
+                problems.append(
+                    f"{name}: 해설지에 '부분 점수 없음' — 항목을 하나로 "
+                    f"(맞으면 {points:g}점, 아니면 0점)"
+                )
+            bad = sorted(i.id for i in items if i.id in partial_items)
+            if bad:
+                problems.append(f"{name}: '부분 점수 없음'인데 {bad}에 부분점수(partial)를 넣었다")
+        elif kp.credit_policy == "listed" and abs(kp.credit_total - points) < 1e-9:
+            n = len(kp.credits)
+            for i in items:
+                if i.key_credit is None or not 1 <= i.key_credit <= n:
+                    problems.append(
+                        f"{i.id}: {name}의 해설지 부분 점수 표기 1~{n}번 중 어디에 해당하는지 "
+                        "key_credit에 적을 것"
+                    )
+            for k, c in enumerate(kp.credits, start=1):
+                got = sum(i.points for i in items if i.key_credit == k)
+                if abs(got - c.points) > 1e-9:
+                    problems.append(
+                        f"{name}: 해설지 부분 점수 {k}번 '{c.what} {c.points:g}점'에 해당하는 "
+                        f"항목 배점의 합이 {got:g}점이다. {c.points:g}점이 되도록"
+                    )
+    for c in draft.candidates:
+        if key.part(c.part) is None:
+            problems.append(f"정답 후보 {c.id}의 part '{c.part}'는 해설지 소문항에 없다")
+        elif by_part.get(c.part) and by_part[c.part].verdict == "same":
+            problems.append(
+                f"정답 후보 {c.id}: 소문항 '{c.part}'는 해설지와 같은 답(same)이다 "
+                "— 다른 답만 후보로"
             )
     return problems
 
@@ -234,6 +368,10 @@ def check_grade(
 ) -> list[str]:
     problems: list[str] = []
     items = {i.id: i for i in rubric.items}
+    candidates = {c.id: c for c in rubric.candidates}
+    unknown_c = [c for c in out.matched_candidates if c not in candidates]
+    if unknown_c:
+        problems.append(f"matched_candidates {unknown_c}는 루브릭의 정답 후보가 아니다")
     seen: list[str] = [j.rubric_item_id for j in out.judgements]
     missing = [i for i in items if i not in seen]
     unknown = [i for i in seen if i not in items]

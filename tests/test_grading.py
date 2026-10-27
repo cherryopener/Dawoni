@@ -223,9 +223,9 @@ def test_rubric_total_check(q1: ExamQuestion) -> None:
     sol = SolutionDraft.model_validate(SOL_OK)
     bad = copy.deepcopy(RUBRIC_OK)
     bad["items"][1]["points"] = 3
-    problems = checks.check_rubric(RubricDraft.model_validate(bad), q1.points, sol)
+    problems = checks.check_rubric(RubricDraft.model_validate(bad), q1, sol)
     assert any("합(5)이 문항 배점(4)" in p for p in problems)
-    assert checks.check_rubric(RubricDraft.model_validate(RUBRIC_OK), q1.points, sol) == []
+    assert checks.check_rubric(RubricDraft.model_validate(RUBRIC_OK), q1, sol) == []
 
 
 def test_rubric_model_rejects_bad_refs() -> None:

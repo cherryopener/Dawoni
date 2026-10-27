@@ -18,10 +18,40 @@ from dawoni.models.item import ItemContent
 # ---------------------------------------------------------------- 시험
 
 
+PartKind = Literal["essay", "short_answer"]
+
+
+class ExamPart(DawoniModel):
+    """소문항: (1), (2), (1)① … 배점과 유형(서술형/단답형)은 채점 기준을 바꾼다."""
+
+    label: str = Field(min_length=1, description="소문항 표시 그대로 (예: (1), (2), (1)①)")
+    points: float = Field(gt=0)
+    kind: PartKind | None = Field(
+        default=None,
+        description="essay=서술형(풀이 과정까지 채점), short_answer=단답형(최종 답만). 모르면 null",
+    )
+
+
 class ExamQuestion(DawoniModel):
     number: str = Field(min_length=1, description="문항 번호 (예: 3, 서술형1)")
     points: float = Field(gt=0)
     item: ItemContent
+    parts: list[ExamPart] = Field(
+        default_factory=lambda: list[ExamPart](), description="소문항 (없으면 빈 목록)"
+    )
+
+    @model_validator(mode="after")
+    def _parts(self) -> ExamQuestion:
+        labels = [p.label for p in self.parts]
+        if len(labels) != len(set(labels)):
+            raise ValueError(f"소문항 표시 중복: {labels}")
+        total = sum(p.points for p in self.parts)
+        if self.parts and abs(total - self.points) > 1e-9:
+            raise ValueError(f"소문항 배점 합({total:g})이 문항 배점({self.points:g})과 다름")
+        return self
+
+    def part(self, label: str) -> ExamPart | None:
+        return next((p for p in self.parts if p.label == label), None)
 
 
 class Exam(DawoniModel):
@@ -73,6 +103,10 @@ class FinalAnswer(DawoniModel):
         return fix_overescaped(v)
 
 
+class PartAnswer(FinalAnswer):
+    label: str = Field(description="소문항 표시 ([자료]에 주어진 그대로)")
+
+
 class AlternativeSolution(DawoniModel):
     summary: str = Field(description="다른 풀이의 요지")
     steps: list[SolutionStep] = Field(min_length=1)
@@ -83,6 +117,10 @@ class SolutionDraft(DawoniModel):
 
     steps: list[SolutionStep] = Field(min_length=1)
     final_answer: FinalAnswer
+    part_answers: list[PartAnswer] = Field(
+        default_factory=lambda: list[PartAnswer](),
+        description="소문항이 있으면 소문항마다 최종 답 (해설지와 소문항별로 비교)",
+    )
     alternatives: list[AlternativeSolution] = Field(
         default_factory=lambda: list[AlternativeSolution](),
         description="범위 안의 다른 정당한 풀이 (루브릭에서 인정)",
@@ -118,12 +156,66 @@ class RubricItem(DawoniModel):
     solution_steps: list[int] = Field(
         default_factory=lambda: list[int](), description="연결된 해설 단계 번호 (1부터)"
     )
+    part: str | None = Field(default=None, description="이 항목이 속한 소문항 표시. 없으면 null")
+    key_credit: int | None = Field(
+        default=None,
+        ge=1,
+        description="해설지 부분 점수 표기의 몇 번째 항목에 해당하는가 (1부터). 표기가 없으면 null",
+    )
 
 
 class PartialCredit(DawoniModel):
     item_id: str
     condition: str = Field(description="예: 부호 실수 후 과정은 일관됨")
     points: float = Field(ge=0, description="이 경우 그 항목에서 주는 점수")
+    from_key: bool = Field(
+        default=False, description="해설지에 적힌 부분 점수면 true, AI가 제안한 것이면 false"
+    )
+
+
+Verdict = Literal["same", "ai_wrong", "other_valid", "key_doubt"]
+
+
+class PartCheck(DawoniModel):
+    """해설지 답과 AI 독립 풀이 답의 소문항별 비교."""
+
+    part: str = Field(description="소문항 표시 (소문항이 없으면 빈 문자열)")
+    key_answer: str = Field(description="해설지의 답")
+    ai_answer: str = Field(description="AI 독립 풀이의 답")
+    verdict: Verdict = Field(
+        description="same=같은 답, ai_wrong=AI 풀이가 틀림(해설지가 맞음), "
+        "other_valid=AI 답도 조건을 만족하는 다른 정답일 수 있음, "
+        "key_doubt=해설지·문제 자체에 의문(오타·조건 모순 등)"
+    )
+    note: str = Field(default="", description="판단 근거 (AI가 틀렸다면 어디서 틀렸는지)")
+    key_check: Literal["valid", "invalid", "unsure"] | None = Field(
+        default=None, description="해설지 답의 독립 검산 (앱이 채움 — 두 답이 다를 때만)"
+    )
+    key_check_note: str | None = None
+    ai_check: Literal["valid", "invalid", "unsure"] | None = Field(
+        default=None, description="AI 답의 독립 검산 (앱이 채움 — 두 답이 다를 때만)"
+    )
+    ai_check_note: str | None = None
+
+
+CandidateStatus = Literal["proposed", "accepted", "rejected"]
+
+
+class AnswerCandidate(DawoniModel):
+    """해설지에 없지만 정답일 수 있는 답. **강사가 인정하기 전에는 점수를 주지 않는다.**"""
+
+    id: str = Field(pattern=r"^A[1-9][0-9]*$")
+    part: str = Field(description="소문항 표시 (없으면 빈 문자열)")
+    answer: str = Field(description="다른 정답 후보")
+    argument: str = Field(description="왜 이것도 문제의 조건을 만족하는지 (검산 포함)")
+    item_ids: list[str] = Field(
+        default_factory=lambda: list[str](), description="이 답이면 점수를 받을 항목"
+    )
+    status: CandidateStatus = "proposed"
+    check: Literal["valid", "invalid", "unsure"] | None = Field(
+        default=None, description="독립 검산 결과 (앱이 채움)"
+    )
+    check_note: str | None = None
 
 
 class AcceptedAlternative(DawoniModel):
@@ -140,6 +232,14 @@ class RubricDraft(DawoniModel):
         default_factory=lambda: list[AcceptedAlternative]()
     )
     never_deduct: list[str] = Field(default_factory=lambda: list[str]())
+    checks: list[PartCheck] = Field(
+        default_factory=lambda: list[PartCheck](),
+        description="해설지가 있을 때: 소문항마다 해설지 답과 AI 풀이 답 비교",
+    )
+    candidates: list[AnswerCandidate] = Field(
+        default_factory=lambda: list[AnswerCandidate](),
+        description="해설지와 다르지만 정답일 수 있는 답 (강사 확인 전에는 점수 없음)",
+    )
 
     @model_validator(mode="after")
     def _refs(self) -> RubricDraft:
@@ -156,15 +256,48 @@ class RubricDraft(DawoniModel):
             bad = sorted(set(a.item_ids) - set(points))
             if bad:
                 raise ValueError(f"다른 풀이가 없는 항목을 참조: {bad}")
+        cids = [c.id for c in self.candidates]
+        if len(cids) != len(set(cids)):
+            raise ValueError(f"정답 후보 ID 중복: {cids}")
+        for c in self.candidates:
+            bad = sorted(set(c.item_ids) - set(points))
+            if bad:
+                raise ValueError(f"정답 후보 {c.id}가 없는 항목을 참조: {bad}")
         return self
+
+    def part_items(self, label: str | None) -> list[RubricItem]:
+        return [i for i in self.items if (i.part or "") == (label or "")]
 
     @property
     def total(self) -> float:
         return sum(i.points for i in self.items)
 
 
+class RubricAudit(DawoniModel):
+    """AI 출력: 루브릭이 해설지를 지키는지 검토 (만든 AI와 다른 새 세션)."""
+
+    issues: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="고쳐야 할 점. 문제없으면 빈 목록",
+    )
+
+
+class AnswerCheck(DawoniModel):
+    """AI 출력: 정답 후보 하나를 문제 조건에 대입해 검산."""
+
+    verdict: Literal["valid", "invalid", "unsure"] = Field(
+        description="valid=모든 조건 만족, invalid=어떤 조건을 어김, unsure=문제 해석에 따라 다름"
+    )
+    reasoning: str = Field(description="조건마다 확인한 과정")
+
+
 class Rubric(RubricDraft):
     question_number: str
+    based_on_key: bool = False
+    """강사 해설지를 기준으로 만든 루브릭인가 (아니면 AI 풀이만으로 — 정답 확인 필요)."""
+    review_notes: list[str] = Field(
+        default_factory=lambda: list[str](), description="승인 전에 강사가 볼 점 (앱이 채움)"
+    )
     version: int = Field(default=1, ge=1)
     status: Literal["draft", "approved"] = "draft"
     approved_by: str | None = None
@@ -275,6 +408,10 @@ class GradeOutput(DawoniModel):
     comment: str = Field(description="학생에게 줄 짧은 첨삭")
     flags: list[str] = Field(
         default_factory=lambda: list[str](), description="강사가 확인할 점 (판독 불확실 영향 등)"
+    )
+    matched_candidates: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="학생 답이 루브릭의 '강사 미확인 정답 후보'(A1 …)와 같으면 그 ID",
     )
 
 

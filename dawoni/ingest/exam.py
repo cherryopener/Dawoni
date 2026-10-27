@@ -29,7 +29,7 @@ from dawoni.ingest.layout import DocumentLayout, Region, render_clip
 from dawoni.mathx.omml import default_converter
 from dawoni.models.base import DawoniModel
 from dawoni.models.content import Block, MathRun, iter_runs
-from dawoni.models.grading import ExamQuestion
+from dawoni.models.grading import ExamPart, ExamQuestion
 from dawoni.models.item import Choice, ItemContent, ItemType
 
 DEFAULT_POINTS = 4.0
@@ -46,6 +46,10 @@ class ExtractedQuestion(DawoniModel):
     label: str = Field(description="[자료]에 주어진 문항 번호 그대로")
     item_type: ItemType
     points: float | None = Field(default=None, gt=0)
+    parts: list[ExamPart] = Field(
+        default_factory=lambda: list[ExamPart](),
+        description="소문항 (1)(2)·①②③의 표시·배점·유형. 소문항이 없으면 빈 목록",
+    )
     stem: list[Block] = Field(min_length=1)
     choices: list[Choice] = Field(default_factory=lambda: list[Choice]())
     choices_figure_id: str | None = None
@@ -146,6 +150,25 @@ def to_item(q: ExtractedQuestion, region: Region, subject: str | None) -> ItemCo
     )
 
 
+def _check_parts(q: ExtractedQuestion, r: Region) -> list[str]:
+    if not q.parts:
+        return []
+    labels = [p.label for p in q.parts]
+    if len(labels) != len(set(labels)):
+        return [
+            f"문항 {q.label}: 소문항 표시 중복 {labels} "
+            "— 소문항 안의 소문항은 '(1)①'처럼 이어 붙일 것"
+        ]
+    total = q.points or r.points
+    got = sum(p.points for p in q.parts)
+    if total is not None and abs(got - total) > 1e-9:
+        return [
+            f"문항 {q.label}: 소문항 배점 합({got:g})이 문항 배점({total:g})과 다르다. "
+            "'각 2점'처럼 묶어 적힌 배점은 소문항마다 나눠 적었는지 확인할 것"
+        ]
+    return []
+
+
 def check_page(out: PageExtraction, regions: list[Region], subject: str | None) -> list[str]:
     problems: list[str] = []
     by_label = {r.label: r for r in regions}
@@ -184,6 +207,7 @@ def check_page(out: PageExtraction, regions: list[Region], subject: str | None) 
                 f"문항 {q.label}: 본문에 PDF 글자에 없는 한글이 {outside:.0%} 들어갔다. "
                 "PDF 글자를 기준으로 그대로 옮길 것"
             )
+        problems += _check_parts(q, r)
         latex = [x.v for x in iter_runs(q.stem) if isinstance(x, MathRun)]
         latex += [x.v for c in q.choices for x in c.runs if isinstance(x, MathRun)]
         problems += [f"문항 {q.label}: {m}" for m in default_converter().problems(latex)]
@@ -232,12 +256,23 @@ def extract_exam(
             q = by_label[pr.region.label]
             item = to_item(q, pr.region, subject)
             points = item.points
+            if points is None and q.parts:
+                points = sum(p.points for p in q.parts)
             if points is None:
                 points = DEFAULT_POINTS
                 warnings.append(
                     f"문항 {pr.region.label}: 배점 표시가 없어 {points:g}점으로 둠 — 확인 필요"
                 )
-            questions.append(ExamQuestion(number=pr.region.label, points=points, item=item))
+            parts = q.parts
+            if parts and abs(sum(p.points for p in parts) - points) > 1e-9:
+                warnings.append(
+                    f"문항 {pr.region.label}: 소문항 배점 합이 문항 배점과 달라 소문항 정보를 뺌 "
+                    "— 확인 필요"
+                )
+                parts = []
+            questions.append(
+                ExamQuestion(number=pr.region.label, points=points, item=item, parts=parts)
+            )
     return IngestResult(
         questions=questions,
         figure_files={pr.region.label: pr.figure_files for pr in prepared},

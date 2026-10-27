@@ -378,3 +378,37 @@ def test_figure_api(app_paths: AppPaths, tmp_path: Path) -> None:
     assert c.put(base, json={"mode": "raster"}).json()["mode"] == "raster"
     r = c.post(f"{base}/extract")
     assert r.status_code == 400 and "원본 이미지가 없습니다" in r.json()["detail"]
+
+
+def test_answer_key_fix_and_confirm(app_paths: AppPaths, tmp_path: Path) -> None:
+    from dawoni.grading.store import ExamStore
+    from dawoni.models.answer_key import AnswerKey
+    from dawoni.paths import WorkspacePaths
+
+    c = _client(app_paths)
+    c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q1 = read_json(FIX / "questions.json")[:1]
+    eid = c.post(
+        "/api/exams", json={"title": "해설지", "scope_id": scope["id"], "questions": q1}
+    ).json()["id"]
+    store = ExamStore(WorkspacePaths(tmp_path / "ws"), eid)
+    store.save_key(
+        AnswerKey(
+            question_number="1",
+            source="k.pdf 2쪽",
+            parts=[{"label": "", "answer": "2/3", "credit_policy": "none"}],  # pyright: ignore[reportArgumentType]
+            doubtful=[""],
+        )
+    )
+    url = f"/api/exams/{eid}/questions/1/key"
+    q = c.get(f"/api/exams/{eid}/questions/1").json()
+    assert q["key"]["parts"][0]["answer"] == "2/3"
+    bad = c.put(url, json={"parts": [{"label": "(1)", "credit_policy": "none"}]})
+    assert bad.status_code == 400 and "소문항 표시" in bad.json()["detail"]
+    fixed = c.put(
+        url,
+        json={"parts": [{"label": "", "answer": "1/2", "credit_policy": "none"}], "by": "김선생"},
+    ).json()
+    assert fixed["confirmed"] and fixed["confirmed_by"] == "김선생" and fixed["doubtful"] == []
+    assert store.answer_key("1").parts[0].answer == "1/2"  # pyright: ignore[reportOptionalMemberAccess]

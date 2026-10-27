@@ -2,6 +2,7 @@
 
 scopes/<범위ID>.json
 exams/<시험ID>/exam.json
+              /keys/<문항>.json            (강사 해설지)
               /solutions/<문항>.json
               /rubrics/<문항>.json
               /transcripts/<학생>/<문항>.json
@@ -16,6 +17,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from dawoni.fsio import read_json, write_model_atomic
+from dawoni.models.answer_key import AnswerKey
 from dawoni.models.grading import Exam, GradeResult, Rubric, ScopedSolution, Transcript
 from dawoni.models.scope import ScopeProfile
 from dawoni.paths import WorkspacePaths
@@ -89,6 +91,12 @@ class ExamStore:
 
     def _sq(self, kind: str, student: str, q: str) -> Path:
         return self.root / kind / safe_name(student) / f"{safe_name(q)}.json"
+
+    def save_key(self, k: AnswerKey) -> None:
+        write_model_atomic(self._q("keys", k.question_number), k)
+
+    def answer_key(self, q: str) -> AnswerKey | None:
+        return _load(self._q("keys", q), AnswerKey)
 
     def save_solution(self, s: ScopedSolution) -> None:
         write_model_atomic(self._q("solutions", s.question_number), s)

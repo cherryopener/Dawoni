@@ -19,10 +19,12 @@ from dawoni.grading.pipeline import (
     PipelineError,
     SecondOpinion,
     approve_rubric,
+    decide_candidates,
     edit_rubric,
     teacher_review,
 )
 from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.models.answer_key import AnswerKey, KeyPart
 from dawoni.models.grading import (
     Exam,
     ExamQuestion,
@@ -61,6 +63,7 @@ def question_state(store: ExamStore, q: ExamQuestion) -> dict[str, Any]:
         "number": q.number,
         "points": q.points,
         "item_type": q.item.item_type,
+        "has_key": store.answer_key(q.number) is not None,
         "solution": None
         if sol is None
         else {
@@ -72,7 +75,15 @@ def question_state(store: ExamStore, q: ExamQuestion) -> dict[str, Any]:
         },
         "rubric": None
         if r is None
-        else {"status": r.status, "version": r.version, "total": r.total, "items": len(r.items)},
+        else {
+            "status": r.status,
+            "version": r.version,
+            "total": r.total,
+            "items": len(r.items),
+            "based_on_key": r.based_on_key,
+            "attention": sum(c.verdict != "same" for c in r.checks)
+            + sum(c.status == "proposed" for c in r.candidates),
+        },
     }
 
 
@@ -164,22 +175,53 @@ def exam_from_pdf(
     scope_id: Annotated[str, Form()],
     subject: Annotated[str | None, Form()] = None,
     force: Annotated[bool, Form()] = False,
+    key_pages: Annotated[str | None, Form()] = None,
     st: AppState = State,
 ) -> Job:
+    """`key_pages`: 해설지 쪽 ("6", "5-6"). 비우면 자동으로 찾고, "none"이면 해설지 없음."""
+    from dawoni.cli_ingest import parse_key_pages
     from dawoni.ingest.workflow import ingest_exam_pdf
 
     svc = st.services()
     ScopeStore(svc.workspace).get(scope_id)
     path = save_upload(file, upload_dir(st))
+    pages = parse_key_pages(key_pages if key_pages and key_pages.strip() else None)
 
     def run(ctx: JobContext) -> dict[str, Any]:
         res = ingest_exam_pdf(
             svc, path, title=title, scope_id=scope_id, subject=subject, force=force,
-            progress=ctx.progress,
+            key_pages=pages, progress=ctx.progress,
         )  # fmt: skip
-        return {"exam_id": res.exam.id, "warnings": res.warnings + res.layout.warnings}
+        return {
+            "exam_id": res.exam.id,
+            "key_pages": res.key_pages,
+            "keys": len(res.keys),
+            "warnings": res.warnings + res.layout.warnings,
+        }
 
     return st.jobs.submit("ingest_exam", run, {"title": title, "file": path.name})
+
+
+@router.post("/{exam_id}/answer-key")
+def answer_key_from_pdf(
+    exam_id: str,
+    file: Annotated[UploadFile, File()],
+    pages: Annotated[str | None, Form()] = None,
+    st: AppState = State,
+) -> Job:
+    """강사 해설지 PDF 붙이기 (시험지 PDF의 해설 쪽이어도 됨). 쪽을 비우면 자동으로 찾는다."""
+    from dawoni.cli_ingest import parse_pages
+    from dawoni.ingest.workflow import attach_answer_key
+
+    svc, store = _store(st, exam_id)
+    path = save_upload(file, upload_dir(st))
+    page_list = parse_pages(pages) if pages and pages.strip() else None
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        res = attach_answer_key(svc, store, path, page_list, progress=ctx.progress)
+        return {"keys": [k.question_number for k in res.keys], "warnings": res.warnings}
+
+    return st.jobs.submit("answer_key", run, {"exam": exam_id, "file": path.name})
 
 
 @router.get("/{exam_id}")
@@ -245,8 +287,10 @@ def get_question(exam_id: str, number: str, st: AppState = State) -> dict[str, A
     q = store.exam().question(number)
     sol = store.solution(number)
     r = store.rubric(number)
+    key = store.answer_key(number)
     return {
         "question": q.model_dump(mode="json"),
+        "key": key.model_dump(mode="json") if key else None,
         "solution": sol.model_dump(mode="json") if sol else None,
         "rubric": r.model_dump(mode="json") if r else None,
     }
@@ -267,6 +311,46 @@ def put_rubric(exam_id: str, number: str, draft: RubricDraft, st: AppState = Sta
 
 class ByBody(BaseModel):
     by: str | None = None
+
+
+class KeyBody(BaseModel):
+    parts: list[KeyPart] | None = Field(default=None, description="고친 소문항 (없으면 그대로)")
+    confirm: bool = True
+    by: str | None = None
+
+
+@router.put("/{exam_id}/questions/{number}/key")
+def put_key(exam_id: str, number: str, body: KeyBody, st: AppState = State) -> AnswerKey:
+    """해설지 판독 고치기·확인. 루브릭은 그대로 — 반영하려면 루브릭을 다시 만든다."""
+    _, store = _store(st, exam_id)
+    k = store.answer_key(number)
+    if k is None:
+        raise PipelineError(f"문항 {number}: 해설지가 없습니다.")
+    if body.parts is not None:
+        labels = sorted(p.label for p in k.parts)
+        if sorted(p.label for p in body.parts) != labels:
+            raise PipelineError(f"소문항 표시는 바꿀 수 없습니다: {labels}")
+        k = k.model_copy(update={"parts": body.parts, "doubtful": []})
+    k = k.model_copy(update={"confirmed": body.confirm, "confirmed_by": body.by})
+    store.save_key(k)
+    return k
+
+
+class CandidatesBody(BaseModel):
+    accept: list[str] = Field(default_factory=lambda: list[str]())
+    reject: list[str] = Field(default_factory=lambda: list[str]())
+
+
+@router.post("/{exam_id}/questions/{number}/rubric/candidates")
+def candidates(exam_id: str, number: str, body: CandidatesBody, st: AppState = State) -> Rubric:
+    """다른 정답 후보 인정·제외. 승인된 루브릭이면 새 판이 되고 다시 승인해야 한다."""
+    _, store = _store(st, exam_id)
+    r = store.rubric(number)
+    if r is None:
+        raise PipelineError(f"문항 {number}: 루브릭이 없습니다.")
+    r = decide_candidates(r, body.accept, body.reject)
+    store.save_rubric(r)
+    return r
 
 
 @router.post("/{exam_id}/questions/{number}/rubric/approve")

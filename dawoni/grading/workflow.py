@@ -85,7 +85,10 @@ def rubric_questions(
         progress(k, len(qs), f"문항 {q.number} 루브릭")
         sol = store.solution(q.number)
         assert sol is not None
-        r = derive_rubric(svc.engine, q, sol, scope, previous=store.rubric(q.number))
+        key = store.answer_key(q.number)
+        basis = " (해설지 기준)" if key else " (해설지 없음)"
+        progress(k, len(qs), f"문항 {q.number} 루브릭{basis}")
+        r = derive_rubric(svc.engine, q, sol, scope, key=key, previous=store.rubric(q.number))
         store.save_rubric(r)
         out.append(r)
     progress(len(qs), len(qs), "루브릭 초안 완료 — 검토 후 승인하세요")

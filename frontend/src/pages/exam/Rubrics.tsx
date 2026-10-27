@@ -19,8 +19,19 @@ import {
   tableClass,
   teacherName,
 } from "../../components/ui";
-import { api, errorText, useJob, useLoad } from "../../lib/api";
-import type { ExamQuestion, Rubric, RubricDraft, Scope, Solution, SolutionStep } from "../../lib/types";
+import { api, errorText, examFileUrl, useJob, useLoad } from "../../lib/api";
+import type {
+  AnswerCandidate,
+  AnswerKey,
+  ExamQuestion,
+  KeyPart,
+  PartCheck,
+  Rubric,
+  RubricDraft,
+  Scope,
+  Solution,
+  SolutionStep,
+} from "../../lib/types";
 import type { TabProps } from "../Exam";
 
 function Steps({ steps, scope }: { steps: SolutionStep[]; scope: Scope | null }) {
@@ -43,11 +54,246 @@ function Steps({ steps, scope }: { steps: SolutionStep[]; scope: Scope | null })
   );
 }
 
-export function SolutionView({ sol, scope }: { sol: Solution; scope: Scope | null }) {
+const KIND: Record<string, string> = { essay: "서술형", short_answer: "단답형" };
+
+function creditText(p: KeyPart): string {
+  switch (p.credit_policy) {
+    case "listed":
+      return p.credits.map((c, i) => `${i + 1}) ${c.what} ${c.points}점`).join(" / ");
+    case "none":
+      return "부분 점수 없음 (맞으면 만점, 아니면 0점)";
+    case "range":
+      return `${p.credit_min ?? 0}~${p.credit_max ?? 0}점 (정도에 따라)`;
+    default:
+      return "표기 없음";
+  }
+}
+
+function KeyView({ k, q, examId, onChanged }: { k: AnswerKey; q: ExamQuestion; examId: string; onChanged: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [showPage, setShowPage] = useState(false);
+  const [edit, setEdit] = useState<KeyPart[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const doubtful = new Set(k.doubtful ?? []);
+  const save = (parts: KeyPart[] | null) => {
+    setErr(null);
+    api
+      .put(`/exams/${examId}/questions/${encodeURIComponent(q.number)}/key`, { parts, confirm: true, by: teacherName() || null })
+      .then(() => {
+        setEdit(null);
+        onChanged();
+      })
+      .catch((e: unknown) => setErr(errorText(e)));
+  };
+  const setPart = (i: number, patch: Partial<KeyPart>) => edit && setEdit(edit.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   return (
     <Stack gap={8}>
       <Row>
-        <b>범위 해설</b>
+        <b>강사 해설지</b>
+        <Badge>{k.source}</Badge>
+        {k.confirmed ? (
+          <Badge tone="ok">확인함{k.confirmed_by ? ` · ${k.confirmed_by}` : ""}</Badge>
+        ) : (
+          <Badge tone="warn">판독 확인 전 — 원본과 비교하세요</Badge>
+        )}
+        <span style={{ flex: 1 }} />
+        {(k.pages ?? []).length > 0 && (
+          <Button small variant="ghost" onClick={() => setShowPage(!showPage)}>
+            {showPage ? "원본 닫기" : "원본 보기"}
+          </Button>
+        )}
+        <Button small variant="ghost" onClick={() => setOpen(!open)}>
+          {open ? "해설 접기" : "해설 보기"}
+        </Button>
+        {edit ? (
+          <>
+            <Button small variant="primary" onClick={() => save(edit)}>
+              저장하고 확인
+            </Button>
+            <Button small variant="ghost" onClick={() => setEdit(null)}>
+              취소
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button small onClick={() => setEdit(k.parts.map((x) => ({ ...x })))}>
+              고치기
+            </Button>
+            {!k.confirmed && (
+              <Button small variant="primary" onClick={() => save(null)}>
+                원본과 같음 — 확인
+              </Button>
+            )}
+          </>
+        )}
+      </Row>
+      {showPage && (k.pages ?? []).map((pg) => <img key={pg} src={examFileUrl(examId, pg)} alt="해설지 원본" style={{ maxWidth: "100%", border: "1px solid var(--border)" }} />)}
+      <table className={tableClass}>
+        <thead>
+          <tr>
+            <th style={{ width: 70 }}>소문항</th>
+            <th>답</th>
+            <th style={{ width: "38%" }}>부분 점수</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(edit ?? k.parts).map((p, i) => {
+            const part = q.parts?.find((x) => x.label === p.label);
+            return (
+              <tr key={p.label}>
+                <td>
+                  <b>{p.label || "전체"}</b>
+                  {part && (
+                    <div style={{ fontSize: 12, color: "var(--text-2)" }}>
+                      {part.points}점{part.kind ? ` · ${KIND[part.kind]}` : ""}
+                    </div>
+                  )}
+                  {doubtful.has(p.label) && (
+                    <div style={{ marginTop: 4 }}>
+                      <Badge tone="warn" title="두 번 읽은 결과의 숫자가 달랐습니다">
+                        원본 확인
+                      </Badge>
+                    </div>
+                  )}
+                </td>
+                <td>
+                  {edit ? (
+                    <Stack gap={4}>
+                      <TextInput value={p.answer ?? ""} onChange={(v) => setPart(i, { answer: v || null, answer_expr: null })} />
+                      <TextArea value={p.solution} rows={4} onChange={(v) => setPart(i, { solution: v })} />
+                    </Stack>
+                  ) : (
+                    <>
+                      {p.answer ? <Loose text={p.answer} /> : <span style={{ color: "var(--text-2)" }}>(따로 없음)</span>}
+                      {(open || doubtful.has(p.label)) && p.solution && (
+                        <div style={{ marginTop: 6, fontSize: 13 }}>
+                          <Loose text={p.solution} />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </td>
+                <td>
+                  {creditText(p)}
+                  {p.zero_if.map((z, j) => (
+                    <div key={j} style={{ fontSize: 12, color: "var(--text-2)" }}>
+                      0점: {z}
+                    </div>
+                  ))}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {[...k.notes, ...k.warnings].map((n, i) => (
+        <Notice key={i}>
+          <Loose text={n} />
+        </Notice>
+      ))}
+      <ErrorBox error={err} />
+    </Stack>
+  );
+}
+
+const VERDICT: Record<PartCheck["verdict"], [string, "ok" | "warn" | "bad" | "accent"]> = {
+  same: ["해설지와 같음", "ok"],
+  ai_wrong: ["AI 풀이 오답 → 해설지 따름", "warn"],
+  other_valid: ["AI 답도 정답일 수 있음", "accent"],
+  key_doubt: ["해설지·문제에 의문", "bad"],
+};
+const CHECK: Record<"valid" | "invalid" | "unsure", [string, "ok" | "bad" | "warn"]> = {
+  valid: ["검산 통과", "ok"],
+  invalid: ["검산 실패", "bad"],
+  unsure: ["해석에 따라 다름", "warn"],
+};
+
+function KeyReview({ examId, q, rubric, onChanged }: {
+  examId: string;
+  q: ExamQuestion;
+  rubric: Rubric;
+  onChanged: () => void;
+}) {
+  const [err, setErr] = useState<string | null>(null);
+  const checks = rubric.checks ?? [];
+  const cands = rubric.candidates ?? [];
+  const notes = rubric.review_notes ?? [];
+  if (!checks.length && !cands.length && !notes.length) return null;
+  const decide = (c: AnswerCandidate, to: "accept" | "reject") => {
+    setErr(null);
+    api
+      .post(`/exams/${examId}/questions/${encodeURIComponent(q.number)}/rubric/candidates`, { [to]: [c.id] })
+      .then(onChanged)
+      .catch((e: unknown) => setErr(errorText(e)));
+  };
+  return (
+    <Stack gap={8}>
+      <b>해설지와 AI 풀이 비교</b>
+      {checks.map((c) => (
+        <div key={c.part}>
+          <Row>
+            <b>{c.part || "전체"}</b>
+            <Badge tone={VERDICT[c.verdict][1]}>{VERDICT[c.verdict][0]}</Badge>
+          </Row>
+          {c.verdict !== "same" && (
+            <div style={{ fontSize: 13, marginTop: 4 }}>
+              해설지 <Loose text={c.key_answer} /> {c.key_check && <Badge tone={CHECK[c.key_check][1]} title={c.key_check_note ?? ""}>{CHECK[c.key_check][0]}</Badge>} · AI{" "}
+              <Loose text={c.ai_answer} /> {c.ai_check && <Badge tone={CHECK[c.ai_check][1]} title={c.ai_check_note ?? ""}>{CHECK[c.ai_check][0]}</Badge>}
+              {c.note && (
+                <div style={{ color: "var(--text-2)" }}>
+                  <Loose text={c.note} />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+      {cands.map((c) => (
+        <Notice key={c.id}>
+          <Stack gap={6}>
+            <Row>
+              <b>
+                다른 정답 후보 {c.id} ({c.part || "전체"})
+              </b>
+              <Loose text={c.answer} />
+              {c.check && <Badge tone={CHECK[c.check][1]}>{CHECK[c.check][0]}</Badge>}
+              <Badge tone={c.status === "accepted" ? "ok" : c.status === "rejected" ? "bad" : "warn"}>
+                {c.status === "accepted" ? "인정" : c.status === "rejected" ? "제외" : "강사 미확인 — 점수 없음"}
+              </Badge>
+              <span style={{ flex: 1 }} />
+              <Button small disabled={c.status === "accepted"} onClick={() => decide(c, "accept")}>
+                정답으로 인정
+              </Button>
+              <Button small variant="ghost" disabled={c.status === "rejected"} onClick={() => decide(c, "reject")}>
+                제외
+              </Button>
+            </Row>
+            <span style={{ fontSize: 13 }}>
+              <Loose text={c.argument} />
+            </span>
+            {c.check_note && (
+              <span style={{ fontSize: 13, color: "var(--text-2)" }}>
+                독립 검산: <Loose text={c.check_note} />
+              </span>
+            )}
+          </Stack>
+        </Notice>
+      ))}
+      {notes.map((n, i) => (
+        <Notice key={i}>
+          <Loose text={n} />
+        </Notice>
+      ))}
+      <ErrorBox error={err} />
+    </Stack>
+  );
+}
+
+export function SolutionView({ sol, scope, withKey = false }: { sol: Solution; scope: Scope | null; withKey?: boolean }) {
+  return (
+    <Stack gap={8}>
+      <Row>
+        <b>{withKey ? "AI 독립 풀이 (해설지를 보지 않고)" : "범위 해설"}</b>
         {sol.verified ? <Badge tone="ok">독립 재풀이와 답 일치</Badge> : <Badge>재풀이 안 함</Badge>}
       </Row>
       {sol.out_of_scope_note && <Notice>범위 안에서 풀기 어렵다는 AI 판단: {sol.out_of_scope_note}</Notice>}
@@ -61,6 +307,15 @@ export function SolutionView({ sol, scope }: { sol: Solution; scope: Scope | nul
         <b>답: </b>
         <Tex latex={sol.final_answer.latex} />
       </div>
+      {(sol.part_answers ?? []).length > 0 && (
+        <Row>
+          {sol.part_answers!.map((a) => (
+            <span key={a.label}>
+              <b>{a.label}</b> <Tex latex={a.latex} />
+            </span>
+          ))}
+        </Row>
+      )}
       {sol.alternatives.map((a, i) => (
         <div key={i}>
           <b>다른 풀이: </b>
@@ -77,6 +332,8 @@ const draftOf = (r: Rubric): RubricDraft => ({
   partial: r.partial.map((x) => ({ ...x })),
   accepted_alternatives: r.accepted_alternatives.map((x) => ({ ...x })),
   never_deduct: [...r.never_deduct],
+  checks: (r.checks ?? []).map((x) => ({ ...x })),
+  candidates: (r.candidates ?? []).map((x) => ({ ...x })),
 });
 
 function RubricEditor({ examId, q, rubric, onChanged }: {
@@ -125,6 +382,15 @@ function RubricEditor({ examId, q, rubric, onChanged }: {
         <Badge tone={total === q.points ? "ok" : "bad"}>
           합계 {total} / 배점 {q.points}
         </Badge>
+        {(q.parts ?? []).map((p) => {
+          const sum = d.items.filter((x) => (x.part ?? "") === p.label).reduce((a, x) => a + (x.points || 0), 0);
+          return (
+            <Badge key={p.label} tone={sum === p.points ? "neutral" : "warn"}>
+              {p.label} {sum}/{p.points}
+            </Badge>
+          );
+        })}
+        {rubric.based_on_key ? <Badge tone="ok">해설지 기준</Badge> : <Badge tone="warn">해설지 없음 — 정답 확인</Badge>}
         <span style={{ flex: 1 }} />
         <Button small onClick={() => act(save)} disabled={!dirty}>
           저장
@@ -138,6 +404,7 @@ function RubricEditor({ examId, q, rubric, onChanged }: {
         <thead>
           <tr>
             <th style={{ width: 44 }}>항목</th>
+            {(q.parts ?? []).length > 0 && <th style={{ width: 86 }}>소문항</th>}
             <th style={{ width: 90 }}>배점</th>
             <th>채점 기준 (무엇이 있으면 점수)</th>
             <th style={{ width: "30%" }}>답안에서 찾을 예</th>
@@ -150,6 +417,25 @@ function RubricEditor({ examId, q, rubric, onChanged }: {
               <td>
                 <b>{it.id}</b>
               </td>
+              {(q.parts ?? []).length > 0 && (
+                <td>
+                  <select
+                    value={it.part ?? ""}
+                    onChange={(e) => upd({ items: d.items.map((x, k) => (k === i ? { ...x, part: e.target.value } : x)) })}
+                  >
+                    {q.parts!.map((p) => (
+                      <option key={p.label}>{p.label}</option>
+                    ))}
+                  </select>
+                  {it.key_credit != null && (
+                    <div style={{ marginTop: 4 }}>
+                      <Badge tone="ok" title="해설지 부분 점수 표기의 몇 번째인지">
+                        해설지 {it.key_credit})
+                      </Badge>
+                    </div>
+                  )}
+                </td>
+              )}
               <td>
                 <NumberInput value={it.points} min={0.5} onChange={(v) => upd({ items: d.items.map((x, k) => (k === i ? { ...x, points: v } : x)) })} />
               </td>
@@ -172,7 +458,7 @@ function RubricEditor({ examId, q, rubric, onChanged }: {
         </tbody>
       </table>
       <Row>
-        <Button small onClick={() => upd({ items: [...d.items, { id: nextId, points: 1, criterion: "", evidence_hint: "", solution_steps: [] }] })}>
+        <Button small onClick={() => upd({ items: [...d.items, { id: nextId, points: 1, criterion: "", evidence_hint: "", solution_steps: [], part: q.parts?.[0]?.label ?? null }] })}>
           + 항목
         </Button>
       </Row>
@@ -194,13 +480,14 @@ function RubricEditor({ examId, q, rubric, onChanged }: {
               </div>
               →
               <NumberInput value={p.points} min={0} onChange={(v) => upd({ partial: d.partial.map((x, k) => (k === i ? { ...x, points: v } : x)) })} />점
+              {!p.from_key && <Badge tone="accent">AI 제안</Badge>}
               <Button small variant="ghost" onClick={() => upd({ partial: d.partial.filter((_, k) => k !== i) })}>
                 ✕
               </Button>
             </Row>
           ))}
           <Row>
-            <Button small onClick={() => d.items[0] && upd({ partial: [...d.partial, { item_id: d.items[0].id, condition: "", points: 0 }] })}>
+            <Button small onClick={() => d.items[0] && upd({ partial: [...d.partial, { item_id: d.items[0].id, condition: "", points: 0, from_key: true }] })}>
               + 부분 점수
             </Button>
           </Row>
@@ -241,7 +528,7 @@ function RubricEditor({ examId, q, rubric, onChanged }: {
   );
 }
 
-type QDetail = { question: ExamQuestion; solution: Solution | null; rubric: Rubric | null };
+type QDetail = { question: ExamQuestion; key: AnswerKey | null; solution: Solution | null; rubric: Rubric | null };
 
 function QuestionCard({ examId, number, scope, onChanged, version }: {
   examId: string;
@@ -269,7 +556,29 @@ function QuestionCard({ examId, number, scope, onChanged, version }: {
     >
       <Stack gap={14}>
         {showQ && <ItemView number={q.number} points={q.points} item={q.item} examId={examId} />}
-        {data.solution ? <SolutionView sol={data.solution} scope={scope} /> : <Info>아직 해설이 없습니다.</Info>}
+        {data.key ? (
+          <KeyView
+            k={data.key}
+            q={q}
+            examId={examId}
+            onChanged={() => {
+              reload();
+              onChanged();
+            }}
+          />
+        ) : <Info>해설지가 없습니다 — 루브릭이 AI 풀이만으로 만들어집니다. 위에서 해설지를 붙일 수 있습니다.</Info>}
+        {data.solution ? <SolutionView sol={data.solution} scope={scope} withKey={!!data.key} /> : <Info>아직 해설이 없습니다.</Info>}
+        {data.rubric && (
+          <KeyReview
+            examId={examId}
+            q={q}
+            rubric={data.rubric}
+            onChanged={() => {
+              reload();
+              onChanged();
+            }}
+          />
+        )}
         {data.rubric ? (
           <RubricEditor
             examId={examId}
@@ -285,6 +594,35 @@ function QuestionCard({ examId, number, scope, onChanged, version }: {
         )}
       </Stack>
     </Card>
+  );
+}
+
+function KeyUpload({ examId, onDone, missing }: { examId: string; onDone: () => void; missing: number }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [pages, setPages] = useState("");
+  const job = useJob(onDone);
+  const send = () => {
+    const f = new FormData();
+    f.append("file", file!);
+    f.append("pages", pages);
+    void job.run(() => api.upload(`/exams/${examId}/answer-key`, f));
+  };
+  return (
+    <Stack gap={6}>
+      <Row>
+        <b>해설지</b>
+        {missing ? <Badge tone="warn">{missing}문항 없음</Badge> : <Badge tone="ok">모든 문항</Badge>}
+        <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        <div style={{ width: 130 }}>
+          <TextInput value={pages} onChange={setPages} placeholder="쪽 (자동)" />
+        </div>
+        <Button small disabled={!file || job.running} onClick={send}>
+          해설지 붙이기
+        </Button>
+      </Row>
+      <JobProgress job={job.job} />
+      <ErrorBox error={job.error} />
+    </Stack>
   );
 }
 
@@ -324,8 +662,10 @@ export function RubricsTab({ detail, scope, reload }: TabProps) {
             </Button>
           </Row>
           <span style={{ color: "var(--text-2)", fontSize: 13 }}>
-            해설은 범위 프로필의 개념·기법만 써서 만들고, 단계마다 쓴 개념 ID를 코드가 확인합니다. 루브릭은 강사가 승인해야 채점에 쓰입니다.
+            해설은 AI가 해설지를 보지 않고 범위 안에서 먼저 풉니다. 루브릭은 강사 해설지(정답·배점·부분 점수)를 기준으로 만들고, AI 풀이와
+            소문항마다 비교해 AI 오답·다른 정답 후보·해설지 의문을 표시합니다. 다른 정답 후보는 강사가 인정해야 점수가 나갑니다.
           </span>
+          <KeyUpload examId={id} onDone={refresh} missing={detail.questions.filter((q) => !q.has_key).length} />
           <JobProgress job={solve.job} />
           <JobProgress job={rubric.job} />
           <ErrorBox error={solve.error ?? rubric.error} />

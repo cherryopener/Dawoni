@@ -16,6 +16,7 @@ const JOB_NAMES: Record<string, string> = {
   refine_rule: "규칙 다듬기",
   ingest_textbook: "교재 → 범위 프로필",
   ingest_exam: "시험지 PDF → 문항",
+  answer_key: "해설지 읽기",
   solve: "해설 만들기",
   rubric: "루브릭 초안",
   scan: "손글씨 판독",

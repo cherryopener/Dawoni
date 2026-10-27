@@ -14,7 +14,7 @@ from pathlib import Path
 from dawoni.config import AgentName
 from dawoni.context import ContextEngine, TaskDef, TaskInput
 from dawoni.grading.pipeline import SecondOpinion
-from dawoni.grading.render import question_text
+from dawoni.grading.render import exam_question_text
 from dawoni.models.grading import (
     Exam,
     TranscribedLine,
@@ -84,7 +84,7 @@ def _run(
     def check(d: TranscriptionDraft) -> list[str]:
         return check_transcription(d, numbers, len(pages))
 
-    material = "\n\n".join(question_text(q.number, q.points, q.item) for q in exam.questions)
+    material = "\n\n".join(exam_question_text(q) for q in exam.questions)
     if hints:
         material += "\n\n" + hints
     res = engine.run(

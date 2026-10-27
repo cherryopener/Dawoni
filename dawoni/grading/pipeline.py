@@ -3,32 +3,48 @@
 강사의 단계를 건너뛰지 못하게 막는다:
 - 루브릭은 범위 검증을 통과한 해설에서만 만든다
 - 채점은 **승인된 루브릭**과 **확인된 판독문**으로만 한다
+
+해설지가 있으면 루브릭은 해설지를 기준으로 (실측: AI 풀이만으로 만든 루브릭이 AI의 오답을
+정답으로 인정했다):
+1. AI는 해설지를 보지 않고 먼저 혼자 푼다 (소문항별 답)
+2. 루브릭 = 해설지의 정답·배점·부분 점수 + 소문항별 비교(같음 / AI 오답 / 다른 정답 후보 /
+   해설지 의문). 소문항 배점·부분 점수 구조는 코드가 검사한다
+3. 다른 AI 세션이 루브릭이 해설지를 지키는지 검토 → 지적이 있으면 한 번 고쳐 다시 만든다
+4. 다른 정답 후보는 문제에 대입해 독립 검산. **강사가 인정하기 전에는 점수를 주지 않고**,
+   학생 답이 후보와 같으면 채점을 '검토 필요'로 둔다
 """
 
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from dawoni.config import AgentName
 from dawoni.context import ContextEngine, Shrinkable, TaskDef, TaskInput
 from dawoni.grading import checks
 from dawoni.grading.render import (
-    question_text,
+    exam_question_text,
+    key_text,
     rubric_text,
     scope_layer,
     solution_text,
     transcript_text,
 )
+from dawoni.models.answer_key import AnswerKey
 from dawoni.models.base import utcnow
 from dawoni.models.calibration import RubricSuggestion
 from dawoni.models.grading import (
     DEFAULT_NEVER_DEDUCT,
+    AnswerCandidate,
+    AnswerCheck,
     ExamQuestion,
     GradeOutput,
     GradeResult,
     ItemJudgement,
+    PartCheck,
     Rubric,
+    RubricAudit,
     RubricDraft,
     ScopedSolution,
     SolutionDraft,
@@ -60,6 +76,21 @@ GRADE: TaskDef[GradeOutput] = TaskDef(
     template="grade_answer.md.j2",
     output=GradeOutput,
     rule_target=("grade", "feedback"),
+    timeout_s=600,
+)
+
+AUDIT: TaskDef[RubricAudit] = TaskDef(
+    name="audit_rubric",
+    template="audit_rubric.md.j2",
+    output=RubricAudit,
+    rule_target="rubric",
+    timeout_s=600,
+)
+CHECK_ANSWER: TaskDef[AnswerCheck] = TaskDef(
+    name="check_answer",
+    template="check_answer.md.j2",
+    output=AnswerCheck,
+    rule_target="solve",
     timeout_s=600,
 )
 
@@ -98,16 +129,16 @@ def solve_question(
     """`with_extensions`: 신규 문제 B — 범위 프로필의 확장 개념(X)도 허용·안내한다."""
 
     def check(d: SolutionDraft) -> list[str]:
-        problems = checks.check_solution_math(d)
+        problems = checks.check_solution_math(d) + checks.check_part_answers(d, q)
         if d.out_of_scope_note:
             return problems  # 범위 안에서 못 푼다는 판단은 수리하지 않고 강사에게 알린다
         return problems + checks.check_solution_scope(d, scope, with_extensions=with_extensions)
 
     task = dataclasses.replace(SOLVE, validator=check)
     inp = TaskInput(
-        variables={"level": scope.level},
+        variables={"level": scope.level, "has_parts": bool(q.parts)},
         scope=scope_layer(scope, with_extensions=with_extensions),
-        material=question_text(q.number, q.points, q.item),
+        material=exam_question_text(q),
     )
     first = engine.run(task, inp, agent=agent, model=model).value
     notes: list[str] = []
@@ -146,39 +177,175 @@ def derive_rubric(
     solution: ScopedSolution,
     scope: ScopeProfile,
     *,
+    key: AnswerKey | None = None,
+    audit: bool = True,
     agent: AgentName | None = None,
     model: str | None = None,
     previous: Rubric | None = None,
     with_extensions: bool = False,
 ) -> Rubric:
-    if solution.out_of_scope_note:
+    """`key`: 강사 해설지. 있으면 루브릭의 기준이 되고 AI 풀이는 비교 대상이 된다."""
+    if solution.out_of_scope_note and key is None:
         raise PipelineError(f"문항 {q.number}: 범위 안 해설이 없어 루브릭을 만들 수 없습니다.")
 
     def check(d: RubricDraft) -> list[str]:
-        return checks.check_rubric(d, q.points, solution)
+        return checks.check_rubric(d, q, solution, key)
 
     task = dataclasses.replace(RUBRIC, validator=check)
-    draft = engine.run(
-        task,
+    base = [exam_question_text(q)]
+    if key is not None:
+        base.append(key_text(key, q))
+        base.append(solution_text(solution, "[AI 독립 풀이] (해설지를 보지 않고 풂)"))
+    else:
+        base.append(solution_text(solution))
+    variables = {
+        "level": scope.level,
+        "points": q.points,
+        "parts": bool(q.parts),
+        "has_key": key is not None,
+        "never_deduct": DEFAULT_NEVER_DEDUCT,
+    }
+    layer = scope_layer(scope, with_extensions=with_extensions)
+
+    def draft_once(feedback: list[str]) -> RubricDraft:
+        extra = (
+            ["[검토 의견] 이전 초안을 다른 검토자가 보고 지적한 점 — 반영해서 다시 만들 것:"]
+            + [f"- {x}" for x in feedback]
+            if feedback
+            else []
+        )
+        return engine.run(
+            task,
+            TaskInput(variables=variables, scope=layer, material="\n\n".join(base + extra)),
+            agent=agent,
+            model=model,
+        ).value
+
+    def audit_once(d: RubricDraft) -> list[str]:
+        assert key is not None
+        return engine.run(
+            AUDIT,
+            TaskInput(
+                variables={"level": scope.level},
+                scope=layer,
+                material="\n\n".join(
+                    [exam_question_text(q), key_text(key, q), rubric_text(d, q.parts)]
+                ),
+            ),
+            agent=agent,
+            model=model,
+        ).value.issues
+
+    draft = draft_once([])
+    notes: list[str] = []
+    if key is not None:
+        notes += key.warnings
+        if not key.confirmed:
+            notes.append(
+                "해설지 판독을 강사가 아직 확인하지 않았습니다 — 원본과 비교한 뒤 확인하세요"
+                " (AI가 수식의 숫자를 바꿔 읽은 사례가 있음)"
+            )
+        if audit:
+            issues = audit_once(draft)
+            if issues:
+                draft = draft_once(issues)
+                left = audit_once(draft)
+                notes += [f"검토 의견(반영 후에도 남음): {x}" for x in left]
+    else:
+        notes.append("강사 해설지 없이 AI 풀이로 만든 루브릭 — 정답과 배점을 꼭 확인하세요")
+
+    def verify(part: str, answer: str) -> AnswerCheck:
+        return _verify_answer(engine, q, scope, part, answer, agent=agent, model=model)
+
+    candidates = [
+        c.model_copy(
+            update={"status": "proposed", "check": (r := verify(c.part, c.answer)).verdict,
+                    "check_note": r.reasoning}
+        )
+        for c in draft.candidates
+    ]  # fmt: skip
+    part_checks = [
+        _verify_disagreement(c, key, solution, verify) if key is not None else c
+        for c in draft.checks
+    ]
+    notes += [n for c in part_checks if (n := _disagreement_note(c))]
+    data = draft.model_dump()
+    data["never_deduct"] = checks.merge_never_deduct(draft, DEFAULT_NEVER_DEDUCT)
+    data["candidates"] = [c.model_dump() for c in candidates]
+    data["checks"] = [c.model_dump() for c in part_checks]
+    return Rubric(
+        **data,
+        question_number=q.number,
+        based_on_key=key is not None,
+        review_notes=notes,
+        version=(previous.version + 1) if previous else 1,
+    )
+
+
+def _verify_answer(
+    engine: ContextEngine,
+    q: ExamQuestion,
+    scope: ScopeProfile,
+    part: str,
+    answer: str,
+    *,
+    agent: AgentName | None,
+    model: str | None,
+) -> AnswerCheck:
+    """답 하나를 문제에 대입해 검산 — 해설지·AI 풀이·루브릭 없이 새 세션에서."""
+    where = f"소문항 {part}" if part else "문항"
+    return engine.run(
+        CHECK_ANSWER,
         TaskInput(
-            variables={
-                "level": scope.level,
-                "points": q.points,
-                "never_deduct": DEFAULT_NEVER_DEDUCT,
-            },
-            scope=scope_layer(scope, with_extensions=with_extensions),
-            material=question_text(q.number, q.points, q.item) + "\n\n" + solution_text(solution),
+            variables={"level": scope.level},
+            scope=scope_layer(scope),
+            material=exam_question_text(q) + f"\n\n[확인할 답] {where}: {answer}",
         ),
         agent=agent,
         model=model,
     ).value
-    data = draft.model_dump()
-    data["never_deduct"] = checks.merge_never_deduct(draft, DEFAULT_NEVER_DEDUCT)
-    return Rubric(
-        **data,
-        question_number=q.number,
-        version=(previous.version + 1) if previous else 1,
-    )
+
+
+def _verify_disagreement(
+    c: PartCheck,
+    key: AnswerKey,
+    solution: SolutionDraft,
+    verify: Callable[[str, str], AnswerCheck],
+) -> PartCheck:
+    """해설지 답과 AI 답이 다르면 **둘 다** 독립 검산한다.
+
+    실측: 해설지가 그림과 다른 기호로 답을 적었는데(θ를 반사각으로 씀) 루브릭 AI는 'AI 오답'으로
+    판정했다. 어느 쪽이 맞는지는 루브릭을 만든 AI의 의견이 아니라 검산 결과로 강사에게 보여 준다.
+    """
+    if c.verdict == "same":
+        return c
+    kp = key.part(c.part)
+    ai = checks.ai_part_answer(solution, c.part)
+    update: dict[str, object] = {}
+    if kp is not None and kp.answer:
+        r = verify(c.part, kp.answer)
+        update |= {"key_check": r.verdict, "key_check_note": r.reasoning}
+    if ai is not None:
+        r = verify(c.part, ai.latex)
+        update |= {"ai_check": r.verdict, "ai_check_note": r.reasoning}
+    return c.model_copy(update=update)
+
+
+def _disagreement_note(c: PartCheck) -> str | None:
+    name = f"소문항 {c.part}" if c.part else "문항"
+    if c.key_check == "invalid" and c.ai_check == "valid":
+        return (
+            f"⚠ {name}: 해설지 답은 검산을 통과하지 못했고 AI 답({c.ai_answer})은 통과했습니다 "
+            "— 해설지의 답·기호를 확인하세요 (루브릭은 지금 해설지 기준)"
+        )
+    if c.key_check == "invalid":
+        return f"⚠ {name}: 해설지 답이 독립 검산을 통과하지 못했습니다 — 해설지를 확인하세요"
+    if c.verdict == "ai_wrong" and c.ai_check == "valid":
+        return (
+            f"{name}: 'AI 오답'으로 판정했지만 AI 답({c.ai_answer})도 검산을 통과했습니다 "
+            "— 다른 정답일 수 있습니다"
+        )
+    return None
 
 
 def approve_rubric(rubric: Rubric, by: str | None) -> Rubric:
@@ -190,16 +357,41 @@ def approve_rubric(rubric: Rubric, by: str | None) -> Rubric:
 def edit_rubric(
     previous: Rubric, draft: RubricDraft, q: ExamQuestion, solution: SolutionDraft
 ) -> Rubric:
-    """강사가 고친 루브릭. 합계·해설 단계 검사를 통과해야 하고, 다시 승인해야 채점에 쓴다."""
-    problems = checks.check_rubric(draft, q.points, solution)
+    """강사가 고친 루브릭 (정답 후보 인정·제외 포함). 합계·해설 단계 검사를 통과해야 하고,
+    다시 승인해야 채점에 쓴다. 해설지 구조 검사는 하지 않는다 — 기준은 강사가 정한다."""
+    problems = checks.check_rubric(draft, q, solution, strict=False)
     if problems:
         raise PipelineError("; ".join(problems))
     bump = 1 if previous.status == "approved" else 0
     return Rubric(
         **draft.model_dump(),
         question_number=previous.question_number,
+        based_on_key=previous.based_on_key,
+        review_notes=previous.review_notes,
         version=previous.version + bump,
         status="draft",
+    )
+
+
+def decide_candidates(rubric: Rubric, accept: list[str], reject: list[str]) -> Rubric:
+    """강사가 다른 정답 후보를 인정·제외 (승인 전에). 결정이 바뀌면 다시 승인해야 한다."""
+    ids = {c.id for c in rubric.candidates}
+    unknown = sorted((set(accept) | set(reject)) - ids)
+    if unknown:
+        raise PipelineError(f"정답 후보에 없는 ID: {unknown}")
+    both = sorted(set(accept) & set(reject))
+    if both:
+        raise PipelineError(f"인정과 제외에 같은 후보: {both}")
+
+    def status(c: AnswerCandidate) -> str:
+        return "accepted" if c.id in accept else "rejected" if c.id in reject else c.status
+
+    cands = [c.model_copy(update={"status": status(c)}) for c in rubric.candidates]
+    if cands == rubric.candidates:
+        return rubric
+    bump = 1 if rubric.status == "approved" else 0
+    return rubric.model_copy(
+        update={"candidates": cands, "status": "draft", "version": rubric.version + bump}
     )
 
 
@@ -225,7 +417,7 @@ def _grade_once(
         TaskInput(
             variables={"level": scope.level},
             scope=scope_layer(scope),
-            material=question_text(q.number, q.points, q.item) + "\n\n" + rubric_text(rubric),
+            material=exam_question_text(q) + "\n\n" + rubric_text(rubric, q.parts),
             examples=examples,
             target=transcript_text(transcript),
         ),
@@ -276,7 +468,14 @@ def grade_answer(
     low = [j.rubric_item_id for j in first.judgements if j.confidence < LOW_CONFIDENCE]
     if low:
         flags.append(f"확신도 낮음: {', '.join(low)}")
-    needs_review = bool(diff or low or first.flags)
+    pending = {c.id: c for c in rubric.candidates if c.status == "proposed"}
+    matched = [pending[c] for c in first.matched_candidates if c in pending]
+    flags += [
+        f"학생 답이 강사 미확인 정답 후보 {c.id}({c.answer})와 같음 — 인정하면 "
+        f"{', '.join(c.item_ids) or '해당 항목'} 점수를 주세요"
+        for c in matched
+    ]
+    needs_review = bool(diff or low or first.flags or matched)
     return GradeResult(
         student_id=transcript.student_id,
         question_number=q.number,
@@ -400,7 +599,7 @@ def check_suggestion(
         if bad:
             problems.append(f"evidence의 학생 {bad}는 [자료]의 사례가 아니다")
     if s.revised is not None:
-        problems += checks.check_rubric(s.revised, q.points, solution)
+        problems += checks.check_rubric(s.revised, q, solution, strict=False)
     return problems
 
 
@@ -426,9 +625,9 @@ def suggest_rubric(
             scope=scope_layer(scope),
             material="\n\n".join(
                 [
-                    question_text(q.number, q.points, q.item),
+                    exam_question_text(q),
                     solution_text(solution),
-                    rubric_text(rubric),
+                    rubric_text(rubric, q.parts),
                     "[강사가 확정한 채점 사례]\n" + corrections,
                 ]
             ),
