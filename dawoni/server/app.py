@@ -19,7 +19,7 @@ from dawoni.grading.pipeline import PipelineError
 from dawoni.ingest.workflow import IngestRefused
 from dawoni.ocr.pages import PageError
 from dawoni.paths import AppPaths
-from dawoni.server import api_calibration, api_content, api_exams, api_setup
+from dawoni.server import api_calibration, api_content, api_exams, api_generate, api_setup
 from dawoni.server.files import PathRefused
 from dawoni.server.security import COOKIE, LocalOnly
 from dawoni.server.state import AppState, NeedsSetup
@@ -86,6 +86,7 @@ def create_app(paths: AppPaths, token: str, *, web_dir: Path | None = None) -> F
     app.include_router(api_content.router)
     app.include_router(api_exams.router)
     app.include_router(api_calibration.router)
+    app.include_router(api_generate.router)
 
     @app.get("/login")
     def login(t: str = "") -> Response:  # pyright: ignore[reportUnusedFunction]

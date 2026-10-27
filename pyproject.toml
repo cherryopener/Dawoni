@@ -60,6 +60,7 @@ ignore = [
 "tests/test_docx.py" = ["E501"]  # 같은 이유 (시험지 문항 픽스처)
 "tests/test_calibration.py" = ["E501"]  # 채점 응답 픽스처
 "tests/test_server.py" = ["E501"]
+"tests/test_generate.py" = ["E501"]
 
 [tool.pyright]
 include = ["dawoni", "tests"]

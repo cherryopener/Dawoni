@@ -93,17 +93,20 @@ def solve_question(
     verify: SecondOpinion | None = None,
     agent: AgentName | None = None,
     model: str | None = None,
+    with_extensions: bool = False,
 ) -> ScopedSolution:
+    """`with_extensions`: 신규 문제 B — 범위 프로필의 확장 개념(X)도 허용·안내한다."""
+
     def check(d: SolutionDraft) -> list[str]:
         problems = checks.check_solution_math(d)
         if d.out_of_scope_note:
             return problems  # 범위 안에서 못 푼다는 판단은 수리하지 않고 강사에게 알린다
-        return problems + checks.check_solution_scope(d, scope)
+        return problems + checks.check_solution_scope(d, scope, with_extensions=with_extensions)
 
     task = dataclasses.replace(SOLVE, validator=check)
     inp = TaskInput(
         variables={"level": scope.level},
-        scope=scope_layer(scope),
+        scope=scope_layer(scope, with_extensions=with_extensions),
         material=question_text(q.number, q.points, q.item),
     )
     first = engine.run(task, inp, agent=agent, model=model).value
@@ -146,6 +149,7 @@ def derive_rubric(
     agent: AgentName | None = None,
     model: str | None = None,
     previous: Rubric | None = None,
+    with_extensions: bool = False,
 ) -> Rubric:
     if solution.out_of_scope_note:
         raise PipelineError(f"문항 {q.number}: 범위 안 해설이 없어 루브릭을 만들 수 없습니다.")
@@ -162,7 +166,7 @@ def derive_rubric(
                 "points": q.points,
                 "never_deduct": DEFAULT_NEVER_DEDUCT,
             },
-            scope=scope_layer(scope),
+            scope=scope_layer(scope, with_extensions=with_extensions),
             material=question_text(q.number, q.points, q.item) + "\n\n" + solution_text(solution),
         ),
         agent=agent,
