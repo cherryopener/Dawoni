@@ -1,0 +1,19 @@
+{
+  "policy": "과정 없이 결과식만 쓰면 R1은 1점, 근거 없이 결론만 쓰면 R2는 1점 (루브릭 v1에 없는 강사 기준)",
+  "question": "tests/fixtures/grading/questions.json 의 1번 (4점)",
+  "scores": {
+    "T1": {"R1": 2, "R2": 2},
+    "T2": {"R1": 1, "R2": 2, "R1_note": "변형 과정 없이 결과식만 썼으므로 1점"},
+    "T3": {"R1": 1, "R2": 1, "R1_note": "변형 과정 없이 결과식만 썼으므로 1점", "R2_note": "x값 없이 최솟값만 씀"},
+    "T4": {"R1": 2, "R2": 2},
+    "T5": {"R1": 0, "R2": 1, "R1_note": "변형·계산 과정이 전혀 없음", "R2_note": "근거 없이 결론만 씀"},
+    "T6": {"R1": 2, "R2": 2},
+    "T7": {"R1": 1, "R2": 2, "R1_note": "변형 과정 없이 결과식만 썼으므로 1점"},
+    "T8": {"R1": 2, "R2": 1, "R2_note": "x값 없이 최솟값만 씀"}
+  },
+  "measured_2026_10_27": {
+    "agent": "agy / gemini-3.8-flash-medium",
+    "before": {"exact": 0.5, "item_agreement": 0.75, "mean_abs_diff": 0.5, "bias": 0.5},
+    "after": {"exact": 0.88, "item_agreement": 0.94, "mean_abs_diff": 0.12, "bias": 0.12}
+  }
+}

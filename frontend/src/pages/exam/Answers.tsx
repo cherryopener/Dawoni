@@ -23,6 +23,7 @@ import {
 import { api, errorText, examFileUrl, useJob, useLoad } from "../../lib/api";
 import type { Cell, ExamQuestion, Transcript, TranscriptLine } from "../../lib/types";
 import type { TabProps } from "../Exam";
+import { ManualGradeModal } from "./ManualGrade";
 
 type StudentRow = { student: string; cells: Record<string, Cell> };
 
@@ -101,12 +102,13 @@ function LineEditor({ line, onChange, onRemove }: {
   );
 }
 
-export function TranscriptModal({ examId, student, number, onClose, onSaved }: {
+export function TranscriptModal({ examId, student, number, onClose, onSaved, onManual }: {
   examId: string;
   student: string;
   number: string;
   onClose: () => void;
   onSaved: () => void;
+  onManual?: () => void;
 }) {
   const path = `/exams/${examId}/students/${encodeURIComponent(student)}/transcripts/${encodeURIComponent(number)}`;
   const { data, error } = useLoad<TDetail>(path);
@@ -134,6 +136,11 @@ export function TranscriptModal({ examId, student, number, onClose, onSaved }: {
       onClose={onClose}
       actions={
         <Row>
+          {onManual && t?.confirmed && (
+            <Button onClick={onManual} title="기준 예시 만들기">
+              직접 채점
+            </Button>
+          )}
           <Button onClick={() => save(false)}>저장 (확인 전)</Button>
           <Button variant="primary" onClick={() => save(true)}>
             확인 완료 — 채점 가능
@@ -299,6 +306,7 @@ export function AnswersTab({ detail, reload }: TabProps) {
   const id = detail.exam.id;
   const { data, error, reload: reloadRows } = useLoad<StudentRow[]>(`/exams/${id}/students`);
   const [open, setOpen] = useState<{ student: string; number: string } | null>(null);
+  const [manual, setManual] = useState<{ student: string; number: string } | null>(null);
   const refresh = () => {
     reloadRows();
     reload();
@@ -354,7 +362,20 @@ export function AnswersTab({ detail, reload }: TabProps) {
       </Card>
       <AddAnswers examId={id} questions={detail.exam.questions} onDone={refresh} />
       {open && (
-        <TranscriptModal examId={id} student={open.student} number={open.number} onClose={() => setOpen(null)} onSaved={refresh} />
+        <TranscriptModal
+          examId={id}
+          student={open.student}
+          number={open.number}
+          onClose={() => setOpen(null)}
+          onSaved={refresh}
+          onManual={() => {
+            setManual(open);
+            setOpen(null);
+          }}
+        />
+      )}
+      {manual && (
+        <ManualGradeModal examId={id} student={manual.student} number={manual.number} onClose={() => setManual(null)} onSaved={refresh} />
       )}
     </Stack>
   );

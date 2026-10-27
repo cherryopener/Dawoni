@@ -55,11 +55,13 @@ function GradeModal({ examId, row, onClose, onSaved }: {
   const { data, error } = useLoad<GDetail>(path);
   const [awarded, setAwarded] = useState<Record<string, number>>({});
   const [note, setNote] = useState("");
+  const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     if (!data) return;
     setAwarded(Object.fromEntries(data.grade.judgements.map((j) => [j.rubric_item_id, j.awarded])));
     setNote(data.grade.teacher_note ?? "");
+    setItemNotes(data.grade.teacher_item_notes ?? {});
   }, [data]);
   if (!data) return <Modal title="채점 결과" onClose={onClose}><ErrorBox error={error} /></Modal>;
   const { grade: g, transcript: t, rubric: r, question: q } = data;
@@ -71,7 +73,7 @@ function GradeModal({ examId, row, onClose, onSaved }: {
   const save = () => {
     setErr(null);
     api
-      .put(path, { awarded, note: note || null, by: teacherName() || null })
+      .put(path, { awarded, item_notes: itemNotes, note: note || null, by: teacherName() || null })
       .then(() => {
         onSaved();
         onClose();
@@ -99,6 +101,8 @@ function GradeModal({ examId, row, onClose, onSaved }: {
         <Badge tone={STATUS[g.status]!.tone}>{STATUS[g.status]!.label}</Badge>
         {r && g.rubric_version !== r.version && <Badge tone="warn">루브릭 v{g.rubric_version}로 채점 (지금 v{r.version})</Badge>}
         {g.confirmed_by && <Badge tone="ok">확정: {g.confirmed_by}</Badge>}
+        {g.agent === null && <Badge tone="accent">강사 직접 채점</Badge>}
+        {(g.examples_used ?? []).length > 0 && <Badge title="채점에 넣은 강사 기준 예시">기준 예시: {(g.examples_used ?? []).join(", ")}</Badge>}
       </Row>
       {g.flags.filter((f) => !f.startsWith("이중 채점 불일치")).map((f, i) => (
         <Notice key={i}>
@@ -164,6 +168,15 @@ function GradeModal({ examId, row, onClose, onSaved }: {
                         <span>/ {it?.points ?? "?"}</span>
                       </Row>
                       {changed && <div style={{ fontSize: 12, color: "var(--warn)" }}>AI: {ai[j.rubric_item_id]}점</div>}
+                      {changed && (
+                        <div style={{ marginTop: 4, width: 220 }}>
+                          <TextInput
+                            value={itemNotes[j.rubric_item_id] ?? ""}
+                            onChange={(v) => setItemNotes({ ...itemNotes, [j.rubric_item_id]: v })}
+                            placeholder="고친 이유 (예시로 쓰임)"
+                          />
+                        </div>
+                      )}
                       {so && so.awarded !== j.awarded && <div style={{ fontSize: 12, color: "var(--warn)" }}>재채점: {so.awarded}점</div>}
                       <div style={{ fontSize: 12, color: j.confidence < 0.6 ? "var(--bad)" : "var(--text-3)" }}>
                         확신 {Math.round(j.confidence * 100)}%
@@ -205,7 +218,7 @@ function GradeModal({ examId, row, onClose, onSaved }: {
               <Loose text={g.comment} />
             </div>
           </Field>
-          <Field label="강사 메모 (선택)" hint="점수를 고친 이유를 남기면 나중에 채점 보정(M8)에 쓰입니다">
+          <Field label="강사 메모 (선택)" hint="고친 점수·이유는 이 문항의 기준 예시가 되어 다음 채점에 들어갑니다">
             <TextInput value={note} onChange={setNote} />
           </Field>
         </Stack>
@@ -219,6 +232,7 @@ export function ReviewTab({ detail, reload }: TabProps) {
   const { data, error, reload: reloadRows } = useLoad<ReviewRow[]>(`/exams/${id}/review`);
   const [double, setDouble] = useState(false);
   const [regrade, setRegrade] = useState(false);
+  const [useExamples, setUseExamples] = useState(true);
   const [open, setOpen] = useState<ReviewRow | null>(null);
   const [report, setReport] = useState<string | null>(null);
   const refresh = () => {
@@ -226,10 +240,10 @@ export function ReviewTab({ detail, reload }: TabProps) {
     reload();
   };
   const grade = useJob((j) => {
-    const r = j.result as { graded: number; needs_review: number; skipped: { student: string; question: string; reason: string }[]; failed: { student: string; question: string; reason: string }[] };
+    const r = j.result as { graded: number; with_examples: number; needs_review: number; skipped: { student: string; question: string; reason: string }[]; failed: { student: string; question: string; reason: string }[] };
     const pending = r.skipped.filter((x) => x.reason.startsWith("판독문")).length;
     setReport(
-      `채점 ${r.graded}건 (검토 필요 ${r.needs_review})` +
+      `채점 ${r.graded}건 (검토 필요 ${r.needs_review}, 기준 예시 사용 ${r.with_examples})` +
         (pending ? ` · 판독문 확인 대기로 건너뜀 ${pending}` : "") +
         (r.failed.length ? ` · 실패 ${r.failed.length}건 — 다시 누르면 실패한 답안만 채점` : ""),
     );
@@ -250,7 +264,7 @@ export function ReviewTab({ detail, reload }: TabProps) {
               disabled={grade.running || unapproved.length > 0}
               onClick={() => {
                 setReport(null);
-                void grade.run(() => api.post(`/exams/${id}/grade`, { double, regrade }));
+                void grade.run(() => api.post(`/exams/${id}/grade`, { double, regrade, use_examples: useExamples }));
               }}
             >
               채점 시작
@@ -260,6 +274,9 @@ export function ReviewTab({ detail, reload }: TabProps) {
             </Check>
             <Check checked={regrade} onChange={setRegrade}>
               이미 채점한 답안도 다시
+            </Check>
+            <Check checked={useExamples} onChange={setUseExamples}>
+              강사 기준 예시 넣기 (“5. 보정”)
             </Check>
           </Row>
           <JobProgress job={grade.job} />

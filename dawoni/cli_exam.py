@@ -268,6 +268,7 @@ def _cmd_grade(args: argparse.Namespace) -> int:
         only=args.q,
         double=SecondOpinion(model=args.double_model) if args.double else None,
         regrade=args.regrade,
+        use_examples=not args.no_examples,
         progress=_cli_progress,
     )
     for sk in run.skipped:
@@ -275,6 +276,8 @@ def _cmd_grade(args: argparse.Namespace) -> int:
         _out(f"{sk.student} 문항 {sk.question}: {sk.reason} — 건너뜀{hint}")
     for g in run.graded:
         mark = "검토 필요" if g.status == "needs_review" else "자동"
+        if g.examples_used:
+            mark += f", 기준 예시 {len(g.examples_used)}개"
         _out(f"{g.student_id} 문항 {g.question_number}: {g.total:g}/{g.max_points:g}  [{mark}]")
         for f in g.flags:
             _out(f"   ! {f}")
@@ -396,8 +399,13 @@ def register(sub: Any) -> None:
     g.add_argument("--double", action="store_true", help="이중 채점")
     g.add_argument("--double-model", help="두 번째 채점에 쓸 모델")
     g.add_argument("--regrade", action="store_true", help="이미 채점한 답안도 다시 채점")
+    g.add_argument("--no-examples", action="store_true", help="강사 기준 예시 없이 채점")
     g.set_defaults(func=_wrap(_cmd_grade))
 
     r = es.add_parser("report", help="채점 결과")
     r.add_argument("exam")
     r.set_defaults(func=_wrap(_cmd_report))
+
+    from dawoni import cli_calibration
+
+    cli_calibration.register(es, with_q, _wrap, _svc)

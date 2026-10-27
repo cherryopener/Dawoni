@@ -57,7 +57,7 @@ def q1() -> ExamQuestion:
     return ExamQuestion.model_validate(read_json(FIX / "questions.json")[0])
 
 
-def _transcript(name: str, student: str = "학생") -> Transcript:
+def transcript_of(name: str, student: str = "학생") -> Transcript:
     from dawoni.cli_exam import parse_answer_text
 
     text = (FIX / "answers" / name).read_text(encoding="utf-8")
@@ -125,7 +125,7 @@ GRADE_A: dict[str, Any] = {
 }  # fmt: skip
 
 
-def _approved(draft: dict[str, Any] = RUBRIC_OK) -> Rubric:
+def approved_rubric(draft: dict[str, Any] = RUBRIC_OK) -> Rubric:
     r = Rubric(**RubricDraft.model_validate(draft).model_dump(), question_number="1")
     return approve_rubric(r, "강사")
 
@@ -154,7 +154,7 @@ def test_solution_scope_check(scope: ScopeProfile) -> None:
     ],
 )
 def test_quote_in_transcript(quote: str, ok: bool) -> None:
-    assert checks.quote_in_transcript(quote, _transcript("A_q1.txt")) is ok
+    assert checks.quote_in_transcript(quote, transcript_of("A_q1.txt")) is ok
 
 
 @pytest.mark.parametrize(
@@ -181,11 +181,14 @@ def _grade(data: dict[str, Any]) -> GradeOutput:
 
 
 def test_check_grade_accepts_good(scope: ScopeProfile) -> None:
-    assert checks.check_grade(_grade(GRADE_A), _approved(), _transcript("A_q1.txt"), scope) == []
+    assert (
+        checks.check_grade(_grade(GRADE_A), approved_rubric(), transcript_of("A_q1.txt"), scope)
+        == []
+    )
 
 
 def test_check_grade_problems(scope: ScopeProfile) -> None:
-    rubric, t = _approved(), _transcript("A_q1.txt")
+    rubric, t = approved_rubric(), transcript_of("A_q1.txt")
     g = copy.deepcopy(GRADE_A)
     g["judgements"] = g["judgements"][:1]
     assert any(
@@ -210,9 +213,9 @@ def test_check_grade_problems(scope: ScopeProfile) -> None:
 
 
 def test_blank_answer_cannot_score(scope: ScopeProfile) -> None:
-    blank = _transcript("E_q1.txt")
+    blank = transcript_of("E_q1.txt")
     assert blank.is_blank
-    problems = checks.check_grade(_grade(GRADE_A), _approved(), blank, scope)
+    problems = checks.check_grade(_grade(GRADE_A), approved_rubric(), blank, scope)
     assert any("비어 있는데" in p for p in problems)
 
 
@@ -316,10 +319,10 @@ def test_grade_gates(engine_with: EngineWith, q1: ExamQuestion, scope: ScopeProf
     engine, _ = engine_with([GRADE_A])
     draft = Rubric(**RubricDraft.model_validate(RUBRIC_OK).model_dump(), question_number="1")
     with pytest.raises(PipelineError, match="승인되지 않았습니다"):
-        grade_answer(engine, q1, draft, _transcript("A_q1.txt"), scope)
-    unconfirmed = _transcript("A_q1.txt").model_copy(update={"confirmed": False})
+        grade_answer(engine, q1, draft, transcript_of("A_q1.txt"), scope)
+    unconfirmed = transcript_of("A_q1.txt").model_copy(update={"confirmed": False})
     with pytest.raises(PipelineError, match="확인하지 않았습니다"):
-        grade_answer(engine, q1, _approved(), unconfirmed, scope)
+        grade_answer(engine, q1, approved_rubric(), unconfirmed, scope)
 
 
 def test_grade_repairs_fabricated_quote(
@@ -328,7 +331,7 @@ def test_grade_repairs_fabricated_quote(
     fake = copy.deepcopy(GRADE_A)
     fake["judgements"][0]["evidence_quote"] = "(x-1)^2+6"
     engine, exe = engine_with([fake, GRADE_A])
-    g = grade_answer(engine, q1, _approved(), _transcript("A_q1.txt"), scope)
+    g = grade_answer(engine, q1, approved_rubric(), transcript_of("A_q1.txt"), scope)
     assert g.total == 4 and g.max_points == 4 and g.status == "auto"
     first, second = fake_prompts(exe)
     assert "[학생 답안]" in first and "[루브릭]" in first and "감점하지 말 것" in first
@@ -342,7 +345,7 @@ def test_grade_double_disagreement_needs_review(
     other["judgements"][1].update(awarded=1, deduction_reason="x값을 함께 쓰지 않음")
     engine, _ = engine_with([GRADE_A, other])
     g = grade_answer(
-        engine, q1, _approved(), _transcript("A_q1.txt"), scope, double=SecondOpinion()
+        engine, q1, approved_rubric(), transcript_of("A_q1.txt"), scope, double=SecondOpinion()
     )
     assert g.disagreements == ["R2"] and g.status == "needs_review"
     assert g.total == 4 and g.second_opinion is not None
@@ -354,7 +357,7 @@ def test_low_confidence_needs_review(
     low = copy.deepcopy(GRADE_A)
     low["judgements"][0]["confidence"] = 0.3
     engine, _ = engine_with([low])
-    g = grade_answer(engine, q1, _approved(), _transcript("A_q1.txt"), scope)
+    g = grade_answer(engine, q1, approved_rubric(), transcript_of("A_q1.txt"), scope)
     assert g.status == "needs_review" and any("확신도" in f for f in g.flags)
 
 

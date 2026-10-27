@@ -391,6 +391,7 @@ class GradeBody(BaseModel):
     double: bool = False
     double_model: str | None = None
     regrade: bool = False
+    use_examples: bool = True
 
 
 @router.post("/{exam_id}/grade")
@@ -410,10 +411,12 @@ def grade(exam_id: str, body: GradeBody, st: AppState = State) -> Job:
             only=body.questions,
             double=SecondOpinion(model=body.double_model) if body.double else None,
             regrade=body.regrade,
+            use_examples=body.use_examples,
             progress=ctx.progress,
         )
         return {
             "graded": len(res.graded),
+            "with_examples": sum(bool(g.examples_used) for g in res.graded),
             "needs_review": sum(g.status == "needs_review" for g in res.graded),
             "skipped": [vars(s) for s in res.skipped],
             "failed": [vars(s) for s in res.failed],
@@ -473,6 +476,7 @@ def get_grade(exam_id: str, student: str, number: str, st: AppState = State) -> 
 
 class ReviewBody(BaseModel):
     awarded: dict[str, float] = Field(default_factory=lambda: dict[str, float]())
+    item_notes: dict[str, str] = Field(default_factory=lambda: dict[str, str]())
     note: str | None = None
     by: str | None = None
 
@@ -486,7 +490,8 @@ def confirm_grade(
     r = store.rubric(number)
     if g is None or r is None:
         raise KeyError(f"{student} 문항 {number}: 채점 결과 없음")
-    g = teacher_review(g, r, body.awarded, note=body.note, by=body.by)
+    notes = {k: v for k, v in body.item_notes.items() if v.strip()}
+    g = teacher_review(g, r, body.awarded, note=body.note, by=body.by, item_notes=notes)
     store.save_grade(g)
     return g
 

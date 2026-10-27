@@ -4,6 +4,7 @@ import { go } from "../lib/router";
 import type { Exam, ExamSummary, QuestionState, Scope } from "../lib/types";
 import { SummaryBadges } from "./Exams";
 import { AnswersTab } from "./exam/Answers";
+import { CalibrationTab } from "./exam/Calibration";
 import { ExportTab } from "./exam/Export";
 import { QuestionsTab } from "./exam/Questions";
 import { ReviewTab } from "./exam/Review";
@@ -16,7 +17,7 @@ export type ExamDetail = {
   summary: ExamSummary;
 };
 
-type Tab = "questions" | "rubrics" | "answers" | "review" | "export";
+type Tab = "questions" | "rubrics" | "answers" | "review" | "calibration" | "export";
 
 export function ExamPage({ id, tab }: { id: string; tab?: string }) {
   const { data, error, reload } = useLoad<ExamDetail>(`/exams/${id}`);
@@ -51,7 +52,8 @@ export function ExamPage({ id, tab }: { id: string; tab?: string }) {
         </>
       ),
     },
-    { value: "export", label: <>5. 출력</> },
+    { value: "calibration", label: <>5. 보정</> },
+    { value: "export", label: <>6. 출력</> },
   ];
   const props = { detail: data, scope: scope.data, reload };
   return (
@@ -70,6 +72,7 @@ export function ExamPage({ id, tab }: { id: string; tab?: string }) {
       {current === "rubrics" && <RubricsTab {...props} />}
       {current === "answers" && <AnswersTab {...props} />}
       {current === "review" && <ReviewTab {...props} />}
+      {current === "calibration" && <CalibrationTab {...props} />}
       {current === "export" && <ExportTab {...props} />}
     </Stack>
   );

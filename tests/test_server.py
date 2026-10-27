@@ -222,3 +222,71 @@ def test_failed_job_reports_korean_message(
     job = _wait(c, c.post("/api/rules/refine", json={"request": "존댓말로"}).json())
     assert job["status"] == "failed"
     assert job["error"]["code"] == "agent_not_logged_in" and "로그인" in job["error"]["message"]
+
+
+def test_calibration_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path) -> None:
+    from test_calibration import SUGGESTION
+    from test_grading import approved_rubric
+
+    from dawoni.grading.store import ExamStore
+    from dawoni.models.grading import ScopedSolution, SolutionDraft, Transcript, TranscriptLine
+
+    exe = make_fake("script", script=[{"response": json.dumps(SUGGESTION, ensure_ascii=False)}])
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    save_config(app_paths, cfg)
+    c = _client(app_paths)
+    ws_root = tmp_path / "ws"
+    c.post("/api/workspace", json={"path": str(ws_root), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q1 = read_json(FIX / "questions.json")[:1]
+    eid = c.post(
+        "/api/exams", json={"title": "보정", "scope_id": scope["id"], "questions": q1}
+    ).json()["id"]
+    from dawoni.paths import WorkspacePaths
+
+    store = ExamStore(WorkspacePaths(ws_root), eid)
+    store.save_solution(ScopedSolution(**SolutionDraft.model_validate(SOL_OK).model_dump(),
+                                       question_number="1", scope_version=1))  # fmt: skip
+    store.save_rubric(approved_rubric())
+    for st in ("A", "D"):
+        store.save_transcript(Transcript(student_id=st, question_number="1", confirmed=True,
+                                         lines=[TranscriptLine(math="y=(x-2)^2+11")]))  # fmt: skip
+    base = f"/api/exams/{eid}"
+
+    # 강사 직접 채점 → 기준 예시 후보
+    bad = c.post(f"{base}/students/A/grades/1/manual", json={"awarded": {"R1": 2}})
+    assert bad.status_code == 400 and "정하지 않은 항목" in bad.json()["detail"]
+    g = c.post(f"{base}/students/A/grades/1/manual",
+               json={"awarded": {"R1": 1, "R2": 0}, "item_notes": {"R1": "상수항 실수"}, "by": "김선생"}).json()  # fmt: skip
+    assert g["status"] == "teacher_confirmed" and g["agent"] is None and g["total"] == 1
+
+    view = c.get(f"{base}/calibration/1").json()
+    assert [x["student"] for x in view["candidates"]] == ["A"] and view["candidates"][0][
+        "kind"
+    ] == "manual"
+    assert view["candidates"][0]["order"] == 1 and view["agreement"]["n"] == 0
+
+    s = view["settings"] | {"excluded": ["A"], "pinned": ["A"]}
+    assert c.put(f"{base}/calibration/1/settings", json=s).status_code == 400, "고정·제외 동시 불가"
+    s = view["settings"] | {"excluded": ["A"]}
+    assert c.put(f"{base}/calibration/1/settings", json=s).json()["excluded"] == ["A"]
+    view = c.get(f"{base}/calibration/1").json()
+    assert view["candidates"] == [] and view["excluded"][0]["student"] == "A"
+    r = c.post(f"{base}/calibration/1/eval", json={})
+    assert r.status_code == 400 and "2개 이상" in r.json()["detail"]
+
+    # 강사가 AI 점수를 고친 사례(D) → 개선 제안 → 새 루브릭 초안
+    from test_calibration import ai_grade
+
+    from dawoni.grading.pipeline import teacher_review
+
+    store.save_grade(teacher_review(ai_grade("D", 2, 1), approved_rubric(), {"R1": 1, "R2": 0}))
+    job = _wait(c, c.post(f"{base}/calibration/1/suggest").json())
+    assert job["status"] == "succeeded", job
+    sug = job["result"]["suggestion"]
+    assert job["result"]["cases"] == ["D"] and sug["changes"][0]["item_id"] == "R2"
+    new = c.post(f"{base}/calibration/1/apply", json={"revised": sug["revised"]}).json()
+    assert new["version"] == 2 and new["status"] == "draft", "승인된 루브릭을 고치면 새 버전 초안"
+    agree = c.get(f"{base}/agreement").json()
+    assert agree["overall"]["n"] == 1 and agree["questions"]["1"]["bias"] == 2

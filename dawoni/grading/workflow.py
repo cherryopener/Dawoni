@@ -12,14 +12,17 @@ from pathlib import Path
 
 from dawoni.agents import AgentError, AgentErrorCode
 from dawoni.context import TaskFailed
+from dawoni.grading import calibration
 from dawoni.grading.pipeline import (
     PipelineError,
     SecondOpinion,
     derive_rubric,
     grade_answer,
     solve_question,
+    suggest_rubric,
 )
 from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.models.calibration import CalibrationEval, EvalCase, RubricSuggestion
 from dawoni.models.grading import (
     Exam,
     ExamQuestion,
@@ -175,6 +178,7 @@ def grade_exam(
     only: list[str] | None = None,
     double: SecondOpinion | None = None,
     regrade: bool = False,
+    use_examples: bool = True,
     progress: Progress = _noop,
 ) -> GradeRun:
     """승인된 루브릭 × 확인된 판독문만 채점. 한 학생의 실패가 나머지를 멈추지 않는다."""
@@ -206,8 +210,18 @@ def grade_exam(
             todo.append((q, rubric, t))
     for k, (q, rubric, t) in enumerate(todo):
         progress(k, len(todo), f"{t.student_id} 문항 {q.number} 채점")
+        pick = calibration.pick_for(store, q.number, rubric, t) if use_examples else None
         try:
-            g = grade_answer(svc.engine, q, rubric, t, scope, double=double)
+            g = grade_answer(
+                svc.engine,
+                q,
+                rubric,
+                t,
+                scope,
+                double=double,
+                examples=pick.layer if pick else None,
+                example_students=pick.students if pick else None,
+            )
         except (AgentError, TaskFailed) as e:
             if isinstance(e, AgentError) and e.code == AgentErrorCode.CANCELLED:
                 raise
@@ -217,3 +231,103 @@ def grade_exam(
         run.graded.append(g)
     progress(len(todo), len(todo), f"채점 {len(run.graded)}건 완료")
     return run
+
+
+# ---------------------------------------------------------------- 보정
+
+
+def evaluate_calibration(
+    svc: Services,
+    store: ExamStore,
+    q_number: str,
+    *,
+    k: int | None = None,
+    progress: Progress = _noop,
+) -> CalibrationEval:
+    """보정 효과 측정: 강사가 확정한 답안마다 (가) 예시 없이 (나) 자기 답안을 뺀 예시와 함께
+    다시 채점해 강사 점수와 비교한다. 저장된 채점 결과는 건드리지 않는다."""
+    exam = store.exam()
+    scope = ScopeStore(svc.workspace).get(exam.scope_id)
+    q = exam.question(q_number)
+    rubric = store.rubric(q_number)
+    if rubric is None or rubric.status != "approved":
+        raise PipelineError(f"문항 {q_number}: 승인된 루브릭이 필요합니다.")
+    settings = calibration.load_settings(store, q_number)
+    k = k if k is not None else max(settings.max_examples, 1)
+    truth = calibration.candidates(store, q_number, rubric)
+    if len(truth) < 2:
+        raise PipelineError(
+            "강사가 확정한 답안이 2개 이상 있어야 측정할 수 있습니다 (하나는 예시, 하나는 대상)."
+        )
+    ev = CalibrationEval(question_number=q_number, rubric_version=rubric.version)
+    total = len(truth) * 2
+    for n, ex in enumerate(truth):
+        t = ex.transcript.model_copy(update={"confirmed": True})
+        case = EvalCase(
+            student_id=ex.student,
+            teacher_total=ex.grade.total,
+            teacher_items={j.rubric_item_id: j.awarded for j in ex.grade.judgements},
+        )
+        try:
+            progress(2 * n, total, f"{ex.student}: 예시 없이 채점")
+            before = grade_answer(svc.engine, q, rubric, t, scope)
+            case.before_total = before.total
+            case.before_items = {j.rubric_item_id: j.awarded for j in before.judgements}
+            others = calibration.candidates(store, q_number, rubric, exclude_student=ex.student)
+            chosen = calibration.select_examples(others, t, k)
+            progress(2 * n + 1, total, f"{ex.student}: 기준 예시 {len(chosen)}개와 채점")
+            after = grade_answer(
+                svc.engine,
+                q,
+                rubric,
+                t,
+                scope,
+                examples=calibration.examples_layer(chosen, rubric),
+                example_students=[c.student for c in chosen],
+            )
+            case.after_total = after.total
+            case.after_items = {j.rubric_item_id: j.awarded for j in after.judgements}
+            case.examples_used = after.examples_used
+            ev.agent, ev.model = after.agent, after.model
+        except (AgentError, TaskFailed) as e:
+            if isinstance(e, AgentError) and e.code == AgentErrorCode.CANCELLED:
+                raise
+            case.error = str(e)
+        ev.cases.append(case)
+    ok = [c for c in ev.cases if c.error is None]
+    ev.before = calibration.agreement([(c.before_items, c.teacher_items) for c in ok])
+    ev.after = calibration.agreement([(c.after_items, c.teacher_items) for c in ok])
+    calibration.save_eval(store, ev)
+    progress(total, total, "측정 완료")
+    return ev
+
+
+@dataclass
+class SuggestionRun:
+    suggestion: RubricSuggestion
+    cases: list[str]
+
+
+def suggest_rubric_changes(svc: Services, store: ExamStore, q_number: str) -> SuggestionRun:
+    exam = store.exam()
+    scope = ScopeStore(svc.workspace).get(exam.scope_id)
+    q = exam.question(q_number)
+    rubric = store.rubric(q_number)
+    sol = store.solution(q_number)
+    if rubric is None or sol is None:
+        raise PipelineError(f"문항 {q_number}: 해설·루브릭이 필요합니다.")
+    cases = [c for c in calibration.candidates(store, q_number, rubric) if c.kind == "correction"]
+    if not cases:
+        raise PipelineError(
+            "강사가 AI 점수를 고친 사례가 없습니다. 채점 검토에서 점수를 고쳐 확정하면 생깁니다."
+        )
+    s = suggest_rubric(
+        svc.engine,
+        q,
+        rubric,
+        sol,
+        scope,
+        calibration.corrections_text(cases, rubric),
+        {c.student for c in cases},
+    )
+    return SuggestionRun(s, [c.student for c in cases])

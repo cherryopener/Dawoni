@@ -163,7 +163,10 @@ export type Grade = {
   disagreements: string[];
   ai_judgements?: Judgement[] | null;
   teacher_note?: string | null;
+  teacher_item_notes?: Record<string, string>;
   confirmed_by?: string | null;
+  examples_used?: string[];
+  agent?: string | null;
 };
 
 // ---------------------------------------------------------------- 요약 (API 전용)
@@ -290,4 +293,66 @@ export type ExportResult = {
   errors: string[];
   warnings: string[];
   math_fallbacks: number;
+};
+
+// ---------------------------------------------------------------- 보정 (M8)
+
+export type AgreementStats = {
+  n: number;
+  exact: number | null;
+  within1: number | null;
+  item_agreement: number | null;
+  mean_abs_diff: number | null;
+  bias: number | null;
+  item_disagreements: Record<string, number>;
+};
+
+export type CalibrationSettings = {
+  question_number: string;
+  use_examples: boolean;
+  max_examples: number;
+  pinned: string[];
+  excluded: string[];
+};
+
+export type ExemplarKind = "correction" | "manual" | "confirmed";
+
+export type CalibrationView = {
+  settings: CalibrationSettings;
+  candidates: {
+    student: string;
+    kind: ExemplarKind;
+    total: number;
+    max: number;
+    pinned: boolean;
+    changed: Record<string, [number, number]>;
+    teacher_note: string | null;
+    order: number | null;
+  }[];
+  excluded: { student: string; total: number; max: number }[];
+  agreement: AgreementStats;
+  evals: { id: string; created_at: string; rubric_version: number; n: number; before: AgreementStats; after: AgreementStats }[];
+  rubric: Rubric | null;
+};
+
+export type EvalCase = {
+  student_id: string;
+  teacher_total: number;
+  before_total: number | null;
+  after_total: number | null;
+  examples_used: string[];
+  error: string | null;
+};
+export type CalibrationEval = {
+  id: string;
+  question_number: string;
+  cases: EvalCase[];
+  before: AgreementStats;
+  after: AgreementStats;
+};
+
+export type RubricSuggestion = {
+  changes: { item_id: string | null; kind: string; summary: string; evidence: string[] }[];
+  revised: RubricDraft | null;
+  no_change_reason: string | null;
 };

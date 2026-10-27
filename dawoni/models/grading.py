@@ -302,5 +302,15 @@ class GradeResult(DawoniModel):
         default=None, description="강사가 점수를 고치기 전 AI 판정 (보정·일치도 측정용, M8)"
     )
     teacher_note: str | None = None
+    teacher_item_notes: dict[str, str] = Field(
+        default_factory=lambda: dict[str, str](), description="강사가 항목별로 남긴 판정 이유"
+    )
     confirmed_by: str | None = None
     confirmed_at: datetime | None = None
+    examples_used: list[str] = Field(
+        default_factory=lambda: list[str](), description="채점에 넣은 기준 예시 (학생 ID)"
+    )
+    item_points: dict[str, float] = Field(
+        default_factory=lambda: dict[str, float](),
+        description="채점할 때 루브릭 항목별 배점 (루브릭이 바뀐 뒤 예시로 쓸 수 있는지 판단)",
+    )
