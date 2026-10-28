@@ -82,6 +82,11 @@ class WorkspacePaths:
         return self.root / "bank"
 
     @property
+    def units(self) -> Path:
+        """과목별 공통 단원표 (문제은행 분류 기준)."""
+        return self.root / "units"
+
+    @property
     def concepts(self) -> Path:
         return self.root / "concepts"
 
@@ -129,6 +134,7 @@ class WorkspacePaths:
             self.scan_inbox,
             self.sources,
             self.bank,
+            self.units,
             self.concepts,
             self.rubrics,
             self.scopes,

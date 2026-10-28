@@ -200,7 +200,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ui.set_defaults(func=_cmd_ui)
 
-    from dawoni import cli_exam, cli_export, cli_fig, cli_gen, cli_ingest, cli_lecture, cli_rules
+    from dawoni import (
+        cli_bank,
+        cli_exam,
+        cli_export,
+        cli_fig,
+        cli_gen,
+        cli_ingest,
+        cli_lecture,
+        cli_rules,
+    )
 
     cli_rules.register(sub)
     cli_exam.register(sub)
@@ -209,6 +218,7 @@ def build_parser() -> argparse.ArgumentParser:
     cli_gen.register(sub)
     cli_fig.register(sub)
     cli_lecture.register(sub)
+    cli_bank.register(sub)
     return p
 
 

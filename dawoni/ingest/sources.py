@@ -47,3 +47,22 @@ def register_source(
 
 def update_source(ws: WorkspacePaths, src: Source) -> None:
     write_model_atomic(_meta_path(ws, src.source_id), src)
+
+
+def get_source(ws: WorkspacePaths, source_id: str) -> Source:
+    p = _meta_path(ws, source_id)
+    if not p.exists():
+        raise KeyError(f"자료 {source_id[:12]} 없음")
+    return Source.model_validate(read_json(p))
+
+
+def all_sources(ws: WorkspacePaths) -> list[Source]:
+    d = ws.sources / ".dawoni"
+    if not d.is_dir():
+        return []
+    out = [Source.model_validate(read_json(p)) for p in d.glob("*.json")]
+    return sorted(out, key=lambda s: s.added_at, reverse=True)
+
+
+def source_file(ws: WorkspacePaths, src: Source) -> Path:
+    return ws.sources / src.rel_path

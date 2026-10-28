@@ -22,6 +22,24 @@ class SourceIngestState(DawoniModel):
     message: str | None = None
 
 
+class SourceChunk(DawoniModel):
+    """문제은행 DB화 구간: 두꺼운 책은 단원·쪽 범위로 나눠 넣는다 (끊겨도 이어 하기)."""
+
+    index: int = Field(ge=1)
+    pages: list[int] = Field(min_length=1, description="문제 쪽 (1부터)")
+    key_pages: list[int] = Field(default_factory=lambda: list[int](), description="정답·해설 쪽")
+    unit_hint: str | None = Field(default=None, description="이 구간의 단원 ID (강사가 아는 경우)")
+    label: str | None = Field(default=None, description="예: 1단원 힘과 운동")
+    status: IngestStatus = "new"
+    item_ids: list[str] = Field(default_factory=lambda: list[str]())
+    message: str | None = None
+    by: str | None = None
+    machine: str | None = Field(
+        default=None, description="DB화 중인 PC (팀 공유: 두 PC가 동시에 안 하게)"
+    )
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class Source(DawoniModel):
     """원본 파일. 식별자는 파일명이 아니라 내용 해시 → 같은 파일을 두 번 DB화하지 않는다."""
 
@@ -35,6 +53,12 @@ class Source(DawoniModel):
     subject: str | None = None
     added_at: datetime = Field(default_factory=utcnow)
     ingest: SourceIngestState = Field(default_factory=SourceIngestState)
+    publisher: str | None = Field(default=None, description="출판사·저자·강사 (출처 표시)")
+    year: int | None = None
+    unit_trees: list[str] = Field(
+        default_factory=lambda: list[str](), description="문제은행: 분류할 단원표 ID (예: phy1)"
+    )
+    chunks: list[SourceChunk] = Field(default_factory=lambda: list[SourceChunk]())
 
 
 WorkspaceMode = Literal["personal", "team"]

@@ -21,6 +21,7 @@ from dawoni.lecture.youtube import LectureError
 from dawoni.ocr.pages import PageError
 from dawoni.paths import AppPaths
 from dawoni.server import (
+    api_bank,
     api_calibration,
     api_content,
     api_exams,
@@ -99,6 +100,7 @@ def create_app(paths: AppPaths, token: str, *, web_dir: Path | None = None) -> F
     app.include_router(api_generate.router)
     app.include_router(api_figures.router)
     app.include_router(api_lecture.router)
+    app.include_router(api_bank.router)
 
     @app.get("/login")
     def login(t: str = "") -> Response:  # pyright: ignore[reportUnusedFunction]
