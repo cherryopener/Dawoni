@@ -261,7 +261,56 @@ function AgentsCard({ status, onChanged }: { status: Status; onChanged: () => vo
 type Config = {
   ocr: { cross_check: boolean; clova_enabled: boolean; mathpix_enabled: boolean };
   docx: { body_font: string; body_size_pt: number };
+  scanner?: { smb_url: string | null; username: string | null };
 };
+
+function ScannerCard() {
+  const { data, reload } = useLoad<Config>("/config");
+  const [url, setUrl] = useState("");
+  const [user, setUser] = useState("");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    setUrl(data.scanner?.smb_url ?? "");
+    setUser(data.scanner?.username ?? "");
+  }, [data]);
+  const save = () => {
+    setErr(null);
+    api
+      .patch("/config", { scanner: { smb_url: url || null, username: user || null } })
+      .then(() => {
+        setMsg("저장했습니다");
+        reload();
+      })
+      .catch((e: unknown) => setErr(errorText(e)));
+  };
+  return (
+    <Card title="4. 복합기 스캔 폴더">
+      <Stack>
+        <Row>
+          <div style={{ width: 300 }}>
+            <Field label="복합기 공유 폴더 주소" hint="예: smb://192.168.0.100 (고급박스 폴더가 따로 있으면 smb://192.168.0.100/폴더)">
+              <TextInput value={url} onChange={setUrl} placeholder="smb://192.168.0.100" />
+            </Field>
+          </div>
+          <div style={{ width: 200 }}>
+            <Field label="사용자 이름" hint="로그인 창에 미리 채워짐">
+              <TextInput value={user} onChange={setUser} placeholder="Administrator" />
+            </Field>
+          </div>
+          <Button small onClick={save}>저장</Button>
+          {msg && <Badge tone="ok">{msg}</Badge>}
+        </Row>
+        <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+          비밀번호는 다워니에 저장하지 않습니다. 처음 열 때 Finder(맥)·탐색기(윈도우)가 묻고, '키체인에 저장'·'자격 증명 기억'을 켜면 다음부터 묻지 않습니다.
+          답안 탭의 "복합기 스캔본 열기"를 누르면 복합기 폴더와 작업공간의 '스캔본' 폴더가 함께 열립니다.
+        </span>
+        <ErrorBox error={err} />
+      </Stack>
+    </Card>
+  );
+}
 
 function OptionsCard() {
   const { data, reload } = useLoad<Config>("/config");
@@ -300,6 +349,7 @@ export function SetupPage({ status, onChanged }: { status: Status; onChanged: ()
       <WorkspaceCard status={status} onChanged={onChanged} />
       <AgentsCard status={status} onChanged={onChanged} />
       <OptionsCard />
+      <ScannerCard />
     </Stack>
   );
 }

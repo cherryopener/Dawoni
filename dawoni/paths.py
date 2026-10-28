@@ -119,8 +119,14 @@ class WorkspacePaths:
     def exports(self) -> Path:
         return self.root / "exports"
 
+    @property
+    def scan_inbox(self) -> Path:
+        """복합기에서 받은 답안지 스캔본 (PDF)을 강사가 옮겨 두는 곳."""
+        return self.root / "스캔본"
+
     def all_dirs(self) -> tuple[Path, ...]:
         return (
+            self.scan_inbox,
             self.sources,
             self.bank,
             self.concepts,

@@ -583,6 +583,51 @@ def confirm_grade(
     return g
 
 
+class AnswerPagesBody(BaseModel):
+    pages: dict[str, list[int]]
+
+
+@router.put("/{exam_id}/answer-pages")
+def answer_pages(exam_id: str, body: AnswerPagesBody, st: AppState = State) -> Exam:
+    """문항마다 답안지 묶음의 몇 쪽에 답이 있는지 (표지가 1쪽) — 강사별 문항 분담에 쓴다."""
+    _, store = _store(st, exam_id)
+    return workflow.set_answer_pages(store, body.pages)
+
+
+class BatchScanBody(BaseModel):
+    path: str = Field(description="작업공간 안의 PDF (예: 스캔본/3반.pdf)")
+    per_student: int = Field(ge=1)
+    classes: list[str] = Field(default_factory=lambda: list[str]())
+    questions: list[str] | None = None
+    covers_only: bool = False
+    cross: bool | None = None
+    overwrite: bool = False
+
+
+@router.post("/{exam_id}/scan-batch")
+def scan_batch(exam_id: str, body: BatchScanBody, st: AppState = State) -> Job:
+    """여러 학생 답안지 PDF 한 번에 — 표지로 학생 구분, 문항을 정하면 그 쪽만."""
+    svc, store = _store(st, exam_id)
+    pdf = files.inside(svc.workspace.root, body.path)
+    if not pdf.is_file():
+        raise KeyError(f"파일 없음: {body.path}")
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        res = workflow.scan_batch(
+            svc, store, pdf, per_student=body.per_student, classes=body.classes or None,
+            only_questions=body.questions, covers_only=body.covers_only, cross=body.cross,
+            overwrite=body.overwrite, progress=ctx.progress,
+        )  # fmt: skip
+        return {
+            "students": [r.student_id for r in res.students],
+            "skipped": res.skipped,
+            "warnings": res.warnings,
+            "failed": [f"{f.student}: {f.reason}" for f in res.failed],
+        }
+
+    return st.jobs.submit("scan_batch", run, {"exam": exam_id, "file": pdf.name})
+
+
 class PartReviewBody(BaseModel):
     part_scores: dict[str, float]
     part_notes: dict[str, str] = Field(default_factory=lambda: dict[str, str]())

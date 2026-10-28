@@ -175,84 +175,143 @@ def scan_batch(
     per_student: int,
     classes: list[str] | None = None,
     only_sets: list[int] | None = None,
+    only_questions: list[str] | None = None,
+    covers_only: bool = False,
     cross: bool | None = None,
     overwrite: bool = False,
     progress: Progress = _noop,
 ) -> BatchResult:
     """학생 여러 명의 답안지 PDF (학생마다 `per_student`쪽, 첫 쪽은 표지) → 학생별 판독문(미확인).
 
-    표지에서 이름·반·학교·강사 점수와 돌려 세울 각도를 읽는다. 학생 한 명이 실패해도 나머지는 계속.
+    표지에서 이름·반·학교·강사 점수와 돌려 세울 각도를 읽는다 (한 번만 — 다음부터는 저장한 것을
+    쓴다). `only_questions`: 그 문항의 쪽(`ExamQuestion.answer_pages`)만 그 문항만 두고 판독 —
+    강사마다 한 문항씩 나눠 맡아 토큰을 나눠 쓸 때. 학생 한 명이 실패해도 나머지는 계속.
     """
     from dawoni.ocr import batch
     from dawoni.ocr.transcribe import transcribe_student
 
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
+    qs = select_questions(exam, only_questions)
+    if only_questions:
+        missing = [q.number for q in qs if not q.answer_pages]
+        if missing:
+            raise PipelineError(
+                f"문항 {', '.join(missing)}의 답안 쪽을 모릅니다 — `exam answer-pages`로 정하세요 "
+                "(예: 1=2 2=3 3=4, 표지가 1쪽)"
+            )
+        too_far = [q.number for q in qs if max(q.answer_pages) > per_student]
+        if too_far:
+            raise PipelineError(f"문항 {', '.join(too_far)}의 답안 쪽이 한 명의 쪽 수를 넘습니다")
+    part_exam = exam.model_copy(update={"questions": qs})
     sets = batch.plan_sets(batch.page_count(pdf), per_student, only_sets)
     use_cross = svc.config.ocr.cross_check if cross is None else cross
     res = BatchResult()
-    by_source = {r.source: r for r in store.student_records()}
-    taken = {r.student_id: r.source for r in store.student_records()}
+    records = store.student_records()
+    by_source = {r.source: r for r in records}
+    taken = {r.student_id: r.source for r in records}
     for k, plan in enumerate(sets):
         source = f"{pdf.name} {plan.pages[0]}-{plan.pages[-1]}쪽"
-        old = by_source.get(source)
-        if old is not None and not overwrite:  # 학생 정보는 판독을 다 저장한 뒤에 남긴다
-            res.skipped.append(old.student_id)
-            continue
-        progress(k, len(sets), f"{plan.number}번째 학생 ({source}) 표지 읽기")
+        record = by_source.get(source)
+        if record is not None and not overwrite:
+            todo = [q for q in qs if store.transcript(record.student_id, q.number) is None]
+            if covers_only or not todo:
+                res.skipped.append(record.student_id)
+                continue
+        # 필요한 쪽만: 표지(새 학생일 때) + 맡은 문항의 쪽 (문항을 정하지 않으면 전부)
+        wanted = (
+            sorted({p for q in qs for p in q.answer_pages})
+            if only_questions
+            else list(range(2, per_student + 1))
+        )
+        if covers_only:
+            wanted = []
+        need_cover = record is None or overwrite
+        idx = ([1] if need_cover else []) + [p for p in wanted if p != 1]
         work = store.root / "scans" / "_batch" / f"set_{plan.number:03d}"
         try:
-            images = batch.render_set(pdf, plan.pages, work)
-            cover = batch.read_cover(svc.engine, exam, images[0], classes)
-            batch.rotate(images, int(cover.rotation))
-            sid = batch.student_id_of(cover.name, plan.number)
-            if taken.get(sid, source) != source:
-                res.warnings.append(
-                    f"{source}: 이름 '{sid}'가 다른 묶음({taken[sid]})과 같음 — "
-                    f"'{sid}#{plan.number}'로 저장, 동명이인이면 이름 뒤 알파벳을 확인하세요"
-                )
-                sid = f"{sid}#{plan.number}"
-            taken[sid] = source
-            record = StudentRecord(
-                student_id=sid,
-                name=cover.name,
-                class_name=cover.class_name,
-                school=cover.school,
-                source=source,
-                teacher_scores={c.question: c.points for c in cover.teacher_scores},
-                uncertain=list(cover.uncertain),
+            images = dict(
+                zip(idx, batch.render_set(pdf, [plan.pages[i - 1] for i in idx], work), strict=True)
             )
-            if cover.name is None:
-                res.warnings.append(f"{source}: 이름을 읽지 못해 '{sid}'로 저장 — 고쳐 주세요")
-            progress(k, len(sets), f"{sid} 답안 {len(images) - 1}쪽 판독")
+            if need_cover:
+                progress(k, len(sets), f"{plan.number}번째 학생 ({source}) 표지 읽기")
+                cover = batch.read_cover(svc.engine, exam, images[1], classes)
+                sid = batch.student_id_of(cover.name, plan.number)
+                if taken.get(sid, source) != source:
+                    res.warnings.append(
+                        f"{source}: 이름 '{sid}'가 다른 묶음({taken[sid]})과 같음 — "
+                        f"'{sid}#{plan.number}'로 저장, 동명이인이면 이름 뒤 알파벳을 확인하세요"
+                    )
+                    sid = f"{sid}#{plan.number}"
+                taken[sid] = source
+                record = StudentRecord(
+                    student_id=sid,
+                    name=cover.name,
+                    class_name=cover.class_name,
+                    school=cover.school,
+                    source=source,
+                    teacher_scores={c.question: c.points for c in cover.teacher_scores},
+                    uncertain=list(cover.uncertain),
+                    rotation=int(cover.rotation),
+                    pages=per_student,
+                )
+                if cover.name is None:
+                    res.warnings.append(f"{source}: 이름을 읽지 못해 '{sid}'로 저장 — 고쳐 주세요")
+            assert record is not None
+            sid = record.student_id
+            batch.rotate(list(images.values()), record.rotation)
             scan_dir = store.scan_dir(sid)
             scan_dir.mkdir(parents=True, exist_ok=True)
-            pages: list[Path] = []
-            for i, img in enumerate(images, start=1):
-                dst = scan_dir / f"page_{i:02d}.png"
+            pages: dict[int, Path] = {}
+            for i, img in images.items():
+                dst = scan_dir / f"page_{i:02d}.png"  # 묶음 안의 쪽 번호 — 강사마다 같게
                 img.replace(dst)
-                pages.append(dst)
-            refs = [p.relative_to(store.root).as_posix() for p in pages]
-            outcome = transcribe_student(
-                svc.engine,
-                exam,
-                scope.level,
-                sid,
-                pages[1:],
-                page_refs=refs,
-                cross=SecondOpinion() if use_cross else None,
-            )
-            for t in outcome.transcripts.values():
-                prev = store.transcript(sid, t.question_number)
-                if prev is not None and prev.confirmed and not overwrite:
-                    continue
-                store.save_transcript(t.model_copy(update={"notes": t.notes + outcome.notes}))
-            store.save_student(record)
+                pages[i] = dst
+            if need_cover:
+                store.save_student(record)
+            answer = [pages[i] for i in sorted(pages) if i != 1]
+            if answer:
+                what = f"문항 {', '.join(q.number for q in qs)}" if only_questions else "답안"
+                progress(k, len(sets), f"{sid} {what} {len(answer)}쪽 판독")
+                outcome = transcribe_student(
+                    svc.engine,
+                    part_exam,
+                    scope.level,
+                    sid,
+                    answer,
+                    page_refs=[p.relative_to(store.root).as_posix() for p in answer],
+                    cross=SecondOpinion() if use_cross else None,
+                )
+                for t in outcome.transcripts.values():
+                    prev = store.transcript(sid, t.question_number)
+                    if prev is not None and prev.confirmed and not overwrite:
+                        continue
+                    store.save_transcript(t.model_copy(update={"notes": t.notes + outcome.notes}))
             res.students.append(record)
         except (AgentError, TaskFailed, PageError, OSError) as e:
             res.failed.append(Skipped(source, "-", str(e)))
     progress(len(sets), len(sets), "판독 완료 — 원본과 비교해 확인하세요")
     return res
+
+
+def set_answer_pages(store: ExamStore, pages: dict[str, list[int]]) -> Exam:
+    """문항마다 답안지 묶음의 어느 쪽에 답이 있는지 (표지가 1쪽)."""
+    exam = store.exam()
+    unknown = sorted(set(pages) - {q.number for q in exam.questions})
+    if unknown:
+        raise PipelineError(f"시험에 없는 문항: {unknown}")
+    bad = sorted(n for n, ps in pages.items() if any(p < 2 for p in ps))
+    if bad:
+        raise PipelineError(f"문항 {bad}: 답안 쪽은 2쪽부터 (1쪽은 표지)")
+    qs = [
+        q.model_copy(update={"answer_pages": sorted(set(pages[q.number]))})
+        if q.number in pages
+        else q
+        for q in exam.questions
+    ]
+    exam = exam.model_copy(update={"questions": qs})
+    store.save_exam(exam)
+    return exam
 
 
 # ---------------------------------------------------------------- 채점

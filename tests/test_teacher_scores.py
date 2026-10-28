@@ -216,6 +216,7 @@ def test_suggest_keeps_key_checks_and_candidates(setup: Setup) -> None:
         "changes": [{"item_id": "R1", "kind": "clarify_criterion",
                      "summary": "n개로 쓴 답은 0점", "evidence": ["A"]}],
         "revised": revised,
+        "transcript_doubts": ["C (2): 판독문으로는 설명 안 되는 강사 점수"],
     }  # fmt: skip
     svc, store, exe = setup([suggestion])
     r = store.rubric("3")
@@ -228,8 +229,10 @@ def test_suggest_keeps_key_checks_and_candidates(setup: Setup) -> None:
     assert s is not None and s.items[0].criterion.startswith("(n+1)개")
     assert [c.part for c in s.checks] == ["(1)", "(2)"], "해설지 비교는 제안이 바꾸지 못함"
     assert s.candidates[0].status == "accepted", "강사가 인정한 후보 유지"
+    assert run.suggestion.transcript_doubts == ["C (2): 판독문으로는 설명 안 되는 강사 점수"]
     prompt = fake_prompts(exe)[0]
     assert "소문항 (1): 강사 0/4점 (AI는 4점) — n+1개" in prompt
+    assert "판독 오류" in prompt, "판독 오류를 기준으로 배우지 않게 안내"
 
 
 def test_cli_teacher_scores(setup: Setup, capsys: pytest.CaptureFixture[str]) -> None:

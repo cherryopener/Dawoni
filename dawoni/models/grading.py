@@ -39,6 +39,10 @@ class ExamQuestion(DawoniModel):
     parts: list[ExamPart] = Field(
         default_factory=lambda: list[ExamPart](), description="소문항 (없으면 빈 목록)"
     )
+    answer_pages: list[int] = Field(
+        default_factory=lambda: list[int](),
+        description="학생 답안지 묶음에서 이 문항의 답이 있는 쪽 (표지가 1쪽). 없으면 모름",
+    )
 
     @model_validator(mode="after")
     def _parts(self) -> ExamQuestion:
@@ -326,6 +330,8 @@ class StudentRecord(DawoniModel):
         description="표지에 강사가 적은 문항별 점수 (채점이 끝난 답안지를 넣었을 때)",
     )
     uncertain: list[str] = Field(default_factory=lambda: list[str]())
+    rotation: int = Field(default=0, description="표지로 정한, 묶음의 쪽을 세울 각도 (시계 방향)")
+    pages: int | None = Field(default=None, description="묶음의 쪽 수 (표지 포함)")
 
 
 # ---------------------------------------------------------------- 판독문

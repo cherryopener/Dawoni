@@ -12,6 +12,7 @@ from dawoni import __version__
 from dawoni.config import AGENT_NAMES, AgentName, AppConfig
 from dawoni.models.job import Job
 from dawoni.models.source import WorkspaceMode
+from dawoni.ocr.pages import PageError
 from dawoni.server import files
 from dawoni.server.jobs import JobContext
 from dawoni.server.state import AppState, NeedsSetup
@@ -249,6 +250,35 @@ def open_file(body: PathBody, st: AppState = State) -> dict[str, bool]:
 def reveal_file(body: PathBody, st: AppState = State) -> dict[str, bool]:
     files.reveal(files.inside(st.services().workspace.root, body.path))
     return {"ok": True}
+
+
+@router.post("/scanner/open")
+def scanner_open(st: AppState = State) -> dict[str, Any]:
+    """복합기 공유 폴더와 작업공간 '스캔본' 폴더를 함께 연다."""
+    from dawoni.scanner import open_scan_folders
+
+    opened = open_scan_folders(st.config().scanner, st.services().workspace.scan_inbox)
+    return {"scanner": opened.scanner, "inbox": str(opened.inbox), "notes": opened.notes}
+
+
+@router.get("/scanner/inbox")
+def scanner_inbox(st: AppState = State) -> list[dict[str, Any]]:
+    """작업공간 '스캔본' 폴더의 PDF (새것 먼저) — 여러 학생 답안지 판독에 고른다."""
+    from dawoni.ocr.batch import page_count
+    from dawoni.scanner import inbox_pdfs
+
+    root = st.services().workspace.root
+    out: list[dict[str, Any]] = []
+    for p in inbox_pdfs(st.services().workspace.scan_inbox):
+        try:
+            pages: int | None = page_count(p)
+        except PageError:
+            pages = None
+        out.append(
+            {"path": p.relative_to(root).as_posix(), "name": p.name, "pages": pages,
+             "size": p.stat().st_size, "modified": p.stat().st_mtime}
+        )  # fmt: skip
+    return out
 
 
 @router.post("/files/save-as")

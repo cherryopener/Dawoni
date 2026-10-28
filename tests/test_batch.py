@@ -122,8 +122,9 @@ def test_cli_scan_batch(
     assert recs["김태희A"].teacher_scores == {"1": 3} and recs["김태희A"].class_name == "TSS1"
     t = store.transcript("김태희A", "1")
     assert t is not None and not t.confirmed and t.lines[0].text == "x=2일 때 최솟값 3"
-    assert t.pages == ["scans/김태희A/page_01.png", "scans/김태희A/page_02.png"]
-    with Image.open(store.root / t.pages[1]) as im:
+    assert t.pages == ["scans/김태희A/page_02.png"], "판독문에는 답안 쪽만 (표지는 page_01)"
+    assert (store.scan_dir("김태희A") / "page_01.png").exists()
+    with Image.open(store.root / t.pages[0]) as im:
         assert im.height > im.width, "표지의 회전 각도로 모든 쪽을 세운다"
 
     prompts = fake_prompts(exe)
@@ -132,3 +133,117 @@ def test_cli_scan_batch(
     assert main(["exam", *w, "scan-batch", eid, str(pdf), "--per-student", "2"]) == 0
     assert "이미 판독함" in capsys.readouterr().out
     assert len(fake_prompts(exe)) == 4, "다시 하면 끝난 학생은 건너뛴다"
+
+
+# ---------------------------------------------------------------- 강사별 문항 분담
+
+
+def _two_question_exam(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path, script: list[Any]):
+    exe = make_fake(
+        "script", script=[{"response": json.dumps(r, ensure_ascii=False)} for r in script]
+    )
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    cfg.ocr.cross_check = False
+    save_config(app_paths, cfg)
+    ws = create_workspace(tmp_path / "ws")
+    w = ["--workspace", str(ws.root)]
+    assert main(["scope", *w, "import", str(FIX / "scope.json")]) == 0
+    qs = read_json(FIX / "questions.json")[:2]
+    qfile = tmp_path / "qs.json"
+    qfile.write_text(json.dumps(qs, ensure_ascii=False), encoding="utf-8")
+    assert main(["exam", *w, "create", "--title", "t", "--scope", "scope-quadratic-minmax",
+                 "--questions", str(qfile)]) == 0  # fmt: skip
+    store = ExamStore(WorkspacePaths(ws.root), ExamStore.list_ids(WorkspacePaths(ws.root))[0])
+    return exe, w, store
+
+
+def _q_lines(q: str, text: str) -> dict[str, Any]:
+    return {"lines": [{"question_number": q, "page": 1, "text": text, "confidence": 0.9}]}
+
+
+def test_one_question_per_teacher(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """표지 1쪽 + 답안 2쪽(문항마다 한 쪽). 강사 A는 1번, 강사 B는 2번만 — 표지는 한 번만 읽는다."""
+    exe, w, store = _two_question_exam(
+        app_paths, make_fake, tmp_path,
+        [_cover("가학생"), _q_lines("1", "1번 답"), _q_lines("2", "2번 답")],
+    )  # fmt: skip
+    q1, q2 = (q.number for q in store.exam().questions)
+    pdf = _pdf(tmp_path / "answers.pdf", 3)
+    assert main(["exam", *w, "answer-pages", store.exam_id, f"{q1}=2", f"{q2}=3"]) == 0
+    assert [q.answer_pages for q in store.exam().questions] == [[2], [3]]
+
+    assert main(["exam", *w, "scan-batch", store.exam_id, str(pdf), "--per-student", "3",
+                 "-q", q1]) == 0  # fmt: skip
+    assert main(["exam", *w, "scan-batch", store.exam_id, str(pdf), "--per-student", "3",
+                 "-q", q2]) == 0  # fmt: skip
+    prompts = fake_prompts(exe)
+    assert len(prompts) == 3, "표지 1번 + 문항마다 판독 1번"
+    first, second = prompts[1], prompts[2]
+    assert f"[문항 {q1}]" in first and f"[문항 {q2}]" not in first, "맡은 문항만 자료로"
+    assert f"[문항 {q2}]" in second and f"[문항 {q1}]" not in second
+    assert "input_02" not in first and "input_02" not in second, "답안 한 쪽만 첨부"
+    t1, t2 = store.transcript("가학생", q1), store.transcript("가학생", q2)
+    assert t1 is not None and t1.pages == ["scans/가학생/page_02.png"]
+    assert t2 is not None and t2.pages == ["scans/가학생/page_03.png"]
+    rec = store.student_record("가학생")
+    assert rec is not None and rec.rotation == 90 and rec.pages == 3
+
+    assert main(["exam", *w, "scan-batch", store.exam_id, str(pdf), "--per-student", "3",
+                 "-q", q1]) == 0  # fmt: skip
+    assert "이미 판독함" in capsys.readouterr().out and len(fake_prompts(exe)) == 3
+
+
+def test_question_scan_needs_pages_and_covers_only(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exe, w, store = _two_question_exam(app_paths, make_fake, tmp_path, [_cover("나학생")])
+    q1 = store.exam().questions[0].number
+    pdf = _pdf(tmp_path / "answers.pdf", 3)
+    assert main(["exam", *w, "scan-batch", store.exam_id, str(pdf), "--per-student", "3",
+                 "-q", q1]) == 1  # fmt: skip
+    assert "답안 쪽을 모릅니다" in capsys.readouterr().err
+    assert main(["exam", *w, "answer-pages", store.exam_id, f"{q1}=1"]) == 1, "1쪽은 표지"
+    assert main(["exam", *w, "scan-batch", store.exam_id, str(pdf), "--per-student", "3",
+                 "--covers-only"]) == 0  # fmt: skip
+    assert len(fake_prompts(exe)) == 1, "표지만"
+    assert store.student_record("나학생") is not None and store.transcript("나학생", q1) is None
+
+
+# ---------------------------------------------------------------- 복합기 폴더
+
+
+def test_scanner_addresses() -> None:
+    from dawoni.config import ScannerSettings
+    from dawoni.scanner import finder_url, windows_unc
+
+    s = ScannerSettings(smb_url="smb://192.168.0.100/scan/", username="Administrator")
+    assert s.smb_url == "smb://192.168.0.100/scan"
+    assert finder_url(s) == "smb://Administrator@192.168.0.100/scan"
+    assert windows_unc(s) == "\\\\192.168.0.100\\scan"
+    bare = ScannerSettings(smb_url="\\\\192.168.0.100")
+    assert bare.smb_url == "smb://192.168.0.100" and windows_unc(bare) == "\\\\192.168.0.100"
+    with pytest.raises(ValueError, match="smb://"):
+        ScannerSettings(smb_url="http://192.168.0.100")
+
+
+def test_open_scan_folders_mac(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess
+    import sys
+
+    from dawoni import scanner
+    from dawoni.config import ScannerSettings
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(subprocess, "run", lambda argv, **_: calls.append(list(argv)))  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
+    inbox = tmp_path / "ws" / "스캔본"
+    out = scanner.open_scan_folders(
+        ScannerSettings(smb_url="smb://192.168.0.100", username="Administrator"), inbox
+    )
+    assert inbox.is_dir() and out.scanner == "smb://Administrator@192.168.0.100"
+    assert calls[0] == ["open", "smb://Administrator@192.168.0.100"]
+    assert calls[1][0] == "osascript" and str(inbox) in calls[1][2], "작업공간 창도 연다"
+    assert not any("7654321" in " ".join(c) for c in calls), "비밀번호는 다루지 않는다"

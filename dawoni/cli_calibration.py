@@ -102,6 +102,8 @@ def _cmd_suggest(args: argparse.Namespace, svc: Any) -> int:
     run = workflow.suggest_rubric_changes(svc, store, q)
     s = run.suggestion
     _out(f"근거 사례: {', '.join(run.cases)}")
+    for d in s.transcript_doubts:
+        _out(f"  ⚠ 판독 확인 필요 (루브릭에 반영 안 함): {d}")
     if not s.changes:
         _out(f"바꿀 것 없음: {s.no_change_reason}")
         return 0

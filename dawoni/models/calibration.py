@@ -94,3 +94,8 @@ class RubricSuggestion(DawoniModel):
     no_change_reason: str | None = Field(
         default=None, description="바꿀 것이 없다고 판단하면 그 이유"
     )
+    transcript_doubts: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="강사 점수가 판독문으로는 설명되지 않는 사례 "
+        "(판독 오류 의심: 학생, 소문항, 이유). 이런 사례로는 루브릭을 바꾸지 않는다",
+    )

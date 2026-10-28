@@ -11,6 +11,8 @@
     dawoni exam answer <시험ID> --student 홍길동 -q 3 answer.txt   # 입력한 답안(확인된 판독문)
     dawoni exam scan <시험ID> --student 홍길동 사진1.jpg 사진2.jpg [--cross]  # 손글씨 판독(미확인)
     dawoni exam scan-batch <시험ID> 답안지.pdf --per-student 3 [--classes TSS1,MSS1-J]  # 여러 학생
+    dawoni exam answer-pages <시험ID> 1=2 2=3 3=4 4=5   # 문항마다 답안 쪽 (표지가 1쪽)
+    dawoni exam scan-batch <시험ID> 답안지.pdf --per-student 5 -q 2   # 2번 쪽만 (강사별 분담)
     dawoni exam compare <시험ID>                   # AI 채점 ↔ 표지의 강사 점수
     dawoni exam transcript <시험ID> --student 홍길동 -q 3 [--confirm] [--replace 고친답안.txt]
     dawoni exam grade <시험ID> [--student 홍길동] [-q 3] [--double] [--regrade]
@@ -352,6 +354,8 @@ def _cmd_scan_batch(args: argparse.Namespace) -> int:
         per_student=args.per_student,
         classes=classes,
         only_sets=parse_pages(args.sets),
+        only_questions=args.q,
+        covers_only=args.covers_only,
         cross=cross,
         overwrite=args.overwrite,
         progress=_cli_progress,
@@ -372,6 +376,24 @@ def _cmd_scan_batch(args: argparse.Namespace) -> int:
         _out(f"  ✗ {f.student}: {f.reason[:300]}")
     _out(f"{len(res.students)}명 판독. 원본과 비교해 확인한 뒤 `exam transcript … --confirm`")
     return 1 if res.failed else 0
+
+
+def _cmd_answer_pages(args: argparse.Namespace) -> int:
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    exam = store.exam()
+    if args.map:
+        pages: dict[str, list[int]] = {}
+        for spec in list[str](args.map):
+            q, _, ps = spec.partition("=")
+            if not ps:
+                return _err(f"'{spec}': 문항=쪽 형식 (예: 2=3, 여러 쪽이면 3=4,5)")
+            pages[q.strip()] = [int(x) for x in ps.split(",") if x.strip()]
+        exam = workflow.set_answer_pages(store, pages)
+    for q in exam.questions:
+        where = ", ".join(map(str, q.answer_pages)) + "쪽" if q.answer_pages else "정하지 않음"
+        _out(f"문항 {q.number}: {where}")
+    return 0
 
 
 def _cmd_compare(args: argparse.Namespace) -> int:
@@ -583,7 +605,15 @@ def register(sub: Any) -> None:
     sb.add_argument("--cross", action="store_true", help="교차 판독")
     sb.add_argument("--no-cross", action="store_true", help="교차 판독 끄기")
     sb.add_argument("--overwrite", action="store_true", help="이미 판독한 학생도 다시")
+    sb.add_argument(
+        "-q", action="append", help="이 문항만 (그 문항의 답안 쪽만 판독 — 강사별 분담)"
+    )
+    sb.add_argument("--covers-only", action="store_true", help="표지(이름·반·학교)만 먼저 읽기")
     sb.set_defaults(func=_wrap(_cmd_scan_batch))
+    ap = es.add_parser("answer-pages", help="문항마다 답안지의 몇 쪽에 답이 있는지 (표지가 1쪽)")
+    ap.add_argument("exam")
+    ap.add_argument("map", nargs="*", help="문항=쪽 (예: 1=2 2=3 3=4 4=5)")
+    ap.set_defaults(func=_wrap(_cmd_answer_pages))
     cp = es.add_parser("compare", help="AI 채점 ↔ 표지의 강사 점수 비교")
     cp.add_argument("exam")
     cp.set_defaults(func=_wrap(_cmd_compare))

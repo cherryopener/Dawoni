@@ -338,6 +338,10 @@ function QuestionCalibration({ examId, number, cells, reload }: {
           </span>
           <JobProgress job={suggestJob.job} />
           <ErrorBox error={suggestJob.error} />
+          {suggestion &&
+            (suggestion.s.transcript_doubts ?? []).map((d, i) => (
+              <Notice key={`doubt-${i}`}>판독 확인 필요 (루브릭에 반영하지 않음): {d}</Notice>
+            ))}
           {suggestion && suggestion.s.changes.length === 0 && <Info>바꿀 것이 없다는 판단: {suggestion.s.no_change_reason}</Info>}
           {suggestion && suggestion.s.changes.length > 0 && (
             <Stack>

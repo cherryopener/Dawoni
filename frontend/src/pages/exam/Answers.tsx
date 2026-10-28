@@ -22,6 +22,8 @@ import {
 } from "../../components/ui";
 import { api, errorText, examFileUrl, useJob, useLoad } from "../../lib/api";
 import type { Cell, ExamQuestion, Transcript, TranscriptLine } from "../../lib/types";
+
+type InboxPdf = { path: string; name: string; pages: number | null; size: number; modified: number };
 import type { TabProps } from "../Exam";
 import { ManualGradeModal } from "./ManualGrade";
 
@@ -201,6 +203,139 @@ export function TranscriptModal({ examId, student, number, onClose, onSaved, onM
 
 // ---------------------------------------------------------------- 답안 추가
 
+function ScanBatch({ examId, questions, onDone }: { examId: string; questions: ExamQuestion[]; onDone: () => void }) {
+  const inbox = useLoad<InboxPdf[]>("/scanner/inbox");
+  const [path, setPath] = useState("");
+  const [perStudent, setPerStudent] = useState("3");
+  const [classes, setClasses] = useState("TSS1, TSS2, MSS1-J, MSS1-K");
+  const [mine, setMine] = useState<string[]>([]);
+  const [pages, setPages] = useState<Record<string, string>>(
+    () => Object.fromEntries(questions.map((q) => [q.number, (q.answer_pages ?? []).join(",")])),
+  );
+  const [note, setNote] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const job = useJob(onDone);
+  const pdf = (inbox.data ?? []).find((f) => f.path === path);
+  const openFolders = () => {
+    setErr(null);
+    api
+      .post<{ notes: string[] }>("/scanner/open", {})
+      .then((r) => {
+        setNote(r.notes.join(" "));
+        inbox.reload();
+      })
+      .catch((e: unknown) => setErr(errorText(e)));
+  };
+  const savePages = () =>
+    api.put(`/exams/${examId}/answer-pages`, {
+      pages: Object.fromEntries(
+        Object.entries(pages)
+          .filter(([, v]) => v.trim())
+          .map(([k, v]) => [k, v.split(",").map((x) => parseInt(x, 10)).filter((x) => !Number.isNaN(x))]),
+      ),
+    });
+  const run = (coversOnly: boolean) =>
+    void job.run(async () => {
+      if (mine.length) await savePages();
+      return api.post(`/exams/${examId}/scan-batch`, {
+        path,
+        per_student: parseInt(perStudent, 10),
+        classes: classes.split(",").map((c) => c.trim()).filter(Boolean),
+        questions: mine.length ? mine : null,
+        covers_only: coversOnly,
+      });
+    });
+  const result = job.job?.result as { students?: string[]; skipped?: string[]; warnings?: string[]; failed?: string[] } | undefined;
+  return (
+    <Card title="복합기 스캔본 — 여러 학생 답안지 한 번에">
+      <Stack gap={10}>
+        <Row>
+          <Button onClick={openFolders}>복합기 스캔본 열기</Button>
+          <span style={{ fontSize: 13, color: "var(--text-2)" }}>
+            복합기 폴더와 작업공간의 '스캔본' 폴더가 함께 열립니다. PDF를 '스캔본'으로 옮긴 뒤 아래에서 고르세요.
+          </span>
+        </Row>
+        {note && <Info>{note}</Info>}
+        <Row>
+          <div style={{ minWidth: 280 }}>
+            <Field label="스캔본">
+              <select value={path} onChange={(e) => setPath(e.target.value)}>
+                <option value="">— 고르기 —</option>
+                {(inbox.data ?? []).map((f) => (
+                  <option key={f.path} value={f.path}>
+                    {f.name} ({f.pages ?? "?"}쪽)
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <Button small variant="ghost" onClick={inbox.reload}>새로 고침</Button>
+          <div style={{ width: 110 }}>
+            <Field label="한 명당 쪽 수" hint="표지 포함">
+              <TextInput value={perStudent} onChange={setPerStudent} />
+            </Field>
+          </div>
+          <div style={{ width: 260 }}>
+            <Field label="반 목록" hint="손글씨 반 이름을 이 중에서 고름">
+              <TextInput value={classes} onChange={setClasses} />
+            </Field>
+          </div>
+        </Row>
+        {pdf?.pages && parseInt(perStudent, 10) > 0 && (
+          <span style={{ fontSize: 13 }}>
+            {pdf.pages % parseInt(perStudent, 10) === 0 ? `학생 ${pdf.pages / parseInt(perStudent, 10)}명` : <Badge tone="bad">쪽 수가 나누어떨어지지 않습니다</Badge>}
+          </span>
+        )}
+        <Field label="맡은 문항 (강사별 분담)" hint="고르면 그 문항의 답안 쪽만 판독합니다 — 비우면 모든 문항. 답안 쪽은 표지가 1쪽">
+          <table className={tableClass}>
+            <thead>
+              <tr>
+                <th style={{ width: 60 }}>맡음</th>
+                <th>문항</th>
+                <th style={{ width: 140 }}>답안 쪽</th>
+              </tr>
+            </thead>
+            <tbody>
+              {questions.map((q) => (
+                <tr key={q.number}>
+                  <td>
+                    <Check checked={mine.includes(q.number)} onChange={(v) => setMine(v ? [...mine, q.number] : mine.filter((x) => x !== q.number))}>
+                      {" "}
+                    </Check>
+                  </td>
+                  <td>문항 {q.number}</td>
+                  <td>
+                    <TextInput value={pages[q.number] ?? ""} onChange={(v) => setPages({ ...pages, [q.number]: v })} placeholder="예: 3" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Field>
+        <Row>
+          <Button variant="primary" disabled={!path || job.running} onClick={() => run(false)}>
+            {mine.length ? `문항 ${mine.join(", ")} 판독` : "모든 답안 판독"}
+          </Button>
+          <Button disabled={!path || job.running} onClick={() => run(true)}>
+            표지만 먼저 읽기
+          </Button>
+          <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>표지(이름·반·학교)는 한 번만 읽고, 다른 강사는 저장된 것을 씁니다.</span>
+        </Row>
+        <JobProgress job={job.job} />
+        <ErrorBox error={err ?? job.error} />
+        {result && (
+          <Stack gap={4}>
+            <span>판독 {result.students?.length ?? 0}명 · 건너뜀 {result.skipped?.length ?? 0}명</span>
+            {[...(result.warnings ?? []), ...(result.failed ?? [])].map((w, i) => (
+              <Notice key={i}>{w}</Notice>
+            ))}
+          </Stack>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
 function AddAnswers({ examId, questions, onDone }: { examId: string; questions: ExamQuestion[]; onDone: () => void }) {
   const [student, setStudent] = useState("");
   const [mode, setMode] = useState<"scan" | "typed">("scan");
@@ -360,6 +495,7 @@ export function AnswersTab({ detail, reload }: TabProps) {
           </div>
         )}
       </Card>
+      <ScanBatch examId={id} questions={detail.exam.questions} onDone={refresh} />
       <AddAnswers examId={id} questions={detail.exam.questions} onDone={refresh} />
       {open && (
         <TranscriptModal

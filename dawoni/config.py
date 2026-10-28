@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from dawoni.fsio import read_json, write_model_atomic
 from dawoni.paths import AppPaths
@@ -62,6 +62,31 @@ class OcrSettings(_Settings):
     """손글씨 판독 시 두 번째 AI로 교차 판독."""
 
 
+class ScannerSettings(_Settings):
+    """복합기 스캔 폴더 (공유 폴더, SMB).
+
+    비밀번호는 저장하지 않는다 — 처음 열 때 운영체제(Finder·탐색기)가 묻고 키체인·자격 증명
+    관리자에 암호화해 저장한다. 이 설정 파일은 평문이라 비밀번호를 두지 않는다.
+    """
+
+    smb_url: str | None = Field(
+        default=None, description="예: smb://192.168.0.100 또는 smb://192.168.0.100/scan"
+    )
+    username: str | None = None
+
+    @field_validator("smb_url")
+    @classmethod
+    def _smb(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        v = v.strip().replace("\\", "/")
+        if v.startswith("//"):
+            v = "smb:" + v
+        if not v.lower().startswith("smb://"):
+            raise ValueError("smb://주소 형식이어야 합니다 (예: smb://192.168.0.100)")
+        return v.rstrip("/")
+
+
 class DocxSettings(_Settings):
     body_font: str = "맑은 고딕"
     """본문 한글/영문 폰트. Windows 기본 + Mac용 Office 동봉."""
@@ -89,6 +114,7 @@ class AppConfig(_Settings):
     agents: dict[AgentName, AgentSettings] = Field(default_factory=_default_agents)
     ocr: OcrSettings = Field(default_factory=OcrSettings)
     docx: DocxSettings = Field(default_factory=DocxSettings)
+    scanner: ScannerSettings = Field(default_factory=ScannerSettings)
     subjects: list[str] = Field(default_factory=lambda: list(DEFAULT_SUBJECTS))
     max_parallel_jobs: int = Field(default=1, ge=1, le=4)
     """동시에 돌리는 AI 호출 수. 구독 한도 소모 속도를 조절한다."""

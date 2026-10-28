@@ -18,6 +18,7 @@ const JOB_NAMES: Record<string, string> = {
   ingest_exam: "시험지 PDF → 문항",
   answer_key: "해설지 읽기",
   teacher_scores: "강사 점수 넣기",
+  scan_batch: "여러 학생 답안지 판독",
   solve: "해설 만들기",
   rubric: "루브릭 초안",
   scan: "손글씨 판독",

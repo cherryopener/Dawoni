@@ -48,7 +48,7 @@ export type Item = {
 };
 
 export type ExamPart = { label: string; points: number; kind?: "essay" | "short_answer" | null };
-export type ExamQuestion = { number: string; points: number; item: Item; parts?: ExamPart[] };
+export type ExamQuestion = { number: string; points: number; item: Item; parts?: ExamPart[]; answer_pages?: number[] };
 
 export type KeyPart = {
   label: string;
@@ -422,6 +422,7 @@ export type RubricSuggestion = {
   changes: { item_id: string | null; kind: string; summary: string; evidence: string[] }[];
   revised: RubricDraft | null;
   no_change_reason: string | null;
+  transcript_doubts?: string[];
 };
 
 // ---------------------------------------------------------------- 문항 제작 (M9)
