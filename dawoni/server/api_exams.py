@@ -21,6 +21,7 @@ from dawoni.grading.pipeline import (
     approve_rubric,
     decide_candidates,
     edit_rubric,
+    teacher_part_review,
     teacher_review,
 )
 from dawoni.grading.store import ExamStore, ScopeStore
@@ -580,6 +581,52 @@ def confirm_grade(
     g = teacher_review(g, r, body.awarded, note=body.note, by=body.by, item_notes=notes)
     store.save_grade(g)
     return g
+
+
+class PartReviewBody(BaseModel):
+    part_scores: dict[str, float]
+    part_notes: dict[str, str] = Field(default_factory=lambda: dict[str, str]())
+    note: str | None = None
+    by: str | None = None
+
+
+@router.put("/{exam_id}/students/{student}/grades/{number}/parts")
+def confirm_grade_parts(
+    exam_id: str, student: str, number: str, body: PartReviewBody, st: AppState = State
+) -> GradeResult:
+    """강사가 소문항 단위로 확정 (빨간 펜처럼). 항목 점수는 앱이 나눈다."""
+    _, store = _store(st, exam_id)
+    g = store.grade(student, number)
+    r = store.rubric(number)
+    if g is None or r is None:
+        raise KeyError(f"{student} 문항 {number}: 채점 결과 없음")
+    q = store.exam().question(number)
+    notes = {k: v for k, v in body.part_notes.items() if v.strip()}
+    g = teacher_part_review(g, r, q, body.part_scores, part_notes=notes, note=body.note, by=body.by)
+    store.save_grade(g)
+    return g
+
+
+class TeacherCsvBody(BaseModel):
+    csv: str = Field(min_length=1, description="학생,문항,소문항,점수[,이유]")
+    by: str | None = None
+
+
+@router.post("/{exam_id}/teacher-scores")
+def teacher_scores(exam_id: str, body: TeacherCsvBody, st: AppState = State) -> Job:
+    """강사가 직접 매긴 소문항 점수 여러 명 (AI 채점이 없으면 먼저 채점)."""
+    svc, store = _store(st, exam_id)
+    rows = workflow.parse_teacher_csv(body.csv)
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        res = workflow.import_teacher_scores(svc, store, rows, by=body.by, progress=ctx.progress)
+        return {
+            "saved": [f"{g.student_id} {g.question_number}" for g in res.saved],
+            "graded_first": res.graded_first,
+            "failed": [f"{f.student} {f.question}: {f.reason}" for f in res.failed],
+        }
+
+    return st.jobs.submit("teacher_scores", run, {"exam": exam_id})
 
 
 # ---------------------------------------------------------------- 출력

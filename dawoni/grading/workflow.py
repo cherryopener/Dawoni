@@ -304,6 +304,10 @@ def grade_exam(
                 run.skipped.append(Skipped(st, q.number, "판독문 확인 대기"))
                 continue
             old = store.grade(st, q.number)
+            if old is not None and old.status == "teacher_confirmed":
+                # 강사가 확정한 점수는 다시 채점해도 덮어쓰지 않는다 (기준 예시·보정 사례)
+                run.skipped.append(Skipped(st, q.number, f"강사 확정 ({old.total:g}점)"))
+                continue
             if old is not None and not regrade and old.rubric_version == rubric.version:
                 run.skipped.append(
                     Skipped(st, q.number, f"이미 채점됨 ({old.total:g}/{old.max_points:g})")
@@ -336,6 +340,105 @@ def grade_exam(
 
 
 # ---------------------------------------------------------------- 보정
+
+
+@dataclass
+class TeacherScore:
+    """강사가 소문항 단위로 준 점수 한 줄 (CSV: 학생, 문항, 소문항, 점수, 이유)."""
+
+    student: str
+    question: str
+    part: str
+    points: float
+    note: str = ""
+
+
+@dataclass
+class TeacherImport:
+    saved: list[GradeResult] = field(default_factory=lambda: list[GradeResult]())
+    graded_first: list[str] = field(default_factory=lambda: list[str]())
+    """강사 점수를 넣기 전에 AI 채점부터 한 답안 ('학생 문항')."""
+    failed: list[Skipped] = field(default_factory=lambda: list[Skipped]())
+
+
+def parse_teacher_csv(text: str) -> list[TeacherScore]:
+    """`학생,문항,소문항,점수[,이유]` — 머리 줄은 있어도 없어도 된다. 소문항이 없는 문항은 빈 칸."""
+    import csv
+    import io
+
+    out: list[TeacherScore] = []
+    for n, row in enumerate(csv.reader(io.StringIO(text)), start=1):
+        cells = [c.strip() for c in row]
+        if not any(cells) or cells[0].startswith("#"):
+            continue
+        if len(cells) < 4:
+            raise PipelineError(f"{n}번째 줄: 학생,문항,소문항,점수[,이유] 형식이어야 합니다")
+        try:
+            pts = float(cells[3])
+        except ValueError:
+            if n == 1:
+                continue  # 머리 줄
+            raise PipelineError(f"{n}번째 줄: 점수 '{cells[3]}'가 숫자가 아닙니다") from None
+        part = "" if cells[2] in ("", "-", "전체") else cells[2]
+        out.append(TeacherScore(cells[0], cells[1], part, pts, cells[4] if len(cells) > 4 else ""))
+    return out
+
+
+def import_teacher_scores(
+    svc: Services,
+    store: ExamStore,
+    rows: list[TeacherScore],
+    *,
+    by: str | None = None,
+    grade_missing: bool = True,
+    progress: Progress = _noop,
+) -> TeacherImport:
+    """강사가 직접 채점한 소문항 점수 → 강사 확정 채점 (AI와 다른 곳은 보정 사례가 된다).
+
+    AI 채점이 아직 없으면 먼저 AI로 채점한다 (기준 예시 없이) — 어디서 어긋나는지 알아야
+    루브릭을 고칠 수 있다.
+    """
+    from dawoni.grading.pipeline import teacher_part_review
+
+    exam = store.exam()
+    scope = ScopeStore(svc.workspace).get(exam.scope_id)
+    groups: dict[tuple[str, str], list[TeacherScore]] = {}
+    for r in rows:
+        groups.setdefault((r.student, r.question), []).append(r)
+    res = TeacherImport()
+    for k, ((st, qn), rs) in enumerate(groups.items()):
+        progress(k, len(groups), f"{st} 문항 {qn} 강사 점수")
+        try:
+            q = exam.question(qn)
+            rubric = store.rubric(qn)
+            if rubric is None or rubric.status != "approved":
+                raise PipelineError(f"문항 {qn}: 승인된 루브릭이 없습니다")
+            g = store.grade(st, qn)
+            if g is None or g.rubric_version != rubric.version:
+                t = store.transcript(st, qn)
+                if t is None and all(r.points == 0 for r in rs):
+                    continue  # 빈 답안의 0점 — 남길 것이 없다
+                if t is None or not t.confirmed:
+                    raise PipelineError("확인된 판독문이 없습니다")
+                if not grade_missing:
+                    raise PipelineError("AI 채점이 없습니다 (먼저 채점)")
+                progress(k, len(groups), f"{st} 문항 {qn} AI 채점부터")
+                g = grade_answer(svc.engine, q, rubric, t, scope)
+                res.graded_first.append(f"{st} {qn}")
+            g = teacher_part_review(
+                g,
+                rubric,
+                q,
+                {r.part: r.points for r in rs},
+                part_notes={r.part: r.note for r in rs if r.note},
+                by=by,
+            )
+            store.save_grade(g)
+            res.saved.append(g)
+        except (PipelineError, KeyError, AgentError, TaskFailed) as e:
+            res.failed.append(Skipped(st, qn, str(e).strip("'\"")))
+    progress(len(groups), len(groups), f"강사 점수 {len(res.saved)}건 저장")
+    return res
 
 
 def evaluate_calibration(
@@ -418,10 +521,15 @@ def suggest_rubric_changes(svc: Services, store: ExamStore, q_number: str) -> Su
     sol = store.solution(q_number)
     if rubric is None or sol is None:
         raise PipelineError(f"문항 {q_number}: 해설·루브릭이 필요합니다.")
-    cases = [c for c in calibration.candidates(store, q_number, rubric) if c.kind == "correction"]
-    if not cases:
+    cases = [
+        c
+        for c in calibration.candidates(store, q_number, rubric)
+        if c.kind == "correction" or c.grade.teacher_part_scores
+    ]
+    if not any(c.kind == "correction" for c in cases):
         raise PipelineError(
-            "강사가 AI 점수를 고친 사례가 없습니다. 채점 검토에서 점수를 고쳐 확정하면 생깁니다."
+            "강사가 AI 점수를 고친 사례가 없습니다. 채점 검토에서 점수를 고쳐 확정하거나 "
+            "`exam teacher-scores`로 강사 점수를 넣으면 생깁니다."
         )
     s = suggest_rubric(
         svc.engine,
@@ -431,5 +539,6 @@ def suggest_rubric_changes(svc: Services, store: ExamStore, q_number: str) -> Su
         scope,
         calibration.corrections_text(cases, rubric),
         {c.student for c in cases},
+        key=store.answer_key(q_number),
     )
     return SuggestionRun(s, [c.student for c in cases])

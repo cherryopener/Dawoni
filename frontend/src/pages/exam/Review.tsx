@@ -45,6 +45,77 @@ function quoteHits(t: Transcript, quotes: string[]): Set<number> {
   return hits;
 }
 
+function PartScores({ path, q, r, g, onSaved }: {
+  path: string;
+  q: ExamQuestion;
+  r: Rubric;
+  g: Grade;
+  onSaved: () => void;
+}) {
+  const parts = q.parts ?? [];
+  const ai = Object.fromEntries((g.ai_judgements ?? g.judgements).map((j) => [j.rubric_item_id, j.awarded]));
+  const now = Object.fromEntries(g.judgements.map((j) => [j.rubric_item_id, j.awarded]));
+  const sum = (label: string, m: Record<string, number>) =>
+    r.items.filter((i) => (i.part ?? "") === label).reduce((a, i) => a + (m[i.id] ?? 0), 0);
+  const [scores, setScores] = useState<Record<string, number>>(
+    () => Object.fromEntries(parts.map((p) => [p.label, g.teacher_part_scores?.[p.label] ?? sum(p.label, now)])),
+  );
+  const [notes, setNotes] = useState<Record<string, string>>(() => ({ ...(g.teacher_part_notes ?? {}) }));
+  const [err, setErr] = useState<string | null>(null);
+  if (!parts.length) return null;
+  const save = () => {
+    setErr(null);
+    api
+      .put(`${path}/parts`, { part_scores: scores, part_notes: notes, by: teacherName() || null })
+      .then(onSaved)
+      .catch((e: unknown) => setErr(errorText(e)));
+  };
+  return (
+    <details open={!!g.teacher_part_scores && Object.keys(g.teacher_part_scores).length > 0}>
+      <summary style={{ cursor: "pointer" }}>
+        <b>소문항 점수로 확정</b>{" "}
+        <span style={{ fontSize: 12.5, color: "var(--text-2)" }}>빨간 펜처럼 소문항마다 점수를 매기면 항목 점수는 앱이 나눕니다</span>
+      </summary>
+      <table className={tableClass} style={{ marginTop: 6 }}>
+        <thead>
+          <tr>
+            <th style={{ width: 70 }}>소문항</th>
+            <th style={{ width: 60 }}>AI</th>
+            <th style={{ width: 110 }}>강사</th>
+            <th>AI와 다르면 이유 (다음 채점·루브릭 개선에 쓰임)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {parts.map((p) => {
+            const a = sum(p.label, ai);
+            const differs = (scores[p.label] ?? 0) !== a;
+            return (
+              <tr key={p.label} style={{ background: differs ? "var(--warn-soft)" : undefined }}>
+                <td>
+                  <b>{p.label}</b> <span style={{ color: "var(--text-3)" }}>/{p.points}</span>
+                </td>
+                <td>{a}</td>
+                <td>
+                  <NumberInput value={scores[p.label] ?? 0} min={0} max={p.points} onChange={(v) => setScores({ ...scores, [p.label]: v })} />
+                </td>
+                <td>
+                  <TextInput value={notes[p.label] ?? ""} onChange={(v) => setNotes({ ...notes, [p.label]: v })} placeholder={differs ? "예: 전류로만 반박해도 인정" : ""} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <Row style={{ marginTop: 6 }}>
+        <Button small variant="primary" onClick={save}>
+          소문항 점수로 확정
+        </Button>
+      </Row>
+      <ErrorBox error={err} />
+    </details>
+  );
+}
+
 function GradeModal({ examId, row, onClose, onSaved }: {
   examId: string;
   row: ReviewRow;
@@ -111,6 +182,18 @@ function GradeModal({ examId, row, onClose, onSaved }: {
       ))}
       {g.disagreements.length > 0 && (
         <Notice>이중 채점에서 점수가 다른 항목: {g.disagreements.join(", ")} — 두 판정을 비교해 정하세요.</Notice>
+      )}
+      {r && (
+        <PartScores
+          path={path}
+          q={q}
+          r={r}
+          g={g}
+          onSaved={() => {
+            onSaved();
+            onClose();
+          }}
+        />
       )}
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)", gap: 16, alignItems: "start" }}>
         <Stack gap={8}>

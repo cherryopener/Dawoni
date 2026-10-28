@@ -219,6 +219,8 @@ export type Grade = {
   ai_judgements?: Judgement[] | null;
   teacher_note?: string | null;
   teacher_item_notes?: Record<string, string>;
+  teacher_part_scores?: Record<string, number>;
+  teacher_part_notes?: Record<string, string>;
   confirmed_by?: string | null;
   examples_used?: string[];
   agent?: string | null;

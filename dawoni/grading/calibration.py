@@ -179,6 +179,25 @@ def _judgement_line(
     return head + (f": {reason}" if reason else "")
 
 
+def part_lines(g: GradeResult, rubric: Rubric) -> list[str]:
+    """강사가 소문항 단위로 준 점수: 'AI a점 → 강사 b점 — 이유'."""
+    if not g.teacher_part_scores:
+        return []
+    ai = {j.rubric_item_id: j.awarded for j in (g.ai_judgements or g.judgements)}
+    out = ["강사 소문항 점수 (이 점수가 기준):"]
+    for label, score in g.teacher_part_scores.items():
+        items = rubric.part_items(label)
+        cap = sum(i.points for i in items)
+        before = sum(ai.get(i.id, 0.0) for i in items)
+        mark = "" if abs(before - score) < 1e-9 else f" (AI는 {before:g}점)"
+        why = g.teacher_part_notes.get(label)
+        out.append(
+            f"- 소문항 {label or '전체'}: 강사 {score:g}/{cap:g}점{mark}"
+            + (f" — {why}" if why else "")
+        )
+    return out
+
+
 def exemplar_text(ex: Exemplar, n: int, rubric: Rubric, *, with_answer: bool = True) -> str:
     points = {i.id: i.points for i in rubric.items}
     changed = ex.changed_items
@@ -186,7 +205,8 @@ def exemplar_text(ex: Exemplar, n: int, rubric: Rubric, *, with_answer: bool = T
     lines = [f"[기준 예시 {n} — {KIND_LABEL[ex.kind]}] 총점 {g.total:g}/{g.max_points:g}"]
     if with_answer:
         lines.append(transcript_text(ex.transcript).replace("[학생 답안]", "예시 답안", 1))
-    lines.append("강사 판정 (이 점수가 기준):")
+    lines += part_lines(g, rubric)
+    lines.append("강사 판정 (항목별):" if g.teacher_part_scores else "강사 판정 (이 점수가 기준):")
     lines += [
         _judgement_line(j, points.get(j.rubric_item_id, 0), ex, changed) for j in g.judgements
     ]
@@ -284,6 +304,7 @@ def corrections_text(cases: list[Exemplar], rubric: Rubric) -> str:
         ai = {j.rubric_item_id: j for j in (g.ai_judgements or g.judgements)}
         lines = [f"[사례: 학생 {ex.student}] 강사 총점 {g.total:g}/{g.max_points:g}"]
         lines.append(transcript_text(ex.transcript))
+        lines += part_lines(g, rubric)
         for j in g.judgements:
             a = ai.get(j.rubric_item_id)
             rid = j.rubric_item_id

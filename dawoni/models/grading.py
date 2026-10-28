@@ -169,7 +169,8 @@ class PartialCredit(DawoniModel):
     condition: str = Field(description="예: 부호 실수 후 과정은 일관됨")
     points: float = Field(ge=0, description="이 경우 그 항목에서 주는 점수")
     from_key: bool = Field(
-        default=False, description="해설지에 적힌 부분 점수면 true, AI가 제안한 것이면 false"
+        default=False,
+        description="해설지에 적혔거나 강사 채점 사례에 근거한 부분 점수면 true, AI 제안이면 false",
     )
 
 
@@ -468,6 +469,13 @@ class GradeResult(DawoniModel):
     teacher_note: str | None = None
     teacher_item_notes: dict[str, str] = Field(
         default_factory=lambda: dict[str, str](), description="강사가 항목별로 남긴 판정 이유"
+    )
+    teacher_part_scores: dict[str, float] = Field(
+        default_factory=lambda: dict[str, float](),
+        description="강사가 소문항 단위로 준 점수 (빨간 펜처럼 소문항마다 매긴 경우)",
+    )
+    teacher_part_notes: dict[str, str] = Field(
+        default_factory=lambda: dict[str, str](), description="강사가 소문항별로 남긴 이유"
     )
     confirmed_by: str | None = None
     confirmed_at: datetime | None = None

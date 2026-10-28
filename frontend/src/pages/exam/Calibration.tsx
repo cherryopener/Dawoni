@@ -14,7 +14,9 @@ import {
   Row,
   Select,
   Stack,
+  TextArea,
   tableClass,
+  teacherName,
 } from "../../components/ui";
 import { api, errorText, useJob, useLoad } from "../../lib/api";
 import { go } from "../../lib/router";
@@ -382,6 +384,38 @@ function QuestionCalibration({ examId, number, cells, reload }: {
 
 type StudentRow = { student: string; cells: Record<string, Cell> };
 
+function TeacherScoresCard({ examId, onDone }: { examId: string; onDone: () => void }) {
+  const [csv, setCsv] = useState("");
+  const job = useJob(onDone);
+  const result = job.job?.result as { saved?: string[]; graded_first?: string[]; failed?: string[] } | undefined;
+  return (
+    <Card title="강사가 직접 채점한 점수 넣기">
+      <Stack gap={8}>
+        <span style={{ fontSize: 13, color: "var(--text-2)" }}>
+          답안이 서로 다른 학생 3~5명을 직접 채점해 소문항 점수를 넣으면, AI와 다른 소문항이 기준 예시와 루브릭 개선의 근거가 됩니다.
+          한 줄에 <code>학생,문항,소문항,점수,이유</code> (소문항이 없는 문항은 소문항 칸을 비움). AI 채점이 없는 답안은 먼저 채점합니다.
+        </span>
+        <TextArea value={csv} onChange={setCsv} rows={6} mono placeholder={"송채현,2,(1)①,2,저항이 같아 전압이 같다는 근거로도 인정\n송채현,2,(1)②,2,\n원지형,1,(1),5,계수 하나 빠진 실수는 감점 안 함"} />
+        <Row>
+          <Button variant="primary" disabled={!csv.trim() || job.running} onClick={() => void job.run(() => api.post(`/exams/${examId}/teacher-scores`, { csv, by: teacherName() || null }))}>
+            강사 점수 넣기
+          </Button>
+        </Row>
+        <JobProgress job={job.job} />
+        <ErrorBox error={job.error} />
+        {result && (
+          <Stack gap={4}>
+            <span>저장 {result.saved?.length ?? 0}건{result.graded_first?.length ? ` (AI 채점부터: ${result.graded_first.join(", ")})` : ""}</span>
+            {(result.failed ?? []).map((f, i) => (
+              <Notice key={i}>{f}</Notice>
+            ))}
+          </Stack>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
 export function CalibrationTab({ detail, reload }: TabProps) {
   const id = detail.exam.id;
   const numbers = detail.exam.questions.map((q) => q.number);
@@ -394,6 +428,14 @@ export function CalibrationTab({ detail, reload }: TabProps) {
       <Card title="시험 전체 일치도">
         {agree.data && <StatTiles s={agree.data.overall} />}
       </Card>
+      <TeacherScoresCard
+        examId={id}
+        onDone={() => {
+          rows.reload();
+          agree.reload();
+          reload();
+        }}
+      />
       {numbers.length > 1 && (
         <Row>
           <span>문항</span>

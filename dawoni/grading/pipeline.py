@@ -533,6 +533,87 @@ def teacher_review(
     )
 
 
+def spread_part_score(
+    items: list[tuple[str, float, float]], score: float, step: float = 0.5
+) -> dict[str, float]:
+    """소문항 점수를 그 소문항의 루브릭 항목들에 나눈다. `items` = (ID, 배점, AI 점수).
+
+    강사는 소문항 단위로 점수를 매긴다 (빨간 펜). AI 점수의 비율을 따라 나누고(배점을 넘지 않게,
+    0.5점 단위), AI가 0점이면 앞 항목부터 채운다. 합은 정확히 `score`.
+    """
+    cap = sum(p for _, p, _ in items)
+    score = max(0.0, min(score, cap))
+    ai_total = sum(a for _, _, a in items)
+    if abs(ai_total - score) < 1e-9:
+        return {i: a for i, _, a in items}
+    out: dict[str, float] = {}
+    if ai_total > 0:
+        for i, p, a in items:
+            out[i] = min(p, round(a * score / ai_total / step) * step)
+    else:
+        left = score
+        for i, p, _ in items:
+            out[i] = min(p, left)
+            left -= out[i]
+    # 반올림으로 생긴 차이를 배점 안에서 맞춘다 (뒤 항목부터)
+    diff = score - sum(out.values())
+    for i, p, _ in reversed(items):
+        if abs(diff) < 1e-9:
+            break
+        room = (p - out[i]) if diff > 0 else -out[i]
+        move = min(diff, room) if diff > 0 else max(diff, room)
+        out[i] += move
+        diff -= move
+    return out
+
+
+def teacher_part_review(
+    g: GradeResult,
+    rubric: Rubric,
+    q: ExamQuestion,
+    part_scores: dict[str, float],
+    *,
+    part_notes: dict[str, str] | None = None,
+    note: str | None = None,
+    by: str | None = None,
+) -> GradeResult:
+    """강사가 소문항 단위로 확정 — 소문항 점수를 항목에 나눠 `teacher_review`로 저장한다.
+
+    고친 소문항은 AI 판정이 `ai_judgements`에 남아 기준 예시·루브릭 개선 사례가 된다.
+    """
+    labels = {p.label: p for p in q.parts} or {"": None}
+    unknown = sorted(set(part_scores) - set(labels))
+    if unknown:
+        raise PipelineError(f"문항 {q.number}에 없는 소문항: {unknown} (있는 것: {sorted(labels)})")
+    current = {j.rubric_item_id: j.awarded for j in g.judgements}
+    awarded: dict[str, float] = {}
+    item_notes: dict[str, str] = {}
+    notes = part_notes or {}
+    for label, score in part_scores.items():
+        part = labels[label]
+        items = rubric.part_items(label)
+        cap = part.points if part else q.points
+        if not 0 <= score <= cap + 1e-9:
+            raise PipelineError(
+                f"소문항 {label or '전체'} 점수 {score:g}는 0~{cap:g} 사이여야 합니다"
+            )
+        awarded |= spread_part_score(
+            [(i.id, i.points, current.get(i.id, 0.0)) for i in items], score
+        )
+        if notes.get(label):
+            item_notes |= {i.id: f"[{label or '전체'}] {notes[label]}" for i in items}
+    out = teacher_review(g, rubric, awarded, note=note, by=by, item_notes=item_notes)
+    return out.model_copy(
+        update={
+            "teacher_part_scores": {**out.teacher_part_scores, **part_scores},
+            "teacher_part_notes": {
+                **out.teacher_part_notes,
+                **{k: v for k, v in notes.items() if v},
+            },
+        }
+    )
+
+
 def teacher_grade(
     transcript: Transcript,
     rubric: Rubric,
@@ -600,7 +681,8 @@ def check_suggestion(
         if bad:
             problems.append(f"evidence의 학생 {bad}는 [자료]의 사례가 아니다")
     if s.revised is not None:
-        problems += checks.check_rubric(s.revised, q, solution, strict=False)
+        # 소문항 배점 합은 지킨다 (해설지 부분 점수 구조는 강사 사례가 우선이라 보지 않음)
+        problems += checks.check_rubric(s.revised, q, solution)
     return problems
 
 
@@ -612,8 +694,12 @@ def suggest_rubric(
     scope: ScopeProfile,
     corrections: str,
     case_students: set[str],
+    key: AnswerKey | None = None,
 ) -> RubricSuggestion:
-    """강사 수정 사례 → 루브릭 개선 제안. 적용은 강사가 고른 뒤 `edit_rubric` (다시 승인 필요)."""
+    """강사 수정 사례 → 루브릭 개선 제안. 적용은 강사가 고른 뒤 `edit_rubric` (다시 승인 필요).
+
+    해설지 비교 결과(`checks`)·정답 후보(강사 결정 포함)·해설지 기준 확인은 제안이 바꾸지 못한다.
+    """
 
     def check(v: RubricSuggestion) -> list[str]:
         return check_suggestion(v, q, solution, case_students)
@@ -622,12 +708,13 @@ def suggest_rubric(
     out = engine.run(
         task,
         TaskInput(
-            variables={"level": scope.level, "points": q.points},
+            variables={"level": scope.level, "points": q.points, "parts": bool(q.parts)},
             scope=scope_layer(scope),
             material="\n\n".join(
                 [
                     exam_question_text(q),
-                    solution_text(solution),
+                    *([key_text(key, q)] if key else []),
+                    solution_text(solution, "[AI 풀이]" if key else "[모범 해설]"),
                     rubric_text(rubric, q.parts),
                     "[강사가 확정한 채점 사례]\n" + corrections,
                 ]
@@ -637,5 +724,8 @@ def suggest_rubric(
     if out.revised is not None:
         data = out.revised.model_dump()
         data["never_deduct"] = checks.merge_never_deduct(out.revised, DEFAULT_NEVER_DEDUCT)
+        data["checks"] = [c.model_dump() for c in rubric.checks]
+        data["candidates"] = [c.model_dump() for c in rubric.candidates]
+        data["key_conflicts"] = list(rubric.key_conflicts)
         out = out.model_copy(update={"revised": RubricDraft.model_validate(data)})
     return out

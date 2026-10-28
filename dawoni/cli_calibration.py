@@ -3,6 +3,8 @@
 dawoni exam calibration <시험ID> -q 1 [--pin A] [--exclude D] [--examples 3] [--off|--on]
 dawoni exam calibrate <시험ID> -q 1          # 보정 효과 측정 (예시 없이 / 예시와 함께)
 dawoni exam suggest-rubric <시험ID> -q 1 [--apply]   # 강사 수정 사례 → 루브릭 개선안
+dawoni exam teacher-scores <시험ID> 강사점수.csv [--by 김선생]   # 강사가 직접 매긴 소문항 점수
+dawoni exam teacher-scores <시험ID> --student 홍길동 -q 2 --part "(1)①=2" [--note "(1)①=이유"]
 """
 
 from __future__ import annotations
@@ -106,7 +108,7 @@ def _cmd_suggest(args: argparse.Namespace, svc: Any) -> int:
     for c in s.changes:
         _out(f"- [{c.kind}] {c.item_id or '새 규정'}: {c.summary}  (근거: {', '.join(c.evidence)})")
     assert s.revised is not None
-    _out("\n" + rubric_text(s.revised))
+    _out("\n" + rubric_text(s.revised, store.exam().question(q).parts))
     if args.apply:
         old = store.rubric(q)
         sol = store.solution(q)
@@ -117,6 +119,57 @@ def _cmd_suggest(args: argparse.Namespace, svc: Any) -> int:
             f"\n루브릭 v{r.version} 초안으로 저장 — `exam approve`로 다시 승인해야 채점에 쓰입니다."
         )
     return 0
+
+
+def _cmd_teacher_scores(args: argparse.Namespace, svc: Any) -> int:
+    from pathlib import Path
+
+    from dawoni.grading.pipeline import PipelineError
+
+    store = ExamStore(svc.workspace, args.exam)
+    rows: list[workflow.TeacherScore] = []
+    if args.file:
+        rows += workflow.parse_teacher_csv(Path(args.file).read_text(encoding="utf-8-sig"))
+    if args.part:
+        if not args.student or not args.q:
+            raise PipelineError("--part에는 --student와 -q가 필요합니다")
+        notes: dict[str, str] = {}
+        for n in list[str](args.note or []):
+            if "=" in n:
+                k, v = n.split("=", 1)
+                notes[k.strip()] = v.strip()
+        for spec in list[str](args.part):
+            label, _, value = spec.rpartition("=")
+            rows.append(
+                workflow.TeacherScore(
+                    args.student, args.q[0], label.strip(), float(value), notes.get(label, "")
+                )
+            )
+    if not rows:
+        raise PipelineError("넣을 점수가 없습니다 (CSV 파일 또는 --part)")
+
+    def progress(done: int, total: int, msg: str) -> None:
+        if done < total:
+            sys.stderr.write(f"  … {msg}\n")
+
+    res = workflow.import_teacher_scores(svc, store, rows, by=args.by, progress=progress)
+    for g in res.saved:
+        r = store.rubric(g.question_number)
+        assert r is not None
+        ai = {j.rubric_item_id: j.awarded for j in (g.ai_judgements or g.judgements)}
+        cells: list[str] = []
+        for label, v in g.teacher_part_scores.items():
+            before = sum(ai.get(i.id, 0) for i in r.part_items(label))
+            cells.append(
+                f"{label or '전체'} {v:g}" + ("" if abs(before - v) < 1e-9 else f" (AI {before:g})")
+            )
+        _out(f"{g.student_id} 문항 {g.question_number}: 강사 {g.total:g}점  " + ", ".join(cells))
+    if res.graded_first:
+        _out(f"AI 채점부터 한 답안: {', '.join(res.graded_first)}")
+    for f in res.failed:
+        _out(f"  ✗ {f.student} 문항 {f.question}: {f.reason}")
+    _out("AI와 다른 소문항은 기준 예시가 되고, `exam suggest-rubric`의 근거 사례가 됩니다.")
+    return 1 if res.failed else 0
 
 
 def register(es: Any, with_q: Any, wrap: Any, svc_of: Any) -> None:
@@ -143,3 +196,13 @@ def register(es: Any, with_q: Any, wrap: Any, svc_of: Any) -> None:
     s = with_q(es.add_parser("suggest-rubric", help="강사 수정 사례 → 루브릭 개선안"))
     s.add_argument("--apply", action="store_true", help="새 루브릭 초안으로 저장 (재승인 필요)")
     s.set_defaults(func=bind(_cmd_suggest))
+
+    t = with_q(es.add_parser("teacher-scores", help="강사가 직접 매긴 소문항 점수 넣기"))
+    t.add_argument("file", nargs="?", help="CSV: 학생,문항,소문항,점수[,이유]")
+    t.add_argument("--student")
+    t.add_argument("--part", action="append", help='소문항=점수 (예: "(1)①=2", 소문항 없으면 "=5")')
+    t.add_argument(
+        "--note", action="append", help='소문항=이유 (예: "(1)①=전류로만 반박해도 인정")'
+    )
+    t.add_argument("--by")
+    t.set_defaults(func=bind(_cmd_teacher_scores))
