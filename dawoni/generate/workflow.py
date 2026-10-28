@@ -16,10 +16,10 @@ from dawoni.grading.pipeline import PipelineError
 from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.base import new_id
 from dawoni.models.figure import Figure
-from dawoni.models.generation import ExtensionProposals, GeneratedSet, GenKind, SourceRef
-from dawoni.models.grading import Exam, ExamQuestion, Rubric
+from dawoni.models.generation import ExtensionProposals, GeneratedSet, SourceRef, VariantKind
+from dawoni.models.grading import Exam, ExamQuestion, Rubric, SolutionDraft
 from dawoni.models.item import ItemContent
-from dawoni.models.scope import ExtensionConcept
+from dawoni.models.scope import ExtensionConcept, ScopeProfile
 from dawoni.paths import WorkspacePaths
 from dawoni.services import Services
 
@@ -57,6 +57,9 @@ class GenStore:
     def for_exam(self, exam_id: str) -> list[GeneratedSet]:
         return [s for s in self.all() if s.source.exam_id == exam_id]
 
+    def for_bank_item(self, item_id: str) -> list[GeneratedSet]:
+        return [s for s in self.all() if s.source.bank_item_id == item_id]
+
 
 def same_scope_items(
     ws: WorkspacePaths, scope_id: str, *, exclude: tuple[str, str] | None = None
@@ -83,18 +86,40 @@ def generate(
     svc: Services,
     store: ExamStore,
     q_number: str,
-    kind: GenKind,
+    kind: VariantKind,
     *,
     opts: gp.Options | None = None,
     extension: ExtensionConcept | None = None,
     progress: Progress = _noop,
 ) -> list[GeneratedSet]:
-    opts = opts or gp.Options()
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
-    src = exam.question(q_number)
-    src_sol = store.solution(q_number)
-    source = SourceRef(exam_id=exam.id, question_number=q_number)
+    others = (
+        same_scope_items(svc.workspace, scope.id, exclude=(exam.id, q_number))
+        if kind == "novel_a" else []
+    )  # fmt: skip
+    return generate_from(
+        svc, exam.question(q_number), store.solution(q_number), scope,
+        SourceRef(exam_id=exam.id, question_number=q_number), kind,
+        opts=opts, extension=extension, others=others, progress=progress,
+    )  # fmt: skip
+
+
+def generate_from(
+    svc: Services,
+    src: ExamQuestion,
+    src_sol: SolutionDraft | None,
+    scope: ScopeProfile,
+    source: SourceRef,
+    kind: VariantKind,
+    *,
+    opts: gp.Options | None = None,
+    extension: ExtensionConcept | None = None,
+    others: list[tuple[str, ItemContent, set[str]]] | None = None,
+    progress: Progress = _noop,
+) -> list[GeneratedSet]:
+    """기준 문항 하나(시험 문항이든 문제은행 문항이든) → 제작물 초안들."""
+    opts = opts or gp.Options()
     if kind == "novel_b" and extension is None:
         raise PipelineError("신규 B는 확장 개념이 필요합니다 (직접 입력하거나 AI 후보에서 고르기).")
     if kind == "numeric" and src.item.has_figure_choices:
@@ -110,8 +135,7 @@ def generate(
         case "condition":
             drafts = [gp.condition_draft(svc.engine, src, src_sol, scope)]
         case "novel_a":
-            others = same_scope_items(svc.workspace, scope.id, exclude=(exam.id, q_number))
-            drafts = [gp.novel_a_draft(svc.engine, src, src_sol, scope, others, opts)]
+            drafts = [gp.novel_a_draft(svc.engine, src, src_sol, scope, others or [], opts)]
         case "novel_b":
             assert extension is not None
             drafts = [gp.novel_b_draft(svc.engine, src, src_sol, scope, extension)]
@@ -161,7 +185,7 @@ def exam_from_sets(ws: WorkspacePaths, gen_ids: list[str], title: str) -> Exam:
     questions: list[ExamQuestion] = []
     for n, s in enumerate(sets, start=1):
         # 그림은 원래 시험 폴더 기준 경로 → 새 시험 폴더로 복사하고 경로를 바꾼다
-        src_root = ws.exams / s.source.exam_id
+        src_root = ws.exams / s.source.exam_id if s.source.exam_id else ws.bank
         figures: list[Figure] = []
         for f in s.item.figures:
             if f.orig:

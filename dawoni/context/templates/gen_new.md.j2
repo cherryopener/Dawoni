@@ -1,0 +1,38 @@
+{#- version: 2026-10-29.1 -#}
+강사의 아이디어로 **새 문항 하나와 모범답안**을 만들어라. 문항은 강사의 의도를 그대로 살려야 한다.
+
+학생 수준: {{ level }}
+단원: {{ units }}
+배점: {{ points }}점 · 난이도 {{ difficulty }} / 5
+답 형태: {{ format_label }}
+
+[강사의 아이디어]
+{{ idea }}
+
+{% if ext_id %}[제시문으로 알려 줄 교과 밖 개념]
+{{ ext_id }} — {{ ext_name }}: {{ ext_definition }}
+{% if ext_assumptions %}가정: {{ ext_assumptions }}
+{% endif %}{% if ext_inference %}학생이 유추할 내용: {{ ext_inference }}
+{% endif %}
+- 본문(`stem`) 맨 앞에 제목이 "제시문"인 `box` 블록을 두고, 위 개념의 정의·식·가정을 학생 수준의 말로 설명한다.
+- 학생은 **제시문 + [풀이 범위]의 교과 개념만으로** 풀 수 있어야 하고, 제시문의 개념을 실제로 써야 풀린다.
+- `solution`에서 그 개념을 쓰는 단계의 `uses`에 `{{ ext_id }}`를 넣는다.
+- `definition_quotes`에 `{"{{ ext_id }}": "제시문에서 정의를 담은 문장"}`을 **제시문에 적힌 그대로** 인용한다.
+
+{% endif %}답 형태별 규칙:
+{% if format == "choice5" %}- 객관식: `item_type`은 `multiple_choice`, 선지 5개(`choices` 1~5). 정답은 하나이고 `answer_label`에 번호를 쓴다.
+- 오답 선지는 학생이 흔히 하는 실수(부호, 단위, 빠뜨린 항 등)에서 나온 값·진술로 만든다.
+{% elif format == "bogi" %}- ㄱㄴㄷ 합답형: `item_type`은 `multiple_choice`. 본문에 `bogi` 블록(제목 "보기")을 두고 진술 ㄱ, ㄴ, ㄷ을 쓴다.
+- 문항 끝은 "<보기>에서 옳은 것만을 있는 대로 고른 것은?"으로 한다.
+- 선지 5개는 각각 진술 기호의 조합이다 (예: "ㄱ", "ㄴ", "ㄱ, ㄷ", "ㄴ, ㄷ", "ㄱ, ㄴ, ㄷ"). 선지 `runs`에는 기호와 쉼표만 쓴다.
+- `statements`에 진술마다 참·거짓과 이유를 쓰고, `answer_label`은 참인 진술만 모은 선지 번호와 같아야 한다.
+{% elif format == "short" %}- 단답형: `item_type`은 `short_answer`. 답은 값 하나(또는 식 하나)이고 `answer_latex`에 쓴다. 값·식이면 `answer_expr`도 쓴다.
+{% else %}- 서술형: `item_type`은 `essay`. {% if n_parts > 1 %}소문항 {{ n_parts }}개 (1)(2)…로 나누고 `parts`에 표시·배점·유형을 쓴다 (배점 합 {{ points }}점). 본문에도 (1)(2) 표시를 쓴다.{% else %}소문항 없이 하나로 쓴다 (`parts`는 빈 목록).{% endif %}
+- 풀이 과정을 써야 답할 수 있게 묻는다. 모범답안은 채점 기준이 될 수 있게 단계를 빠짐없이 쓴다.
+{% endif %}
+공통:
+1. [풀이 범위]의 개념(C)·기법(S){% if ext_id %}과 {{ ext_id }}{% endif %}만 쓴다. "쓰지 않는 기법"은 쓰지도 요구하지도 않는다.
+2. `solution`: 단계마다 `explanation`(한국어), `math`, `uses`(개념·기법 ID). `final_answer`에 최종 답 (객관식·합답형이면 정답 번호, 예: ③).{% if format == "essay" and n_parts > 1 %} `part_answers`에 소문항마다 답.{% endif %}
+3. `design_note`에 강사 아이디어를 문항 어디에 어떻게 썼는지 적는다.
+4. 모든 수치는 답이 깔끔하게 나오도록 고른다. 그림이 꼭 필요하면 글로 상황을 충분히 설명하고 그림은 넣지 않는다.
+5. [참고 문항]이 있으면 형식과 난이도만 참고하고, 문장·수치·상황은 새로 쓴다.

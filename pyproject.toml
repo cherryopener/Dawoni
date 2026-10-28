@@ -67,6 +67,8 @@ ignore = [
 "tests/test_generate.py" = ["E501"]
 "tests/test_figures.py" = ["E501"]
 "tests/test_grading.py" = ["E501"]
+"tests/test_new_problem.py" = ["E501"]  # 새 문제 응답 픽스처
+"tests/test_bank.py" = ["E501"]  # 문항 픽스처
 
 [tool.pyright]
 include = ["dawoni", "tests"]

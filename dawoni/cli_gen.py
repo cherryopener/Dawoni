@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from dawoni.agents import AgentError
 from dawoni.context import TaskFailed
@@ -24,7 +24,7 @@ from dawoni.generate import workflow as gw
 from dawoni.grading.pipeline import PipelineError
 from dawoni.grading.render import question_text, rubric_text, solution_text
 from dawoni.grading.store import ExamStore
-from dawoni.models.generation import GEN_KIND_LABELS, GeneratedSet
+from dawoni.models.generation import GEN_KIND_LABELS, GeneratedSet, VariantKind
 from dawoni.models.scope import ExtensionConcept
 from dawoni.services import Services, open_services
 from dawoni.workspace import WorkspaceError
@@ -175,7 +175,7 @@ def register(sub: Any) -> None:
     mk = gs.add_parser("make", help="제작 (AI 호출)")
     mk.add_argument("exam")
     mk.add_argument("-q", required=True, help="기준 문항 번호")
-    mk.add_argument("--kind", required=True, choices=list(GEN_KIND_LABELS))
+    mk.add_argument("--kind", required=True, choices=list(get_args(VariantKind)))
     mk.add_argument("--count", type=int, default=2, help="수치형: 만들 문항 수")
     mk.add_argument("--max-den", type=int, default=20, help="수치형: 분모 상한")
     mk.add_argument("--sqrt", action="store_true", help="수치형: √n 꼴 답 허용")

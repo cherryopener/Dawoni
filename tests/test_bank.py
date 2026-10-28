@@ -538,3 +538,62 @@ def test_compose_scope_across_textbooks() -> None:
     assert s.unit_ids == ["phy1.1.1.3", "phy1.1.2.1"] and s.level == "고등학교 물리학 I"
     with pytest.raises(BankError, match="없는 단원"):
         compose_scope([a], trees, ["phy1.9"], title="x")
+
+
+# ---------------------------------------------------------------- 문제 만들기 (문제은행 기준)
+
+
+def test_variant_from_bank_item_goes_back_to_bank(
+    app_paths: AppPaths, tmp_path: Path, make_fake: MakeFake
+) -> None:
+    from test_generate import M, T, solved
+    from test_grading import FIX as GFIX
+    from test_grading import RUBRIC_OK
+
+    from dawoni.bank.make import approve_to_bank, generate_from_bank
+    from dawoni.generate.workflow import GenStore
+
+    tpl = {
+        "item": {"item_type": "essay", "stem": [{"type": "paragraph", "runs": [
+            T("상수 "), M(r"a \ge 0"), T("에 대하여 이차함수 "), M("y=x^2-2ax+7"), T("의 최솟값을 a로 나타내시오.")]}]},
+        "answer_expr": "7 - a**2", "assumptions": ["a >= 0"], "note": "일차항 계수를 문자로",
+    }  # fmt: skip
+    script = [solved("3", "3"), tpl, solved("7-a^2", "7 - a**2"), RUBRIC_OK]
+    exe = make_fake(
+        "script", script=[{"response": json.dumps(r, ensure_ascii=False)} for r in script]
+    )
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    cfg.agents["claude"].enabled = False
+    cfg.agents["codex"].enabled = False
+    save_config(app_paths, cfg)
+    ws = create_workspace(tmp_path / "ws")
+    ScopeStore(ws).save(ScopeProfile.model_validate(read_json(GFIX / "scope.json")))
+    svc = open_services(ws.root, paths=app_paths)
+    q = ExamQuestion.model_validate(read_json(GFIX / "questions.json")[0])
+    base = BankItem(id="bk-base1", question=q, unit_ids=["phy1.1.1"],
+                    source=BankSourceRef(title="OO 문제집", kind="problem_bank", pages=[5], number_label="7"),
+                    answer_check=AnswerComparison(verdict="differs"))  # fmt: skip
+    bank = BankStore(ws)
+    bank.save(base)
+    with pytest.raises(BankError, match="답 확인"):
+        generate_from_bank(svc, "bk-base1", "symbolic", scope_id="scope-quadratic-minmax")
+    ok = base.model_copy(
+        update={"answer_check": AnswerComparison(verdict="differs", resolved="ai")}
+    )
+    bank.save(ok)
+
+    sets = generate_from_bank(svc, "bk-base1", "symbolic", scope_id="scope-quadratic-minmax")
+    assert len(fake_prompts(exe)) == 4, "고른 범위로 기준 문항을 먼저 풀고 제작"
+    s = sets[0]
+    assert s.source.bank_item_id == "bk-base1" and s.source.exam_id is None
+    assert GenStore(ws).for_bank_item("bk-base1") == [s]
+
+    made = approve_to_bank(svc, s.id, by="김선생")
+    assert made.origin == "variant" and made.parent_id == "bk-base1" and made.gen_kind == "symbolic"
+    assert made.unit_ids == ["phy1.1.1"] and made.source.display().startswith(
+        "다워니 제작 · 기준 OO 문제집"
+    )
+    assert made.answer_check and made.answer_check.verdict == "no_original" and not made.needs_check
+    assert GenStore(ws).get(s.id).status == "approved"
+    assert approve_to_bank(svc, s.id).id == made.id, "두 번 넣지 않음"

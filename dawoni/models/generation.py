@@ -13,17 +13,28 @@ from typing import Literal
 from pydantic import Field
 
 from dawoni.models.base import DawoniModel, new_id, utcnow
-from dawoni.models.grading import RubricDraft, ScopedSolution, SolutionDraft
+from dawoni.models.grading import ExamPart, RubricDraft, ScopedSolution, SolutionDraft
 from dawoni.models.item import ItemContent
 from dawoni.models.scope import ExtensionConcept
 
-GenKind = Literal["numeric", "symbolic", "condition", "novel_a", "novel_b"]
+VariantKind = Literal["numeric", "symbolic", "condition", "novel_a", "novel_b"]
+"""기준 문항이 있는 제작."""
+GenKind = Literal["numeric", "symbolic", "condition", "novel_a", "novel_b", "new"]
 GEN_KIND_LABELS: dict[GenKind, str] = {
     "numeric": "동형 · 수치형",
     "symbolic": "동형 · 미지수형",
     "condition": "동형 · 조건 변형",
     "novel_a": "신규 A · 다른 기법",
     "novel_b": "신규 B · 확장 개념",
+    "new": "새 문제 · 강사 아이디어",
+}
+
+AnswerFormat = Literal["choice5", "bogi", "short", "essay"]
+ANSWER_FORMAT_LABELS: dict[AnswerFormat, str] = {
+    "choice5": "객관식 (5지선다)",
+    "bogi": "ㄱㄴㄷ 합답형",
+    "short": "단답형",
+    "essay": "서술형",
 }
 
 # ---------------------------------------------------------------- AI 출력
@@ -79,6 +90,39 @@ class NovelDraft(DawoniModel):
     )
 
 
+class BogiStatement(DawoniModel):
+    label: str = Field(description="ㄱ, ㄴ, ㄷ …")
+    true: bool = Field(description="이 진술이 옳은가")
+    reason: str = Field(description="옳고 그른 이유 (한두 문장)")
+
+
+class NewProblemDraft(DawoniModel):
+    """새 문제: 강사 아이디어 → 문항 + 모범답안."""
+
+    item: ItemContent = Field(
+        description="문항. 정답(answer)은 비워 두어도 된다 (아래 필드로 받음)"
+    )
+    parts: list[ExamPart] = Field(
+        default_factory=lambda: list[ExamPart](),
+        description="서술형 소문항 (1)(2)…의 표시·배점·유형. 소문항이 없으면 빈 목록",
+    )
+    statements: list[BogiStatement] = Field(
+        default_factory=lambda: list[BogiStatement](),
+        description="ㄱㄴㄷ 합답형: <보기> 진술마다 참·거짓. 다른 형태면 빈 목록",
+    )
+    answer_label: int | None = Field(
+        default=None, ge=1, le=5, description="객관식·합답형 정답 선지 번호 (1~5)"
+    )
+    answer_latex: str | None = Field(default=None, description="단답형 정답 (LaTeX, $ 없이)")
+    answer_expr: str | None = Field(default=None, description="단답형 정답의 sympy 식 (값·식이면)")
+    solution: SolutionDraft = Field(description="모범답안 (풀이 단계마다 쓰는 개념 ID)")
+    design_note: str = Field(description="강사 아이디어를 문항 어디에 어떻게 썼는지 두세 문장")
+    definition_quotes: dict[str, str] = Field(
+        default_factory=lambda: dict[str, str](),
+        description="제시문을 쓰면: 확장 개념 ID → 그 정의가 적힌 제시문 문장을 그대로 인용",
+    )
+
+
 class ExtensionProposals(DawoniModel):
     candidates: list[ExtensionConcept] = Field(min_length=1, max_length=5)
     rationale: list[str] = Field(
@@ -90,8 +134,11 @@ class ExtensionProposals(DawoniModel):
 
 
 class SourceRef(DawoniModel):
-    exam_id: str
+    """기준 문항: 시험의 문항 또는 문제은행 문항."""
+
+    exam_id: str | None = None
     question_number: str
+    bank_item_id: str | None = None
 
 
 GenStatus = Literal["draft", "approved", "rejected"]
@@ -115,3 +162,10 @@ class GeneratedSet(DawoniModel):
     skill_ids: list[str] = Field(default_factory=lambda: list[str]())
     created_at: datetime = Field(default_factory=utcnow)
     reviewed_by: str | None = None
+    bank_item_id: str | None = Field(default=None, description="승인해 문제은행에 넣은 문항 ID")
+    parts: list[ExamPart] = Field(default_factory=lambda: list[ExamPart]())
+    unit_ids: list[str] = Field(
+        default_factory=lambda: list[str](), description="새 문제: 강사가 고른 단원"
+    )
+    idea: str | None = Field(default=None, description="새 문제: 강사가 적은 아이디어")
+    answer_format: AnswerFormat | None = None

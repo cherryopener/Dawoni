@@ -33,7 +33,7 @@ def _original_text(it: BankItem) -> tuple[str, str]:
     return ans, sol
 
 
-def _answer(it: BankItem) -> Answer | None:
+def bank_answer(it: BankItem) -> Answer | None:
     q = it.question
     side = it.answer_side()
     text = _original_text(it)[0] if side == "original" else (
@@ -83,7 +83,7 @@ def bank_exam(
             figs.append(f)
         sol, paras = _solution(it, number)
         item = it.question.item.model_copy(
-            update={"number_label": number, "figures": figs, "answer": _answer(it),
+            update={"number_label": number, "figures": figs, "answer": bank_answer(it),
                     "solution": paras or it.question.item.solution}
         )  # fmt: skip
         questions.append(it.question.model_copy(update={"number": number, "item": item}))

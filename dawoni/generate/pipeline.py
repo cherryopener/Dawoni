@@ -33,6 +33,7 @@ from dawoni.models.generation import (
     SymbolicTemplate,
 )
 from dawoni.models.grading import (
+    ExamPart,
     ExamQuestion,
     FinalAnswer,
     RubricDraft,
@@ -81,6 +82,7 @@ class Draft:
     values: dict[str, float] | None = None
     extension: ExtensionConcept | None = None
     skill_ids: list[str] = field(default_factory=lambda: list[str]())
+    parts: list[ExamPart] = field(default_factory=lambda: list[ExamPart]())
 
 
 def _material(src: ExamQuestion, src_sol: SolutionDraft | None) -> str:
@@ -381,13 +383,16 @@ def finish(
 ) -> GeneratedSet:
     ext = draft.extension
     use_scope = with_extension(scope, ext) if ext else scope
-    q = ExamQuestion(number=f"{src.number}′", points=src.points, item=draft.item)
+    q = ExamQuestion(number=f"{src.number}′", points=src.points, item=draft.item, parts=draft.parts)
     indep = solve_question(engine, q, use_scope, with_extensions=ext is not None)
     notes: list[str] = []
     warnings: list[str] = []
     if indep.out_of_scope_note:
         warnings.append(f"범위 안에서 풀 수 없다는 판단: {indep.out_of_scope_note}")
-    if draft.solution is not None:
+    if draft.solution is not None and draft.expected_label is not None:
+        same, detail = _agree(draft, indep.final_answer)  # 선지 번호로 비교 (③ / 3 / 3번)
+        base = draft.solution
+    elif draft.solution is not None:
         same = gchecks.answers_agree(draft.solution.final_answer, indep.final_answer)
         detail = (
             f"\\({draft.solution.final_answer.latex}\\) / 재풀이 \\({indep.final_answer.latex}\\)"
@@ -436,4 +441,5 @@ def finish(
         values=draft.values,
         extension=ext,
         skill_ids=draft.skill_ids or sorted(gc.skill_ids(solution)),
+        parts=draft.parts,
     )
