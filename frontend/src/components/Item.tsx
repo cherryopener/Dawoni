@@ -6,7 +6,7 @@ import s from "./Item.module.css";
 const CIRCLED = "①②③④⑤⑥⑦⑧⑨";
 export const circled = (n: number) => CIRCLED[n - 1] ?? `(${n})`;
 
-type Ctx = { examId: string; figures: Figure[]; renderBase?: string };
+type Ctx = { examId: string; figures: Figure[]; renderBase?: string; fileUrl?: (path: string) => string };
 
 /** 파라미터 그림이면 다시 그린 그림, 아니면 원본 크롭. */
 export function figureSrc(f: Figure, ctx: Ctx): string | null {
@@ -15,7 +15,8 @@ export function figureSrc(f: Figure, ctx: Ctx): string | null {
     const key = JSON.stringify(f.spec).length;
     return `${ctx.renderBase}/${encodeURIComponent(f.id)}/render?k=${key}`;
   }
-  return f.orig ? examFileUrl(ctx.examId, f.orig) : null;
+  if (!f.orig) return null;
+  return ctx.fileUrl ? ctx.fileUrl(f.orig) : examFileUrl(ctx.examId, f.orig);
 }
 
 export function Runs({ runs }: { runs: Run[] }) {
@@ -211,14 +212,15 @@ export function Choices({ item, ctx }: { item: Item; ctx: Ctx }) {
   );
 }
 
-export function ItemView({ number, points, item, examId, renderBase }: {
+export function ItemView({ number, points, item, examId, renderBase, fileUrl }: {
   number: string;
   points?: number;
   item: Item;
   examId: string;
   renderBase?: string;
+  fileUrl?: (path: string) => string;
 }) {
-  const ctx = { examId, figures: item.figures, renderBase };
+  const ctx = { examId, figures: item.figures, renderBase, fileUrl };
   const label = /^\d+$/.test(number) ? `${number}.` : `[${number}]`;
   return (
     <div className={s.item}>

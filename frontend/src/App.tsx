@@ -6,6 +6,7 @@ import { go, useRoute } from "./lib/router";
 import type { Job, Status } from "./lib/types";
 import { ExamPage } from "./pages/Exam";
 import { ExamsPage } from "./pages/Exams";
+import { BankPage } from "./pages/Bank";
 import { LecturesPage } from "./pages/Lectures";
 import { RulesPage } from "./pages/Rules";
 import { ScopeEditPage, ScopesPage } from "./pages/Scopes";
@@ -71,6 +72,7 @@ function JobsButton() {
 
 const NAV: { key: string; label: string }[] = [
   { key: "exams", label: "시험 · 채점" },
+  { key: "bank", label: "문제은행" },
   { key: "scopes", label: "범위 프로필" },
   { key: "lectures", label: "강의 요약" },
   { key: "rules", label: "전역 규칙" },
@@ -108,6 +110,7 @@ export function App() {
   let body;
   if (page === "setup") body = <SetupPage status={status} onChanged={loadStatus} />;
   else if (page === "rules") body = <RulesPage />;
+  else if (page === "bank") body = <BankPage tab={route[1]} />;
   else if (page === "scopes" && route[1]) body = <ScopeEditPage id={route[1]} />;
   else if (page === "scopes") body = <ScopesPage />;
   else if (page === "lectures") body = <LecturesPage id={route[1]} />;

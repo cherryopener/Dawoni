@@ -486,3 +486,102 @@ export type LectureSummary = {
 export type WorkspaceMode = "personal" | "team";
 export type Sharing = { mode: WorkspaceMode; provider: string | null; conflicts: { path: string; original: string }[] };
 export type Presence = { machine: string; teacher: string | null; host: string; at: string };
+
+// ---------------------------------------------------------------- 문제은행
+
+export type Unit = { id: string; title: string; children: Unit[] };
+export type UnitTree = {
+  id: string;
+  subject: string;
+  group: string;
+  curriculum?: string | null;
+  units: Unit[];
+  aliases: Record<string, string>;
+  reviewed: boolean;
+  version: number;
+  updated_at: string;
+  updated_by?: string | null;
+};
+
+export type BankSourceKind = "problem_bank" | "textbook" | "mock_exam";
+export type OriginalLevel = "none" | "answer_only" | "brief" | "full";
+export type BankSummary = {
+  id: string;
+  number: string;
+  item_type: ItemType;
+  points: number;
+  subject: string | null;
+  unit_ids: string[];
+  source: string;
+  source_id: string | null;
+  source_kind: BankSourceKind | "dawoni" | "exam" | "other";
+  origin: "ingested" | "variant" | "new";
+  original_level: OriginalLevel | null;
+  solution_by: "source" | "ai" | null;
+  needs_check: boolean;
+  reviewed: boolean;
+  difficulty: number | null;
+  parent_id: string | null;
+  preview: string;
+  updated_by: string | null;
+};
+export type AnswerComparison = {
+  verdict: "same" | "differs" | "unsure" | "no_original";
+  original_answer?: string | null;
+  ai_answer?: string | null;
+  notes: string[];
+  resolved?: "original" | "ai" | null;
+  resolved_by?: string | null;
+};
+export type BankItem = {
+  id: string;
+  question: ExamQuestion;
+  subject?: string | null;
+  unit_ids: string[];
+  origin: BankSummary["origin"];
+  source: { source_id?: string | null; title: string; kind: string; pages: number[]; number_label?: string | null };
+  parent_id?: string | null;
+  gen_kind?: string | null;
+  original?: { level: OriginalLevel; parts: KeyPart[]; pages: number[] } | null;
+  solution?: Solution | null;
+  solution_by?: "source" | "ai" | null;
+  concept_units: Record<string, string>;
+  answer_check?: AnswerComparison | null;
+  rubric?: RubricDraft | null;
+  difficulty?: number | null;
+  tags: string[];
+  note?: string | null;
+  reviewed: boolean;
+  reviewed_by?: string | null;
+  revision: number;
+  created_by?: string | null;
+  updated_by?: string | null;
+  updated_at: string;
+};
+export type SourceChunk = {
+  index: number;
+  pages: number[];
+  key_pages: number[];
+  unit_hint?: string | null;
+  label?: string | null;
+  status: "new" | "ingesting" | "ingested" | "failed";
+  item_ids: string[];
+  message?: string | null;
+  by?: string | null;
+  machine?: string | null;
+  updated_at: string;
+};
+export type BankSource = {
+  source_id: string;
+  filename: string;
+  rel_path: string;
+  kind: BankSourceKind;
+  pages?: number | null;
+  title?: string | null;
+  publisher?: string | null;
+  year?: number | null;
+  unit_trees: string[];
+  chunks: SourceChunk[];
+  ingest: { status: string; item_count: number; message?: string | null };
+  added_at: string;
+};
