@@ -14,13 +14,18 @@ import {
   TextArea,
   TextInput,
   tableClass,
+  Notice,
+  Select,
 } from "../components/ui";
 import { api, errorText, useJob, useLoad } from "../lib/api";
 import { go } from "../lib/router";
-import type { Concept, Scope, ScopeSummary, Skill } from "../lib/types";
+import { UnitTreeNav } from "../components/UnitTree";
+import type { Concept, Scope, ScopeSummary, Skill, UnitTree } from "../lib/types";
+import { unitLabel, walk } from "../lib/units";
 
-function FromTextbook({ onDone }: { onDone: (id: string) => void }) {
+function FromTextbook({ onDone, trees }: { onDone: (id: string) => void; trees: UnitTree[] }) {
   const [file, setFile] = useState<File | null>(null);
+  const [unit, setUnit] = useState("");
   const [title, setTitle] = useState("");
   const [level, setLevel] = useState("");
   const [subject, setSubject] = useState("");
@@ -33,6 +38,7 @@ function FromTextbook({ onDone }: { onDone: (id: string) => void }) {
     f.append("level", level);
     if (subject) f.append("subject", subject);
     if (pages) f.append("pages", pages);
+    if (unit) f.append("unit_ids", unit);
     void job.run(() => api.upload("/scopes/from-textbook", f));
   };
   return (
@@ -66,6 +72,14 @@ function FromTextbook({ onDone }: { onDone: (id: string) => void }) {
             </Field>
           </div>
         </Row>
+        <Field label="공통 단원표의 단원 (선택)" hint="고르면 '단원으로 만들기'에서 이 교재 단원의 개념이 쓰입니다">
+          <Select value={unit} onChange={setUnit} options={[
+            { value: "", label: "고르지 않음" },
+            ...trees.flatMap((t) => walk(t).map(({ unit: u, path }) => ({
+              value: u.id, label: [t.subject, ...path, u.title].join(" > "),
+            }))),
+          ]} />
+        </Field>
         <Row>
           <Button variant="primary" onClick={start} disabled={!file || !title || !level || job.running}>
             범위 프로필 초안 만들기
@@ -78,8 +92,64 @@ function FromTextbook({ onDone }: { onDone: (id: string) => void }) {
   );
 }
 
+function FromUnits({ trees, onDone }: { trees: UnitTree[]; onDone: (id: string) => void }) {
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [title, setTitle] = useState("");
+  const [level, setLevel] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [res, setRes] = useState<{ scope_id: string; used: string[]; warnings: string[] } | null>(null);
+  const make = () =>
+    api
+      .post<{ scope_id: string; used: string[]; warnings: string[] }>("/scopes/from-units", {
+        unit_ids: [...checked], title, level: level || null,
+      })
+      .then(setRes)
+      .catch((e: unknown) => setErr(errorText(e)));
+  return (
+    <Card title="단원으로 만들기 (여러 교재)">
+      <Stack>
+        <span style={{ color: "var(--text-2)", fontSize: 13 }}>
+          공통 단원표에서 시험 범위의 단원을 체크하면, 그 단원으로 DB화한 교재들의 개념·기법·금지 기법·관례를 합쳐 범위
+          프로필 하나를 만듭니다 (AI 호출 없음). 같은 이름의 개념은 하나로 합칩니다.
+        </span>
+        <div style={{ maxHeight: 360, overflow: "auto", border: "1px solid var(--line)", borderRadius: 8, padding: 6 }}>
+          <UnitTreeNav trees={trees} checked={checked} onToggle={(u, on) => {
+            const n = new Set(checked);
+            if (on) n.add(u);
+            else n.delete(u);
+            setChecked(n);
+          }} />
+        </div>
+        <Row>
+          {[...checked].map((u) => <Badge key={u} tone="accent">{unitLabel(trees, u)}</Badge>)}
+        </Row>
+        <Row>
+          <div style={{ flex: 2, minWidth: 200 }}>
+            <Field label="범위 이름"><TextInput value={title} onChange={setTitle} placeholder="1학기 중간고사 범위" /></Field>
+          </div>
+          <div style={{ flex: 1, minWidth: 160 }}>
+            <Field label="학년·과정 (선택)"><TextInput value={level} onChange={setLevel} placeholder="교재 프로필에서 가져옴" /></Field>
+          </div>
+        </Row>
+        <Row>
+          <Button variant="primary" onClick={make} disabled={checked.size === 0 || !title}>범위 프로필 만들기</Button>
+        </Row>
+        <ErrorBox error={err} />
+        {res && (
+          <Stack gap={6}>
+            <Info>합친 교재 범위: {res.used.length ? res.used.join(", ") : "없음 (단원 이름만 개념으로)"}</Info>
+            {res.warnings.map((w, i) => <Notice key={i}>{w}</Notice>)}
+            <Row><Button small onClick={() => onDone(res.scope_id)}>만든 범위 열기 · 검토</Button></Row>
+          </Stack>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
 export function ScopesPage() {
   const { data, error } = useLoad<ScopeSummary[]>("/scopes");
+  const trees = useLoad<UnitTree[]>("/units");
   const [err, setErr] = useState<string | null>(null);
   const blank = () => {
     api
@@ -118,11 +188,13 @@ export function ScopesPage() {
                 금지: {f}
               </Badge>
             ))}
+            {trees.data && s.unit_ids?.map((u) => <Badge key={u} tone="accent">{unitLabel(trees.data!, u, true)}</Badge>)}
             <span style={{ color: "var(--text-3)" }}>v{s.version}</span>
           </Row>
         </Card>
       ))}
-      <FromTextbook onDone={(id) => go("scopes", id)} />
+      {trees.data && <FromUnits trees={trees.data} onDone={(id) => go("scopes", id)} />}
+      <FromTextbook onDone={(id) => go("scopes", id)} trees={trees.data ?? []} />
     </Stack>
   );
 }

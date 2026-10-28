@@ -52,6 +52,10 @@ class ScopeProfile(DawoniModel):
     forbidden: list[ForbiddenTechnique] = Field(default_factory=lambda: list[ForbiddenTechnique]())
     conventions: list[str] = Field(default_factory=lambda: list[str]())
     extensions: list[ExtensionConcept] = Field(default_factory=lambda: list[ExtensionConcept]())
+    unit_ids: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="이 범위가 다루는 공통 단원표 단원 (교재 단원 DB화 때 강사가 고름)",
+    )
     version: int = Field(default=1, ge=1)
     updated_at: datetime = Field(default_factory=utcnow)
 

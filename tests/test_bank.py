@@ -27,7 +27,7 @@ from dawoni.models.bank import AnswerComparison, BankItem, BankSourceRef, Origin
 from dawoni.models.base import utcnow
 from dawoni.models.grading import ExamQuestion, ScopedSolution
 from dawoni.models.item import ChoiceAnswer
-from dawoni.models.scope import ScopeProfile
+from dawoni.models.scope import Concept, ForbiddenTechnique, ScopeProfile, Skill
 from dawoni.models.source import SourceChunk
 from dawoni.paths import AppPaths
 from dawoni.services import Services, open_services
@@ -477,3 +477,64 @@ def test_api_units_items_export(app_paths: AppPaths, tmp_path: Path) -> None:
     assert store.exam().questions[0].number == "1"
     key = store.answer_key("1")
     assert key is not None and key.parts[0].answer == "④", "원본 답은 해설지로"
+
+
+# ---------------------------------------------------------------- 단원 체크 → 범위
+
+
+def _scope(title: str, units: list[str], concepts: list[str], **kw: Any) -> ScopeProfile:
+    return ScopeProfile(
+        title=title,
+        level="고등학교 물리학 I",
+        unit_ids=units,
+        concepts=[
+            Concept(id=f"C{i}", name=n, summary=f"{n} 설명") for i, n in enumerate(concepts, 1)
+        ],
+        **kw,
+    )
+
+
+def test_compose_scope_across_textbooks() -> None:
+    from dawoni.bank.curriculum import default_trees
+    from dawoni.bank.scope import compose_scope
+
+    trees = default_trees()
+    a = _scope(
+        "A교재 힘과 운동",
+        ["phy1.1.1"],
+        ["뉴턴 운동 법칙", "운동량"],
+        skills=[Skill(id="S1", name="자유 물체도", description="-", concept_ids=["C1"])],
+        forbidden=[ForbiddenTechnique(name="미분")],
+        conventions=["g=10"],
+    )
+    b = _scope(
+        "B교재 운동량",
+        ["phy1.1.1.3"],
+        ["운동량", "충격량"],
+        skills=[
+            Skill(id="S1", name="충격량-운동량 정리", description="-", concept_ids=["C2", "C1"])
+        ],
+        conventions=["g=10", "부호는 오른쪽 +"],
+    )
+    c = _scope("C교재 전자기", ["phy1.2.2"], ["전자기 유도"])
+    res = compose_scope(
+        [a, b, c], trees, ["phy1.1.1.3", "phy1.1.2.1"], title="운동량+역학적 에너지"
+    )
+    s = res.scope
+    assert res.used == ["A교재 힘과 운동", "B교재 운동량"], "체크한 단원을 품은 교재 단원도 포함"
+    assert [x.name for x in s.concepts] == [
+        "뉴턴 운동 법칙",
+        "운동량",
+        "충격량",
+        "역학적 에너지 보존",
+    ]
+    assert s.skills[1].concept_ids == ["C2", "C3"], "기법이 가리키는 개념 ID도 다시 매김"
+    assert s.conventions == ["g=10", "부호는 오른쪽 +"] and [f.name for f in s.forbidden] == [
+        "미분"
+    ]
+    assert any("역학적 에너지 보존" in w for w in res.warnings), (
+        "교재 개념 없는 단원은 단원 이름으로"
+    )
+    assert s.unit_ids == ["phy1.1.1.3", "phy1.1.2.1"] and s.level == "고등학교 물리학 I"
+    with pytest.raises(BankError, match="없는 단원"):
+        compose_scope([a], trees, ["phy1.9"], title="x")

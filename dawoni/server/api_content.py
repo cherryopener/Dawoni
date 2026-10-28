@@ -111,6 +111,7 @@ def list_scopes(st: AppState = State) -> list[dict[str, Any]]:
             "concepts": len(s.concepts),
             "skills": len(s.skills),
             "forbidden": [f.name for f in s.forbidden],
+            "unit_ids": s.unit_ids,
             "updated_at": s.updated_at.isoformat(),
         }
         for s in ScopeStore(st.services().workspace).all()
@@ -143,6 +144,7 @@ def scope_from_textbook(
     level: Annotated[str, Form()],
     subject: Annotated[str | None, Form()] = None,
     pages: Annotated[str | None, Form()] = None,
+    unit_ids: Annotated[str | None, Form(description="쉼표로 구분한 단원 ID")] = None,
     st: AppState = State,
 ) -> Job:
     from dawoni.cli_ingest import parse_pages
@@ -155,8 +157,29 @@ def scope_from_textbook(
     def run(ctx: JobContext) -> dict[str, Any]:
         res = ingest_textbook_pdf(
             svc, path, title=title, level=level, subject=subject, pages=page_list,
+            unit_ids=[u.strip() for u in (unit_ids or "").split(",") if u.strip()],
             progress=ctx.progress,
         )  # fmt: skip
         return {"scope_id": res.scope.id, "warnings": res.warnings}
 
     return st.jobs.submit("ingest_textbook", run, {"title": title, "file": path.name})
+
+
+class FromUnitsBody(BaseModel):
+    unit_ids: list[str]
+    title: str
+    level: str | None = None
+
+
+@router.post("/scopes/from-units")
+def scope_from_units(body: FromUnitsBody, st: AppState = State) -> dict[str, Any]:
+    """여러 교재에 걸쳐 체크한 단원 → 범위 프로필 하나 (AI 호출 없음)."""
+    from dawoni.bank.scope import compose_scope
+    from dawoni.bank.units import UnitStore
+
+    ws = st.services().workspace
+    store = ScopeStore(ws)
+    res = compose_scope(store.all(), UnitStore(ws).all(), body.unit_ids, title=body.title,
+                        level=body.level)  # fmt: skip
+    store.save(res.scope)
+    return {"scope_id": res.scope.id, "used": res.used, "warnings": res.warnings}

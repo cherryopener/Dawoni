@@ -150,6 +150,7 @@ def ingest_textbook_pdf(
     level: str,
     subject: str | None = None,
     pages: list[int] | None = None,
+    unit_ids: list[str] | None = None,
     progress: Progress = _noop,
 ) -> TextbookIngest:
     from dawoni.ingest.textbook import extract_scope
@@ -157,6 +158,8 @@ def ingest_textbook_pdf(
     src = register_source(svc.workspace, path, "textbook", title=title)
     progress(0, 1, "교재에서 개념·기법 추출")
     draft = extract_scope(svc.engine, path, title=title, level=level, subject=subject, pages=pages)
+    if unit_ids:
+        draft.scope = draft.scope.model_copy(update={"unit_ids": unit_ids})
     ScopeStore(svc.workspace).save(draft.scope)
     src.ingest = SourceIngestState(
         status="ingested", item_count=len(draft.scope.concepts), message=draft.scope.id

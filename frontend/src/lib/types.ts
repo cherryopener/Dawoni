@@ -108,6 +108,7 @@ export type ScopeSummary = {
   concepts: number;
   skills: number;
   forbidden: string[];
+  unit_ids?: string[];
 };
 
 // ---------------------------------------------------------------- 해설·루브릭
