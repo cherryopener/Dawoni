@@ -240,6 +240,11 @@ class RubricDraft(DawoniModel):
         default_factory=lambda: list[AnswerCandidate](),
         description="해설지와 다르지만 정답일 수 있는 답 (강사 확인 전에는 점수 없음)",
     )
+    key_conflicts: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="해설지의 기준이 문제의 요구와 맞지 않는 곳 (문제가 요구하지 않은 것을 "
+        "0점 조건으로 요구하는 등) — 무엇을 어떻게 기준으로 삼았는지",
+    )
 
     @model_validator(mode="after")
     def _refs(self) -> RubricDraft:
@@ -304,11 +309,30 @@ class Rubric(RubricDraft):
     approved_at: datetime | None = None
 
 
+# ---------------------------------------------------------------- 학생
+
+
+class StudentRecord(DawoniModel):
+    """시험 폴더 students/<학생>.json — 표지에서 읽은 학생 정보."""
+
+    student_id: str
+    name: str | None = None
+    class_name: str | None = None
+    school: str | None = None
+    source: str = Field(description="어느 파일 몇 쪽")
+    teacher_scores: dict[str, float] = Field(
+        default_factory=lambda: dict[str, float](),
+        description="표지에 강사가 적은 문항별 점수 (채점이 끝난 답안지를 넣었을 때)",
+    )
+    uncertain: list[str] = Field(default_factory=lambda: list[str]())
+
+
 # ---------------------------------------------------------------- 판독문
 
 
 class TranscriptLine(DawoniModel):
     text: str = Field(default="", description="학생이 쓴 글 (원문 그대로)")
+    part: str | None = Field(default=None, description="소문항 표시 (답안지 칸에서). 모르면 null")
     math: str | None = Field(default=None, description="학생이 쓴 식 (LaTeX, 원문 그대로)")
     confidence: float = Field(default=1.0, ge=0, le=1)
     uncertain: list[str] = Field(default_factory=lambda: list[str](), description="불확실한 부분")
@@ -350,6 +374,9 @@ class TranscribedLine(DawoniModel):
     """AI 출력: 판독한 한 줄."""
 
     question_number: str | None = Field(description="이 줄이 속한 문항 번호. 알 수 없으면 null")
+    part: str | None = Field(
+        default=None, description="이 줄이 속한 소문항 표시 ((1), (1)② 등). 알 수 없으면 null"
+    )
     page: int = Field(ge=1)
     text: str = Field(
         default="",

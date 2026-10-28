@@ -311,7 +311,7 @@ def test_derive_with_key_audit_and_candidate_check(
             bad_structure,  # 코드 검사 → 수리
             accepts_wrong,
             {"issues": ["감점하지 말 것이 해설지와 다른 답 n개를 인정한다"]},  # 검토
-            GOOD,  # 검토 의견 반영
+            {**GOOD, "key_conflicts": ["밝기 표현 없으면 0점 — 문제는 반박만 요구"]},  # 반영
             {"issues": []},
             {"verdict": "valid", "reasoning": "θ=90°면 세 번 반사 후 P를 지난다"},  # 후보 검산
             {"verdict": "valid", "reasoning": "(n+1)개 구간"},  # (1) 해설지 답
@@ -331,6 +331,7 @@ def test_derive_with_key_audit_and_candidate_check(
     assert (c2.key_check, c2.ai_check) == ("invalid", "valid")
     assert any("해설지 답은 검산을 통과하지 못했고" in n for n in r.review_notes)
     assert any("아직 확인하지 않았습니다" in n for n in r.review_notes)
+    assert any("해설지 기준 확인: 밝기 표현" in n for n in r.review_notes)
 
     prompts = fake_prompts(exe)
     assert len(prompts) == 10

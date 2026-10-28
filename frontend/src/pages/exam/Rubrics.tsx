@@ -334,6 +334,7 @@ const draftOf = (r: Rubric): RubricDraft => ({
   never_deduct: [...r.never_deduct],
   checks: (r.checks ?? []).map((x) => ({ ...x })),
   candidates: (r.candidates ?? []).map((x) => ({ ...x })),
+  key_conflicts: [...(r.key_conflicts ?? [])],
 });
 
 function RubricEditor({ examId, q, rubric, onChanged }: {

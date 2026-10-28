@@ -161,6 +161,7 @@ export type RubricDraft = {
   never_deduct: string[];
   checks?: PartCheck[];
   candidates?: AnswerCandidate[];
+  key_conflicts?: string[];
 };
 export type Rubric = RubricDraft & {
   question_number: string;

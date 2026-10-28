@@ -45,3 +45,34 @@ def test_item_content_schema_has_discriminators() -> None:
     discriminated = [n for n in _walk(schema) if "discriminator" in n]
     props = {n["discriminator"]["propertyName"] for n in discriminated}
     assert {"t", "type", "kind"} <= props
+
+
+def _task_outputs() -> dict[str, type[BaseModel]]:
+    """모든 AI 작업(TaskDef)의 출력 모델."""
+    import importlib
+    import pkgutil
+
+    import dawoni
+    from dawoni.context.tasks import TaskDef
+
+    out: dict[str, type[BaseModel]] = {}
+    for m in pkgutil.walk_packages(dawoni.__path__, "dawoni."):
+        if m.name.startswith(("dawoni.server", "dawoni.web")) or m.name.endswith("__main__"):
+            continue
+        mod = importlib.import_module(m.name)
+        for v in vars(mod).values():
+            if isinstance(v, TaskDef):
+                out[v.name] = v.output  # pyright: ignore[reportUnknownMemberType]
+    return out
+
+
+def test_no_number_enums_in_agent_schemas() -> None:
+    """Gemini(agy)는 숫자 enum을 거부한다 (실측: 표지 회전 각도 Literal[0, 90, 180, 270])."""
+    from dawoni.context.schema import agent_schema
+
+    outputs = _task_outputs()
+    assert {"read_cover", "derive_rubric", "extract_answer_key"} <= set(outputs)
+    for name, model in outputs.items():
+        for n in _walk(agent_schema(model)):
+            for v in n.get("enum", []) + ([n["const"]] if "const" in n else []):
+                assert isinstance(v, str), f"{name}: 문자열이 아닌 enum/const {v!r}"

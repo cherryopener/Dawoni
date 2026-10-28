@@ -56,6 +56,17 @@ uv run dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1] [--rejec
   점수를 주지 않고, 학생 답이 후보와 같으면 그 채점을 '검토 필요'로 둔다. 같은 답에 이르는 다른
   풀이·설명은 'AI 제안'으로 표시해 인정한다.
 
+## 여러 학생 답안지 한 번에 (스캔 PDF)
+
+```bash
+uv run dawoni exam scan-batch <시험ID> 답안지.pdf --per-student 3 --classes TSS1,TSS2,MSS1-J,MSS1-K [--cross]
+uv run dawoni exam compare <시험ID>     # 채점한 답안지를 넣었을 때: AI 점수 ↔ 표지의 강사 점수
+```
+
+- 학생마다 같은 쪽 수(첫 쪽은 표지)로 나눈다. 표지에서 이름(동명이인 알파벳까지)·반·학교와
+  강사가 적은 문항별 점수, 돌려 세울 각도를 읽는다. 반 목록을 주면 손글씨 "1TSS"·"M1J"도 목록에 맞춘다.
+- 판독문은 줄마다 소문항((1), (1)② …)을 표시한다. 학생마다 따로 저장해 중간에 멈춰도 이어서 한다.
+
 ## 유튜브 강의 요약 (M12)
 
 ```bash

@@ -33,9 +33,21 @@ TRANSCRIBE: TaskDef[TranscriptionDraft] = TaskDef(
 )
 
 
-def check_transcription(d: TranscriptionDraft, numbers: set[str], n_pages: int) -> list[str]:
+def check_transcription(
+    d: TranscriptionDraft,
+    numbers: set[str],
+    n_pages: int,
+    parts: dict[str, list[str]] | None = None,
+) -> list[str]:
     problems: list[str] = []
+    parts = parts or {}
     for i, line in enumerate(d.lines, start=1):
+        labels = parts.get(line.question_number or "", [])
+        if line.part is not None and labels and line.part not in labels:
+            problems.append(
+                f"{i}번째 줄의 part '{line.part}'는 문항 {line.question_number}의 소문항이 아니다. "
+                f"{labels} 중 하나 또는 null"
+            )
         if line.question_number is not None and line.question_number not in numbers:
             problems.append(
                 f"{i}번째 줄의 question_number '{line.question_number}'는 이 시험의 문항이 아니다. "
@@ -63,6 +75,7 @@ class TranscriptionOutcome:
 def _to_line(x: TranscribedLine) -> TranscriptLine:
     return TranscriptLine(
         text=x.text,
+        part=x.part,
         math=x.math,
         confidence=x.confidence,
         uncertain=list(x.uncertain),
@@ -80,9 +93,10 @@ def _run(
     model: str | None,
 ) -> tuple[TranscriptionDraft, str, str | None]:
     numbers = {q.number for q in exam.questions}
+    parts = {q.number: [p.label for p in q.parts] for q in exam.questions}
 
     def check(d: TranscriptionDraft) -> list[str]:
-        return check_transcription(d, numbers, len(pages))
+        return check_transcription(d, numbers, len(pages), parts)
 
     material = "\n\n".join(exam_question_text(q) for q in exam.questions)
     if hints:

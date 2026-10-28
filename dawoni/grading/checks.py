@@ -348,6 +348,10 @@ def normalize_for_compare(s: str) -> str:
 def quote_in_transcript(quote: str, transcript: Transcript) -> bool:
     """인용이 판독문에 실제로 있는가. `…`로 이은 조각은 순서대로 모두 있어야 한다."""
     haystack = normalize_for_compare(" ".join(line.joined for line in transcript.lines))
+    # 판독문을 보여 줄 때 줄 앞에 소문항 표시를 붙이므로, 인용에 그 표시가 들어가도 된다.
+    # (표시를 판독문 쪽에 끼워 넣으면 여러 줄에 걸친 인용이 깨진다 — 실측)
+    for label in sorted({x.part for x in transcript.lines if x.part}, key=len, reverse=True):
+        quote = quote.replace(label, " ")
     parts = [p for p in re.split(r"…|\.\.\.", quote) if normalize_for_compare(p)]
     if not parts:
         return False

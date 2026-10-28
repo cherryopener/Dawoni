@@ -5,6 +5,7 @@ exams/<시험ID>/exam.json
               /keys/<문항>.json            (강사 해설지)
               /solutions/<문항>.json
               /rubrics/<문항>.json
+              /students/<학생>.json         (표지에서 읽은 이름·반·학교, 강사 점수)
               /transcripts/<학생>/<문항>.json
               /grades/<학생>/<문항>.json
 """
@@ -18,7 +19,14 @@ from pydantic import BaseModel
 
 from dawoni.fsio import read_json, write_model_atomic
 from dawoni.models.answer_key import AnswerKey
-from dawoni.models.grading import Exam, GradeResult, Rubric, ScopedSolution, Transcript
+from dawoni.models.grading import (
+    Exam,
+    GradeResult,
+    Rubric,
+    ScopedSolution,
+    StudentRecord,
+    Transcript,
+)
 from dawoni.models.scope import ScopeProfile
 from dawoni.paths import WorkspacePaths
 
@@ -109,6 +117,18 @@ class ExamStore:
 
     def rubric(self, q: str) -> Rubric | None:
         return _load(self._q("rubrics", q), Rubric)
+
+    def save_student(self, r: StudentRecord) -> None:
+        write_model_atomic(self.root / "students" / f"{safe_name(r.student_id)}.json", r)
+
+    def student_record(self, student: str) -> StudentRecord | None:
+        return _load(self.root / "students" / f"{safe_name(student)}.json", StudentRecord)
+
+    def student_records(self) -> list[StudentRecord]:
+        d = self.root / "students"
+        if not d.is_dir():
+            return []
+        return [StudentRecord.model_validate(read_json(p)) for p in sorted(d.glob("*.json"))]
 
     def scan_dir(self, student: str) -> Path:
         return self.root / "scans" / safe_name(student)

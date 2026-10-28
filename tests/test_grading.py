@@ -447,3 +447,21 @@ def test_answers_agree_multi_value(a: str, b: str, expected: bool | None) -> Non
     from dawoni.models.grading import FinalAnswer
 
     assert checks.answers_agree(FinalAnswer(latex=a), FinalAnswer(latex=b)) is expected
+
+
+def test_quote_with_part_labels_and_lines() -> None:
+    """소문항 표시가 붙은 판독문: 여러 줄 인용도, 표시를 앞에 붙인 인용도 찾는다 (실측)."""
+    t = Transcript(
+        student_id="s",
+        question_number="2",
+        confirmed=True,
+        lines=[
+            TranscriptLine(text="만약 ㉡으로가는 전류량이 더적다면", part="(1)①"),
+            TranscriptLine(text="밝기가 같다.", part="(1)①"),
+            TranscriptLine(text="(가) 2Ω", part="(2)"),
+        ],
+    )
+    assert checks.quote_in_transcript("만약 ㉡으로가는 전류량이 더적다면\n밝기가 같다.", t)
+    assert checks.quote_in_transcript("(1)① 만약 ㉡으로가는 전류량이 더적다면", t)
+    assert checks.quote_in_transcript("(2) (가) 2Ω", t)
+    assert not checks.quote_in_transcript("밝기가 다르다", t)

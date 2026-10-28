@@ -29,9 +29,11 @@ from dawoni.models.grading import (
     GradeResult,
     Rubric,
     ScopedSolution,
+    StudentRecord,
     TranscribedLine,
     Transcript,
 )
+from dawoni.ocr.pages import PageError
 from dawoni.services import Services
 
 Progress = Callable[[int, int, str], None]
@@ -153,6 +155,103 @@ def scan_student(
     res.unassigned = outcome.unassigned
     res.notes = outcome.notes
     progress(2, 2, "판독 완료 — 원본과 비교해 확인하세요")
+    return res
+
+
+@dataclass
+class BatchResult:
+    students: list[StudentRecord] = field(default_factory=lambda: list[StudentRecord]())
+    skipped: list[str] = field(default_factory=lambda: list[str]())
+    """이미 판독한 학생 (다시 하려면 overwrite)."""
+    failed: list[Skipped] = field(default_factory=lambda: list[Skipped]())
+    warnings: list[str] = field(default_factory=lambda: list[str]())
+
+
+def scan_batch(
+    svc: Services,
+    store: ExamStore,
+    pdf: Path,
+    *,
+    per_student: int,
+    classes: list[str] | None = None,
+    only_sets: list[int] | None = None,
+    cross: bool | None = None,
+    overwrite: bool = False,
+    progress: Progress = _noop,
+) -> BatchResult:
+    """학생 여러 명의 답안지 PDF (학생마다 `per_student`쪽, 첫 쪽은 표지) → 학생별 판독문(미확인).
+
+    표지에서 이름·반·학교·강사 점수와 돌려 세울 각도를 읽는다. 학생 한 명이 실패해도 나머지는 계속.
+    """
+    from dawoni.ocr import batch
+    from dawoni.ocr.transcribe import transcribe_student
+
+    exam = store.exam()
+    scope = ScopeStore(svc.workspace).get(exam.scope_id)
+    sets = batch.plan_sets(batch.page_count(pdf), per_student, only_sets)
+    use_cross = svc.config.ocr.cross_check if cross is None else cross
+    res = BatchResult()
+    by_source = {r.source: r for r in store.student_records()}
+    taken = {r.student_id: r.source for r in store.student_records()}
+    for k, plan in enumerate(sets):
+        source = f"{pdf.name} {plan.pages[0]}-{plan.pages[-1]}쪽"
+        old = by_source.get(source)
+        if old is not None and not overwrite:  # 학생 정보는 판독을 다 저장한 뒤에 남긴다
+            res.skipped.append(old.student_id)
+            continue
+        progress(k, len(sets), f"{plan.number}번째 학생 ({source}) 표지 읽기")
+        work = store.root / "scans" / "_batch" / f"set_{plan.number:03d}"
+        try:
+            images = batch.render_set(pdf, plan.pages, work)
+            cover = batch.read_cover(svc.engine, exam, images[0], classes)
+            batch.rotate(images, int(cover.rotation))
+            sid = batch.student_id_of(cover.name, plan.number)
+            if taken.get(sid, source) != source:
+                res.warnings.append(
+                    f"{source}: 이름 '{sid}'가 다른 묶음({taken[sid]})과 같음 — "
+                    f"'{sid}#{plan.number}'로 저장, 동명이인이면 이름 뒤 알파벳을 확인하세요"
+                )
+                sid = f"{sid}#{plan.number}"
+            taken[sid] = source
+            record = StudentRecord(
+                student_id=sid,
+                name=cover.name,
+                class_name=cover.class_name,
+                school=cover.school,
+                source=source,
+                teacher_scores={c.question: c.points for c in cover.teacher_scores},
+                uncertain=list(cover.uncertain),
+            )
+            if cover.name is None:
+                res.warnings.append(f"{source}: 이름을 읽지 못해 '{sid}'로 저장 — 고쳐 주세요")
+            progress(k, len(sets), f"{sid} 답안 {len(images) - 1}쪽 판독")
+            scan_dir = store.scan_dir(sid)
+            scan_dir.mkdir(parents=True, exist_ok=True)
+            pages: list[Path] = []
+            for i, img in enumerate(images, start=1):
+                dst = scan_dir / f"page_{i:02d}.png"
+                img.replace(dst)
+                pages.append(dst)
+            refs = [p.relative_to(store.root).as_posix() for p in pages]
+            outcome = transcribe_student(
+                svc.engine,
+                exam,
+                scope.level,
+                sid,
+                pages[1:],
+                page_refs=refs,
+                cross=SecondOpinion() if use_cross else None,
+            )
+            for t in outcome.transcripts.values():
+                prev = store.transcript(sid, t.question_number)
+                if prev is not None and prev.confirmed and not overwrite:
+                    continue
+                store.save_transcript(t.model_copy(update={"notes": t.notes + outcome.notes}))
+            store.save_student(record)
+            res.students.append(record)
+        except (AgentError, TaskFailed, PageError, OSError) as e:
+            res.failed.append(Skipped(source, "-", str(e)))
+    progress(len(sets), len(sets), "판독 완료 — 원본과 비교해 확인하세요")
     return res
 
 

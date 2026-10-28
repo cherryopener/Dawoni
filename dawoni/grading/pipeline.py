@@ -269,6 +269,7 @@ def derive_rubric(
         for c in draft.checks
     ]
     notes += [n for c in part_checks if (n := _disagreement_note(c))]
+    notes += [f"해설지 기준 확인: {x}" for x in draft.key_conflicts]
     data = draft.model_dump()
     data["never_deduct"] = checks.merge_never_deduct(draft, DEFAULT_NEVER_DEDUCT)
     data["candidates"] = [c.model_dump() for c in candidates]

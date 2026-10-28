@@ -243,7 +243,7 @@ def transcript_text(t: Transcript) -> str:
         return "(학생 답안이 비어 있음)"
     lines = ["[학생 답안] (줄 번호는 참고용 — 인용할 때는 빼고 적힌 그대로)"]
     for n, line in enumerate(t.lines, start=1):
-        body = line.joined
+        body = (f"{line.part} " if line.part else "") + line.joined
         if line.struck:
             body = f"(지운 흔적) {body}"
         if line.uncertain:

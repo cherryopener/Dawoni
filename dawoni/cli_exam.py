@@ -10,6 +10,8 @@
     dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1] [--reject A2]  # 루브릭 승인
     dawoni exam answer <시험ID> --student 홍길동 -q 3 answer.txt   # 입력한 답안(확인된 판독문)
     dawoni exam scan <시험ID> --student 홍길동 사진1.jpg 사진2.jpg [--cross]  # 손글씨 판독(미확인)
+    dawoni exam scan-batch <시험ID> 답안지.pdf --per-student 3 [--classes TSS1,MSS1-J]  # 여러 학생
+    dawoni exam compare <시험ID>                   # AI 채점 ↔ 표지의 강사 점수
     dawoni exam transcript <시험ID> --student 홍길동 -q 3 [--confirm] [--replace 고친답안.txt]
     dawoni exam grade <시험ID> [--student 홍길동] [-q 3] [--double] [--regrade]
     dawoni exam report <시험ID>
@@ -336,6 +338,74 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_scan_batch(args: argparse.Namespace) -> int:
+    from dawoni.cli_ingest import parse_pages
+
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    cross: bool | None = True if args.cross else (False if args.no_cross else None)
+    classes = [c.strip() for c in args.classes.split(",") if c.strip()] if args.classes else None
+    res = workflow.scan_batch(
+        svc,
+        store,
+        Path(args.file),
+        per_student=args.per_student,
+        classes=classes,
+        only_sets=parse_pages(args.sets),
+        cross=cross,
+        overwrite=args.overwrite,
+        progress=_cli_progress,
+    )
+    for r in res.students:
+        scores = ", ".join(f"{q}번 {v:g}" for q, v in r.teacher_scores.items())
+        unsure = f"  ? {' / '.join(r.uncertain)}" if r.uncertain else ""
+        _out(
+            f"{r.student_id:10} {r.class_name or '-':8} {r.school or '-':12} {r.source}"
+            + (f"  [표지 점수 {scores}]" if scores else "")
+            + unsure
+        )
+    for sid in res.skipped:
+        _out(f"{sid}: 이미 판독함 — 건너뜀 (--overwrite)")
+    for w in res.warnings:
+        _out(f"  ! {w}")
+    for f in res.failed:
+        _out(f"  ✗ {f.student}: {f.reason[:300]}")
+    _out(f"{len(res.students)}명 판독. 원본과 비교해 확인한 뒤 `exam transcript … --confirm`")
+    return 1 if res.failed else 0
+
+
+def _cmd_compare(args: argparse.Namespace) -> int:
+    """AI 채점과 표지에 강사가 적은 문항별 점수 비교 (채점이 끝난 답안지를 넣었을 때)."""
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    exam = store.exam()
+    same = total = 0
+    diff_sum = 0.0
+    for r in store.student_records():
+        if not r.teacher_scores:
+            continue
+        cells: list[str] = []
+        for q in exam.questions:
+            t = r.teacher_scores.get(q.number)
+            g = store.grade(r.student_id, q.number)
+            ai = g.total if g else None
+            if t is None or ai is None:
+                tt = "-" if t is None else f"{t:g}"
+                aa = "-" if ai is None else f"{ai:g}"
+                cells.append(f"{q.number}번 강사 {tt} / AI {aa}")
+                continue
+            total += 1
+            same += abs(t - ai) < 1e-9
+            diff_sum += ai - t
+            mark = "" if abs(t - ai) < 1e-9 else " ✗"
+            cells.append(f"{q.number}번 {t:g}/{ai:g}{mark}")
+        _out(f"{r.student_id:10} {r.class_name or '-':8} " + "  ".join(cells))
+    if total:
+        avg = diff_sum / total
+        _out(f"\n문항 점수 일치 {same}/{total} ({same / total:.0%}), AI − 강사 평균 {avg:+.2f}점")
+    return 0
+
+
 def _cmd_transcript(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
@@ -503,6 +573,20 @@ def register(sub: Any) -> None:
     sc.add_argument("--cross-model", help="교차 판독에 쓸 모델 (예: claude-sonnet-5-5-low)")
     sc.add_argument("--overwrite", action="store_true", help="이미 확인된 판독문도 덮어쓰기")
     sc.set_defaults(func=_wrap(_cmd_scan))
+
+    sb = es.add_parser("scan-batch", help="여러 학생 답안지 PDF 한 번에 (표지로 학생 구분)")
+    sb.add_argument("exam")
+    sb.add_argument("file", help="스캔 PDF (학생마다 같은 쪽 수, 첫 쪽은 표지)")
+    sb.add_argument("--per-student", type=int, required=True, help="학생 한 명의 쪽 수 (표지 포함)")
+    sb.add_argument("--classes", help="반 이름 목록 (예: TSS1,TSS2,MSS1-J,MSS1-K)")
+    sb.add_argument("--sets", help="일부 학생만 (몇 번째 묶음, 예: 1-8)")
+    sb.add_argument("--cross", action="store_true", help="교차 판독")
+    sb.add_argument("--no-cross", action="store_true", help="교차 판독 끄기")
+    sb.add_argument("--overwrite", action="store_true", help="이미 판독한 학생도 다시")
+    sb.set_defaults(func=_wrap(_cmd_scan_batch))
+    cp = es.add_parser("compare", help="AI 채점 ↔ 표지의 강사 점수 비교")
+    cp.add_argument("exam")
+    cp.set_defaults(func=_wrap(_cmd_compare))
 
     tr = es.add_parser("transcript", help="판독문 보기·고치기·확정")
     tr.add_argument("exam")
