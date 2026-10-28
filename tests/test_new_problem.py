@@ -157,3 +157,12 @@ def test_new_bogi_with_passage_to_bank(
     assert BankStore(svc.workspace).get(it.id).question.item.answer == ChoiceAnswer(
         kind="choice", labels=[4]
     )
+
+
+def test_bogi_question_once(scope: ScopeProfile) -> None:
+    """실측(agy): 발문을 <보기> 앞뒤로 두 번 씀."""
+    d = _bogi()
+    d["item"]["stem"].append(
+        {"type": "paragraph", "runs": [T("<보기>에서 옳은 것만을 있는 대로 고른 것은?")]}
+    )
+    assert any("한 번만" in p for p in check_new(NewProblemDraft.model_validate(d), _req(), scope))

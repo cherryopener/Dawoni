@@ -146,6 +146,9 @@ def check_new(d: NewProblemDraft, req: NewRequest, scope: ScopeProfile) -> list[
                 problems.append(f"정답 선지 {n}번의 조합이 참인 진술 {sorted(true)}과 다름")
             if not true:
                 problems.append("참인 진술이 하나도 없음 — 합답형은 참인 진술이 하나 이상")
+            asks = "".join(r.v for r in iter_runs(item.stem)).count("있는 대로 고른")
+            if asks > 1:
+                problems.append("발문('있는 대로 고른 것은?')을 <보기> 앞에 한 번만 쓸 것")
     if fmt == "short":
         if not d.answer_latex:
             problems.append("answer_latex에 단답형 정답을 쓸 것")
