@@ -298,8 +298,8 @@ function ScannerCard() {
       <Stack>
         <Row>
           <div style={{ width: 300 }}>
-            <Field label="복합기 공유 폴더 주소" hint="예: smb://192.168.0.100 (고급박스 폴더가 따로 있으면 smb://192.168.0.100/폴더)">
-              <TextInput value={url} onChange={setUrl} placeholder="smb://192.168.0.100" />
+            <Field label="복합기 공유 폴더 주소" hint="기본: smb://192.168.0.100/share/folder (복합기 고급박스 폴더)">
+              <TextInput value={url} onChange={setUrl} placeholder="smb://192.168.0.100/share/folder" />
             </Field>
           </div>
           <div style={{ width: 200 }}>

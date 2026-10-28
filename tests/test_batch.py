@@ -261,4 +261,11 @@ def test_open_scanner_without_workspace(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(subprocess, "run", lambda argv, **_: calls.append(list(argv)))  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
     out = scanner.open_scan_folders(ScannerSettings(smb_url="smb://192.168.0.100"), None)
-    assert out.inbox is None and calls == [["open", "smb://192.168.0.100"]]
+    assert out.inbox is None and calls == [["open", "smb://Administrator@192.168.0.100"]]
+
+
+def test_scanner_defaults() -> None:
+    from dawoni.config import AppConfig
+
+    s = AppConfig().scanner
+    assert s.smb_url == "smb://192.168.0.100/share/folder" and s.username == "Administrator"

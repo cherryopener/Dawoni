@@ -62,6 +62,11 @@ class OcrSettings(_Settings):
     """손글씨 판독 시 두 번째 AI로 교차 판독."""
 
 
+DEFAULT_SCANNER_URL = "smb://192.168.0.100/share/folder"
+"""학원 복합기의 스캔본 공유 폴더 (고급박스)."""
+DEFAULT_SCANNER_USER = "Administrator"
+
+
 class ScannerSettings(_Settings):
     """복합기 스캔 폴더 (공유 폴더, SMB).
 
@@ -70,9 +75,10 @@ class ScannerSettings(_Settings):
     """
 
     smb_url: str | None = Field(
-        default=None, description="예: smb://192.168.0.100 또는 smb://192.168.0.100/scan"
+        default=DEFAULT_SCANNER_URL,
+        description="예: smb://192.168.0.100/share/folder (복합기 고급박스 공유 폴더)",
     )
-    username: str | None = None
+    username: str | None = DEFAULT_SCANNER_USER
 
     @field_validator("smb_url")
     @classmethod
