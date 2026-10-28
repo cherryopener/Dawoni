@@ -277,14 +277,22 @@ function ScannerCard() {
   }, [data]);
   const save = () => {
     setErr(null);
-    api
+    return api
       .patch("/config", { scanner: { smb_url: url || null, username: user || null } })
       .then(() => {
         setMsg("저장했습니다");
         reload();
       })
-      .catch((e: unknown) => setErr(errorText(e)));
+      .catch((e: unknown) => {
+        setErr(errorText(e));
+        throw e;
+      });
   };
+  const openNow = () =>
+    save()
+      .then(() => api.post<{ notes: string[] }>("/scanner/open", {}))
+      .then((r) => setMsg(r.notes.join(" ") || "열었습니다"))
+      .catch((e: unknown) => setErr(errorText(e)));
   return (
     <Card title="4. 복합기 스캔 폴더">
       <Stack>
@@ -299,9 +307,12 @@ function ScannerCard() {
               <TextInput value={user} onChange={setUser} placeholder="Administrator" />
             </Field>
           </div>
-          <Button small onClick={save}>저장</Button>
-          {msg && <Badge tone="ok">{msg}</Badge>}
+          <Button small onClick={() => void save().catch(() => undefined)}>저장</Button>
+          <Button small variant="primary" disabled={!url.trim()} onClick={() => void openNow()}>
+            저장하고 지금 열어 보기
+          </Button>
         </Row>
+        {msg && <Info>{msg}</Info>}
         <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
           비밀번호는 다워니에 저장하지 않습니다. 처음 열 때 Finder(맥)·탐색기(윈도우)가 묻고, '키체인에 저장'·'자격 증명 기억'을 켜면 다음부터 묻지 않습니다.
           답안 탭의 "복합기 스캔본 열기"를 누르면 복합기 폴더와 작업공간의 '스캔본' 폴더가 함께 열립니다.

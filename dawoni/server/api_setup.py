@@ -257,8 +257,15 @@ def scanner_open(st: AppState = State) -> dict[str, Any]:
     """복합기 공유 폴더와 작업공간 '스캔본' 폴더를 함께 연다."""
     from dawoni.scanner import open_scan_folders
 
-    opened = open_scan_folders(st.config().scanner, st.services().workspace.scan_inbox)
-    return {"scanner": opened.scanner, "inbox": str(opened.inbox), "notes": opened.notes}
+    try:
+        inbox: Path | None = st.services().workspace.scan_inbox
+    except NeedsSetup:
+        inbox = None  # 작업공간 없이도 복합기 연결은 시험해 볼 수 있게
+    opened = open_scan_folders(st.config().scanner, inbox)
+    notes = list(opened.notes)
+    if inbox is None:
+        notes.append("작업공간을 아직 정하지 않아 복합기 폴더만 열었습니다.")
+    return {"scanner": opened.scanner, "inbox": str(inbox) if inbox else None, "notes": notes}
 
 
 @router.get("/scanner/inbox")

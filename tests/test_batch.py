@@ -247,3 +247,18 @@ def test_open_scan_folders_mac(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert calls[0] == ["open", "smb://Administrator@192.168.0.100"]
     assert calls[1][0] == "osascript" and str(inbox) in calls[1][2], "작업공간 창도 연다"
     assert not any("7654321" in " ".join(c) for c in calls), "비밀번호는 다루지 않는다"
+
+
+def test_open_scanner_without_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """작업공간을 정하기 전에도 설정 화면에서 복합기 연결만 시험해 볼 수 있다."""
+    import subprocess
+    import sys
+
+    from dawoni import scanner
+    from dawoni.config import ScannerSettings
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(subprocess, "run", lambda argv, **_: calls.append(list(argv)))  # pyright: ignore[reportUnknownLambdaType, reportUnknownArgumentType]
+    out = scanner.open_scan_folders(ScannerSettings(smb_url="smb://192.168.0.100"), None)
+    assert out.inbox is None and calls == [["open", "smb://192.168.0.100"]]

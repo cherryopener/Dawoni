@@ -45,7 +45,7 @@ def windows_unc(s: ScannerSettings) -> str:
 @dataclass
 class Opened:
     scanner: str
-    inbox: Path
+    inbox: Path | None
     notes: list[str] = field(default_factory=lambda: list[str]())
 
 
@@ -62,12 +62,15 @@ def _mac_tile_inbox(inbox: Path) -> None:
     subprocess.run(["osascript", "-e", script], capture_output=True, check=False, timeout=10)
 
 
-def open_scan_folders(s: ScannerSettings, inbox: Path) -> Opened:
-    inbox.mkdir(parents=True, exist_ok=True)
+def open_scan_folders(s: ScannerSettings, inbox: Path | None) -> Opened:
+    """`inbox`가 None이면(작업공간을 아직 정하지 않음) 복합기 폴더만 연다."""
+    if inbox is not None:
+        inbox.mkdir(parents=True, exist_ok=True)
     if sys.platform == "darwin":
         target = finder_url(s)
         subprocess.run(["open", target], check=False)
-        _mac_tile_inbox(inbox)
+        if inbox is not None:
+            _mac_tile_inbox(inbox)
         notes = [
             "처음 연결할 때 Finder가 비밀번호를 묻습니다 — '키체인에 저장'을 켜 두면 "
             "다음부터는 묻지 않습니다."
@@ -75,7 +78,8 @@ def open_scan_folders(s: ScannerSettings, inbox: Path) -> Opened:
     elif sys.platform == "win32":
         target = windows_unc(s)
         os.startfile(target)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        os.startfile(inbox)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+        if inbox is not None:
+            os.startfile(inbox)  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
         notes = [
             "처음 연결할 때 윈도우가 사용자 이름·비밀번호를 묻습니다 — "
             "'내 자격 증명 기억'을 켜 두면 다음부터는 묻지 않습니다."
@@ -83,7 +87,8 @@ def open_scan_folders(s: ScannerSettings, inbox: Path) -> Opened:
     else:
         target = s.smb_url or ""
         subprocess.run(["xdg-open", target], check=False)
-        subprocess.run(["xdg-open", str(inbox)], check=False)
+        if inbox is not None:
+            subprocess.run(["xdg-open", str(inbox)], check=False)
         notes = []
     return Opened(target, inbox, notes)
 
