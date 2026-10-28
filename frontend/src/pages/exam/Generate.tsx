@@ -27,34 +27,40 @@ import type { TabProps } from "../Exam";
 import { RubricPreview } from "./Calibration";
 import { SolutionView } from "./Rubrics";
 
-const KINDS: { value: GenKind; label: string; desc: string }[] = [
+export const KINDS: { value: GenKind; label: string; desc: string }[] = [
   { value: "numeric", label: "동형 · 수치형", desc: "숫자만 바꿈. 값은 앱이 골라 답이 정수·기약분수로 깔끔하게 나오는 조합만 씀" },
   { value: "symbolic", label: "동형 · 미지수형", desc: "수치 대신 문자로 조건을 주고 답도 문자식 (sympy로 답식 확인)" },
   { value: "condition", label: "동형 · 조건 변형", desc: "조건을 바꿔 다른 답이 나오게. 그림 선지는 그대로 두고 다른 선지가 정답이 되게" },
   { value: "novel_a", label: "신규 A · 다른 기법", desc: "같은 개념 범위에서, 기준 문항과 다른 풀이 기법이 핵심인 새 문항" },
   { value: "novel_b", label: "신규 B · 확장 개념", desc: "교과 밖 개념 하나를 제시문으로 알려 주고 유추·서술하게" },
 ];
-const KIND_LABEL = Object.fromEntries(KINDS.map((k) => [k.value, k.label])) as Record<GenKind, string>;
+const KIND_LABEL = {
+  ...Object.fromEntries(KINDS.map((k) => [k.value, k.label])),
+  new: "새 문제",
+} as Record<GenKind, string>;
 const STATUS = { draft: { l: "초안", t: "warn" }, approved: { l: "승인", t: "ok" }, rejected: { l: "버림", t: "neutral" } } as const;
 
-const emptyExt = (): Extension => ({ id: "X1", name: "", definition: "", assumptions: [], expected_inference: "" });
+export const emptyExt = (): Extension => ({ id: "X1", name: "", definition: "", assumptions: [], expected_inference: "" });
 
-function ExtensionForm({ examId, number, ext, setExt }: {
-  examId: string;
-  number: string;
+export function ExtensionForm({ proposeUrl, proposeBody, ext, setExt, hidePropose = false }: {
+  proposeUrl: string;
+  proposeBody?: unknown;
   ext: Extension;
   setExt: (e: Extension) => void;
+  hidePropose?: boolean;
 }) {
   const [cands, setCands] = useState<{ candidates: Extension[]; rationale: string[] } | null>(null);
   const propose = useJob((j) => setCands(j.result as { candidates: Extension[]; rationale: string[] }));
   return (
     <Stack gap={8}>
-      <Row>
-        <span style={{ fontSize: 13, color: "var(--text-2)" }}>확장 개념을 직접 적거나 AI 후보에서 고르세요.</span>
-        <Button small onClick={() => void propose.run(() => api.post(`/exams/${examId}/questions/${encodeURIComponent(number)}/extensions`))} disabled={propose.running}>
-          AI 후보 받기
-        </Button>
-      </Row>
+      {!hidePropose && (
+        <Row>
+          <span style={{ fontSize: 13, color: "var(--text-2)" }}>확장 개념을 직접 적거나 AI 후보에서 고르세요.</span>
+          <Button small onClick={() => void propose.run(() => api.post(proposeUrl, proposeBody))} disabled={propose.running}>
+            AI 후보 받기
+          </Button>
+        </Row>
+      )}
       <JobProgress job={propose.job} />
       <ErrorBox error={propose.error} />
       {cands && (
@@ -99,18 +105,21 @@ function ExtensionForm({ examId, number, ext, setExt }: {
   );
 }
 
-function SetCard({ s, scope, selected, onSelect, onChanged }: {
+export function SetCard({ s, scope, selected, onSelect, onChanged, toBank = false }: {
   s: GeneratedSet;
   scope: Scope | null;
   selected: boolean;
   onSelect: (v: boolean) => void;
   onChanged: () => void;
+  /** 문제 만들기: 승인하면 문제은행에 넣는다. */
+  toBank?: boolean;
 }) {
   const [open, setOpen] = useState(s.status === "draft");
   const [err, setErr] = useState<string | null>(null);
   const review = (status: GeneratedSet["status"]) =>
-    api
-      .put(`/generated/${s.id}/review`, { status, by: teacherName() || null })
+    (toBank && status === "approved"
+      ? api.post(`/generated/${s.id}/to-bank`, { by: teacherName() || null })
+      : api.put(`/generated/${s.id}/review`, { status, by: teacherName() || null }))
       .then(onChanged)
       .catch((e: unknown) => setErr(errorText(e)));
   const st = STATUS[s.status];
@@ -123,14 +132,17 @@ function SetCard({ s, scope, selected, onSelect, onChanged }: {
           <Badge tone={st.t}>{st.l}</Badge>
           {s.solution.verified ? <Badge tone="ok">독립 풀이와 답 일치</Badge> : <Badge tone="bad">답 미확인</Badge>}
           {s.rubric ? <Badge>루브릭 초안</Badge> : <Badge tone="warn">루브릭 없음</Badge>}
-          <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>원본 {s.source.question_number}번 · {s.points}점</span>
+          {s.bank_item_id && <Badge tone="ok">문제은행에 넣음</Badge>}
+          <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+            {s.kind === "new" ? "새 문제" : `원본 ${s.source.question_number}번`} · {s.points}점
+          </span>
         </Row>
       }
       actions={
         <Row>
           {s.status !== "approved" && (
             <Button small variant="primary" disabled={!s.rubric} onClick={() => void review("approved")}>
-              승인
+              {toBank ? "승인 · 문제은행에 넣기" : "승인"}
             </Button>
           )}
           {s.status !== "rejected" && (
@@ -156,6 +168,7 @@ function SetCard({ s, scope, selected, onSelect, onChanged }: {
             <Loose text={s.note} />
           </div>
         )}
+        {s.idea && <div style={{ fontSize: 13 }}><b>강사 아이디어</b> {s.idea}</div>}
         {s.extension && (
           <Info>
             확장 개념 {s.extension.id} {s.extension.name}: <Loose text={s.extension.definition} />
@@ -168,7 +181,9 @@ function SetCard({ s, scope, selected, onSelect, onChanged }: {
         ))}
         {open && (
           <>
-            <ItemView number="새" points={s.points} item={s.item} examId={s.source.exam_id} renderBase={`/api/generated/${s.id}/figures`} />
+            <ItemView number="새" points={s.points} item={s.item} examId={s.source.exam_id ?? ""}
+                      renderBase={`/api/generated/${s.id}/figures`}
+                      fileUrl={s.source.exam_id ? undefined : (p) => `/api/bank/file?path=${encodeURIComponent(p)}`} />
             <SolutionView sol={s.solution} scope={scope} />
             {s.skill_ids.length > 0 && <div style={{ fontSize: 12.5, color: "var(--text-2)" }}>쓴 기법: {s.skill_ids.join(", ")}</div>}
             {s.rubric && (
@@ -255,7 +270,9 @@ export function GenerateTab({ detail, scope }: TabProps) {
               </Check>
             </Row>
           )}
-          {kind === "novel_b" && <ExtensionForm examId={id} number={number} ext={ext} setExt={setExt} />}
+          {kind === "novel_b" && (
+            <ExtensionForm proposeUrl={`/exams/${id}/questions/${encodeURIComponent(number)}/extensions`} ext={ext} setExt={setExt} />
+          )}
           <Row>
             <Button variant="primary" onClick={start} disabled={job.running || (kind === "novel_b" && (!ext.name || !ext.definition))}>
               만들기

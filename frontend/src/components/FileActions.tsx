@@ -3,7 +3,7 @@ import { api, errorText } from "../lib/api";
 import { Button, ErrorBox, Info, Row } from "./ui";
 
 /** 웹뷰는 다운로드를 처리하지 않으므로(AIHelper) 파일은 서버가 열고·보여 주고·복사한다. */
-export function FileActions({ path }: { path: string }) {
+export function FileActions({ path, openLabel = "Word로 열기" }: { path: string; openLabel?: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const call = (what: "open" | "reveal" | "save-as") => {
@@ -20,7 +20,7 @@ export function FileActions({ path }: { path: string }) {
     <>
       <Row>
         <Button small variant="primary" onClick={() => call("open")}>
-          Word로 열기
+          {openLabel}
         </Button>
         <Button small onClick={() => call("reveal")}>
           폴더에서 보기

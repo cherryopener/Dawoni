@@ -25,19 +25,12 @@ import {
 import { api, errorText, useLoad } from "../lib/api";
 import { go } from "../lib/router";
 import type { BankItem, BankSummary, ExportResult, Scope, ScopeSummary, UnitTree } from "../lib/types";
+import { bankFileUrl, SOURCE_KIND } from "../lib/bank";
 import { descendants, resolve, unitCounts, unitLabel } from "../lib/units";
 import { SolutionView } from "./exam/Rubrics";
 import { SourcesTab } from "./bank/Sources";
 import { UnitsTab } from "./bank/Units";
 
-export const bankFileUrl = (path: string) => `/api/bank/file?path=${encodeURIComponent(path)}`;
-
-export const SOURCE_KIND: Record<string, string> = {
-  problem_bank: "문제집·강사 교재",
-  textbook: "교과서·개념서",
-  mock_exam: "기출·모의고사",
-  dawoni: "다워니 제작",
-};
 const ITEM_TYPE: Record<string, string> = { multiple_choice: "객관식", short_answer: "단답형", essay: "서술형" };
 const LEVEL: Record<string, string> = {
   none: "원본 해설 없음",
@@ -127,21 +120,21 @@ export function BankBrowser({ trees, items, picked, onPick, selected, onSelect }
       </Card>
       <Stack gap={10}>
         <Row>
-          <Select value={kind} onChange={setKind} options={[
+          <div style={{ width: 150 }}><Select value={kind} onChange={setKind} options={[
             { value: "all", label: "자료 전체" },
             ...Object.entries(SOURCE_KIND).map(([value, label]) => ({ value, label })),
-          ]} />
-          <Select value={itype} onChange={setItype} options={[
+          ]} /></div>
+          <div style={{ width: 120 }}><Select value={itype} onChange={setItype} options={[
             { value: "all", label: "유형 전체" },
             ...Object.entries(ITEM_TYPE).map(([value, label]) => ({ value, label })),
-          ]} />
-          <Select<Status> value={status} onChange={setStatus} options={[
+          ]} /></div>
+          <div style={{ width: 140 }}><Select<Status> value={status} onChange={setStatus} options={[
             { value: "all", label: "상태 전체" },
             { value: "check", label: "답 확인 필요" },
             { value: "ai", label: "AI 해설" },
             { value: "unreviewed", label: "검토 전" },
             { value: "reviewed", label: "검토함" },
-          ]} />
+          ]} /></div>
           <div style={{ flex: 1, minWidth: 160 }}>
             <TextInput value={q} onChange={setQ} placeholder="문항·출처 검색" />
           </div>
@@ -184,7 +177,7 @@ export function BankBrowser({ trees, items, picked, onPick, selected, onSelect }
                          onChange={(e) => toggle(i.id, e.target.checked)} style={{ marginTop: 3 }} />
                 )}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5 }}>{i.preview}</div>
+                  <div style={{ fontSize: 13.5 }}><Loose text={i.preview} /></div>
                   <Row style={{ marginTop: 4, gap: 6 }}>
                     <span style={{ fontSize: 12, color: "var(--text-2)" }}>{i.source}</span>
                     <Badge>{ITEM_TYPE[i.item_type]}</Badge>
@@ -401,7 +394,7 @@ export function ItemDetail({ id, trees, onClose, onChanged }: {
             </Card>
           )}
           {it.solution && (
-            <Card title={it.solution_by === "ai" ? "AI 해설 (학생용으로 이 해설을 씁니다)" : "AI 풀이 (검산용)"}>
+            <Card title={aiTitle(it)}>
               <SolutionView sol={it.solution} scope={unitScope(it, data.unit_labels)} />
             </Card>
           )}
@@ -423,6 +416,13 @@ export function ItemDetail({ id, trees, onClose, onChanged }: {
   );
 }
 
+function aiTitle(it: BankItem): string {
+  const c = it.answer_check;
+  if (c && !c.resolved && (c.verdict === "differs" || c.verdict === "unsure")) return "AI 풀이 (정답 확인 전)";
+  if (c?.resolved === "original" && c.verdict !== "same") return "AI 풀이 (원본 답과 달라 쓰지 않음)";
+  return it.solution_by === "ai" ? "AI 해설 (학생용으로 이 해설을 씁니다)" : "AI 풀이 (원본 해설 검산용)";
+}
+
 function AnswerCompare({ it, onResolve }: { it: BankItem; onResolve: (side: "original" | "ai") => void }) {
   const c = it.answer_check;
   if (!c) return null;
@@ -432,7 +432,7 @@ function AnswerCompare({ it, onResolve }: { it: BankItem; onResolve: (side: "ori
     unsure: <Badge tone="warn">자동 비교 불가</Badge>,
     no_original: <Badge>원본 답 없음 — AI가 두 번 풀어 같은 답</Badge>,
   }[c.verdict];
-  const open = c.verdict === "differs" || c.verdict === "unsure";
+  const open = !c.resolved && (c.verdict === "differs" || c.verdict === "unsure");
   return (
     <Card title="정답 확인">
       <Stack gap={8}>

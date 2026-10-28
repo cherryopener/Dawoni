@@ -18,6 +18,8 @@ from dawoni.models.base import utcnow
 from dawoni.models.units import Unit, UnitTree
 from dawoni.paths import WorkspacePaths
 
+GROUP_ORDER = ("물리", "화학", "생명과학", "지구과학")
+
 
 class UnitStore:
     def __init__(self, ws: WorkspacePaths) -> None:
@@ -32,8 +34,11 @@ class UnitStore:
                 write_model_atomic(self._path(t.id), t)
 
     def all(self) -> list[UnitTree]:
+        """과목군 순서(물리·화학·생명과학·지구과학, 그 밖은 뒤) → 단원표 ID 순."""
         self._ensure()
-        return [UnitTree.model_validate(read_json(p)) for p in sorted(self.dir.glob("*.json"))]
+        trees = [UnitTree.model_validate(read_json(p)) for p in sorted(self.dir.glob("*.json"))]
+        order = {g: i for i, g in enumerate(GROUP_ORDER)}
+        return sorted(trees, key=lambda t: (order.get(t.group, len(order)), t.id))
 
     def get(self, tree_id: str) -> UnitTree:
         self._ensure()

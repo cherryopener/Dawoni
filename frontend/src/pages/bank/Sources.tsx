@@ -19,7 +19,7 @@ import {
 import { api, errorText, useJob, useLoad } from "../../lib/api";
 import type { BankSource, BankSourceKind, SourceChunk, UnitTree } from "../../lib/types";
 import { unitLabel, walk } from "../../lib/units";
-import { SOURCE_KIND } from "../Bank";
+import { SOURCE_KIND } from "../../lib/bank";
 
 /** '3-40, 45' → [3..40, 45] */
 export function parsePages(s: string): number[] {
@@ -165,7 +165,7 @@ function SourceCard({ src, trees, onChanged }: { src: BankSource; trees: UnitTre
   return (
     <Card
       title={<>{src.title} <Badge>{SOURCE_KIND[src.kind]}</Badge></>}
-      actions={<FileActions path={`sources/${src.rel_path}`} />}
+      actions={<FileActions path={`sources/${src.rel_path}`} openLabel="PDF 열기" />}
     >
       <Stack gap={10}>
         <span style={{ fontSize: 13, color: "var(--text-2)" }}>

@@ -428,7 +428,8 @@ export type RubricSuggestion = {
 
 // ---------------------------------------------------------------- 문항 제작 (M9)
 
-export type GenKind = "numeric" | "symbolic" | "condition" | "novel_a" | "novel_b";
+export type GenKind = "numeric" | "symbolic" | "condition" | "novel_a" | "novel_b" | "new";
+export type AnswerFormat = "choice5" | "bogi" | "short" | "essay";
 export type Extension = {
   id: string;
   name: string;
@@ -439,7 +440,7 @@ export type Extension = {
 export type GeneratedSet = {
   id: string;
   kind: GenKind;
-  source: { exam_id: string; question_number: string };
+  source: { exam_id?: string | null; question_number: string; bank_item_id?: string | null };
   scope_id: string;
   points: number;
   item: Item;
@@ -453,6 +454,11 @@ export type GeneratedSet = {
   extension: Extension | null;
   skill_ids: string[];
   created_at: string;
+  bank_item_id?: string | null;
+  parts?: ExamPart[];
+  unit_ids?: string[];
+  idea?: string | null;
+  answer_format?: AnswerFormat | null;
 };
 
 // ---------------------------------------------------------------- 강의 요약 (M12)
