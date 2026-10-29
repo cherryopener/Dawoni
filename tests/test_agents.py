@@ -367,6 +367,7 @@ def test_codex_parse_and_command(tmp_path: Path) -> None:
         ("Print mode: not authenticated, trying silent auth", AgentErrorCode.NOT_LOGGED_IN),
         ("Print mode: timed out waiting for cascade", AgentErrorCode.TIMEOUT),
         ("segfault", AgentErrorCode.PROCESS_FAILED),
+        ("The stream was interrupted. Please continue the task", AgentErrorCode.STALLED),
     ],
 )
 def test_classify_failure(msg: str, code: AgentErrorCode) -> None:

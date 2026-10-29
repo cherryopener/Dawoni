@@ -221,6 +221,10 @@ _AUTH_HINTS = (
 )
 
 
+_STALL_HINTS = ("stream was interrupted", "connection reset", "stream error")
+"""실측(agy): 응답 도중 끊김 — 같은 요청을 새 세션으로 다시 하면 대개 된다."""
+
+
 def classify_failure(message: str) -> AgentErrorCode:
     m = message.lower()
     if any(h in m for h in _QUOTA_HINTS):
@@ -229,6 +233,8 @@ def classify_failure(message: str) -> AgentErrorCode:
         return AgentErrorCode.NOT_LOGGED_IN
     if "timed out" in m or "timeout" in m:
         return AgentErrorCode.TIMEOUT
+    if any(h in m for h in _STALL_HINTS):
+        return AgentErrorCode.STALLED  # 일시적 — 엔진이 새 세션으로 한 번 더 한다
     return AgentErrorCode.PROCESS_FAILED
 
 
