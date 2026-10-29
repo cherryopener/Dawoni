@@ -88,6 +88,23 @@ def numbered_on_page(text: str, numbers: set[str]) -> set[str]:
     return found & numbers if len(keep) >= 2 else set()
 
 
+_CIRCLED = re.compile(r"[①②③④⑤]")
+
+
+def type_mismatch(kq: KeyQuestion, q: ExamQuestion) -> bool:
+    """답의 모양이 문항 유형과 맞지 않음 — 객관식인데 선지 번호가 없거나, 아닌데 선지 번호뿐.
+
+    해설 쪽에 같은 번호의 다른 묶음 답이 섞인 경우를 거른다 (실측: 강마다 '기본 문제' 답 목록과
+    '학습 과제' 해설이 같은 번호로 이어짐)."""
+    answers = [p.answer.strip() for p in kq.parts if p.answer and p.answer.strip()]
+    if not answers:
+        return False
+    if q.item.item_type == "multiple_choice":
+        return not any(_CIRCLED.search(a) for a in answers)
+    only_choice = re.compile(r"^[\s,()①②③④⑤]+$")
+    return all(only_choice.match(a) for a in answers)
+
+
 def check_key(
     out: KeyExtraction, exam: Exam, source_text: str, *, expected: set[str] | None = None
 ) -> list[str]:
@@ -217,6 +234,20 @@ def extract_answer_key(
     doubtful: dict[str, list[str]] = {}
     images_all: list[Path] = []
     numbers = {q.number for q in exam.questions}
+    dropped: list[str] = []
+
+    def _fitting(qs: list[KeyQuestion]) -> list[KeyQuestion]:
+        """이 시험의 번호이고 유형도 맞는 해설만 (옆 챕터·다른 묶음의 같은 번호 답은 버림)."""
+        out: list[KeyQuestion] = []
+        for kq in qs:
+            if kq.number not in numbers:
+                continue
+            if type_mismatch(kq, exam.question(kq.number)):
+                dropped.append(kq.number)
+                continue
+            out.append(kq)
+        return out
+
     step = max(1, pages_per_call)
     groups = [pages[i : i + step] for i in range(0, len(pages), step)]
     cache_dir = work_dir / "reads"
@@ -229,9 +260,7 @@ def extract_answer_key(
 
         def check(out: KeyExtraction, text: str = text) -> list[str]:
             if ignore_other_numbers:
-                out = out.model_copy(
-                    update={"questions": [q for q in out.questions if q.number in numbers]}
-                )
+                out = out.model_copy(update={"questions": _fitting(out.questions)})
             return check_key(out, exam, text, expected=on_page)
 
         task = dataclasses.replace(
@@ -259,7 +288,9 @@ def extract_answer_key(
             raw = engine.run(task, inp).value
             cached.parent.mkdir(parents=True, exist_ok=True)
             cached.write_text(raw.model_dump_json(), encoding="utf-8")
-        first = [q for q in raw.questions if q.number in numbers]
+        first = _fitting(raw.questions) if ignore_other_numbers else (
+            [q for q in raw.questions if q.number in numbers]
+        )  # fmt: skip
         doubts: dict[str, list[str]] = {}
         if cross:
             second = {kq.number: kq for kq in engine.run(task, inp).value.questions}
@@ -295,6 +326,11 @@ def extract_answer_key(
         f"해설지 {g[0]}~{g[-1]}쪽을 읽지 못함 — 다시 하면 다시 읽습니다" for g in failed
     ]
     out.failed_pages = sorted(p for g in failed for p in g)
+    if dropped:
+        nums = ", ".join(sorted(set(dropped), key=lambda x: int(x) if x.isdigit() else 0))
+        out.warnings.append(
+            f"문항 {nums}: 문항 유형과 맞지 않는 답(다른 묶음의 해설로 보임)은 뺐습니다"
+        )
     for q in exam.questions:
         kq = found.get(q.number)
         if kq is None:

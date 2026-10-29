@@ -52,15 +52,18 @@ const toChunk = (r: Row): Partial<SourceChunk> => ({
 export function ChapterTable({ src, trees, onChanged }: { src: BankSource; trees: UnitTree[]; onChanged: () => void }) {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
+  const [checks, setChecks] = useState<string[] | null>(null);
   const [solve, setSolve] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const suggest = useJob((j) => {
-    const r = j.result as { chapters: SourceChunk[]; notes: string[] };
+    const r = j.result as { chapters: SourceChunk[]; notes: string[]; checks?: string[] };
     // 제안은 새 번호로 (기존 챕터의 DB화 기록과 섞이지 않게)
     const base = Math.max(0, ...src.chunks.map((c) => c.index));
     setRows(r.chapters.map((c, i) => toRow({ ...c, index: src.chunks.length ? base + i + 1 : i + 1 })));
     setNotes(r.notes);
+    setChecks(r.checks ?? []);
   });
+  const recheck = useJob((j) => setChecks((j.result as { checks: string[] }).checks));
   const ingest = useJob(onChanged);
   const editing = rows !== null;
   const shown = rows ?? src.chunks.map(toRow);
@@ -80,7 +83,7 @@ export function ChapterTable({ src, trees, onChanged }: { src: BankSource; trees
   };
   const run = (body: Record<string, unknown>) =>
     void ingest.run(() => api.post(`/bank/sources/${src.source_id}/chapters/ingest`, { ...body, solve, by: teacherName() || null }));
-  const busy = ingest.running || suggest.running;
+  const busy = ingest.running || suggest.running || recheck.running;
   return (
     <Stack gap={10}>
       <Row>
@@ -93,13 +96,32 @@ export function ChapterTable({ src, trees, onChanged }: { src: BankSource; trees
           챕터 제안 (목차·쪽 분류)
         </Button>
         {!editing && <Button small variant="ghost" onClick={() => setRows(src.chunks.map(toRow))}>표 고치기</Button>}
+        {!editing && src.chunks.length > 0 && (
+          <Button small variant="ghost" disabled={busy}
+                  onClick={() => void recheck.run(() => api.post(`/bank/sources/${src.source_id}/chunks/check`, {}))}>
+            점검
+          </Button>
+        )}
         <Button small variant="ghost" onClick={() => setRows([...shown, { index: 0, label: "", unit: "", concept: "", problem: "", key: "" }])}>
           + 챕터
         </Button>
       </Row>
       <JobProgress job={suggest.job} />
-      <ErrorBox error={suggest.error ?? err} />
+      <JobProgress job={recheck.job} />
+      <ErrorBox error={suggest.error ?? recheck.error ?? err} />
       {notes.map((n, i) => <Info key={i}>{n}</Info>)}
+      {checks !== null && (
+        checks.length === 0 ? (
+          <Info>점검: 구간마다 문항 번호가 빠짐없이 이어집니다.</Info>
+        ) : (
+          <Notice>
+            <b>DB화 전에 확인할 점 ({checks.length})</b>
+            <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+              {checks.map((c, i) => <li key={i} style={{ fontSize: 13 }}>{c}</li>)}
+            </ul>
+          </Notice>
+        )
+      )}
       {shown.length === 0 ? (
         <Notice>아직 챕터가 없습니다. “챕터 제안”을 누르면 PDF 목차와 쪽 내용으로 챕터 표를 만들어 줍니다.</Notice>
       ) : (

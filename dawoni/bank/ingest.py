@@ -231,29 +231,55 @@ def add_source(
     year: int | None = None,
     level: str | None = None,
     unit_trees: list[str],
+    key_path: str | None = None,
 ) -> Source:
-    """자료 등록 (이미 있으면 정보만 고침). 구간은 `add_chunks`로."""
+    """자료 등록 (이미 있으면 정보만 고침). 구간은 `add_chunks`로.
+
+    `key_path`: 해설 PDF가 따로 있으면 (기출 등) 문제 PDF 뒤에 붙여 한 자료로 등록한다."""
     trees = UnitStore(svc.workspace)
     for t in unit_trees:
         trees.get(t)
     if not unit_trees:
         raise BankError("분류할 단원표를 하나 이상 고르세요 (예: 물리학 I)")
     p = Path(path_or_id)
+    attached: int | None = None
+    if key_path and p.exists():
+        attached = page_count(p) + 1
+        p = merge_key_pdf(p, Path(key_path), svc.paths.cache / "merged")
     src = register_source(svc.workspace, p, kind, title=title) if p.exists() else (
         get_source(svc.workspace, path_or_id)
     )  # fmt: skip
     pages = page_count(source_file(svc.workspace, src))
     src = src.model_copy(
         update={"kind": kind, "title": title, "publisher": publisher, "year": year,
-                "level": level or src.level, "unit_trees": unit_trees, "pages": pages}
+                "level": level or src.level, "unit_trees": unit_trees, "pages": pages,
+                "key_attached_from": attached or src.key_attached_from}
     )  # fmt: skip
     update_source(svc.workspace, src)
     return src
 
 
+def merge_key_pdf(exam: Path, key: Path, out_dir: Path) -> Path:
+    """문제 PDF 뒤에 해설 PDF를 붙인 새 PDF (원본 둘은 그대로)."""
+    import pymupdf
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{exam.stem} + 해설.pdf"
+    with pymupdf.open(exam) as a, pymupdf.open(key) as b:
+        a.insert_pdf(b)  # pyright: ignore[reportUnknownMemberType]
+        a.save(str(out))  # pyright: ignore[reportUnknownMemberType]
+    return out
+
+
 def suggest_chunk(svc: Services, src: Source) -> SourceChunk:
-    """처음 제안: 해설 표시("정답 및 해설" 등)가 있는 쪽은 해설로, 나머지는 문제로."""
+    """처음 제안: 해설 표시("정답 및 해설" 등)가 있는 쪽은 해설로, 나머지는 문제로.
+    해설 PDF를 따로 붙였으면 붙인 쪽 전부가 해설."""
     pdf = source_file(svc.workspace, src)
+    if src.key_attached_from:
+        total = page_count(pdf)
+        return SourceChunk(index=len(src.chunks) + 1,
+                           pages=list(range(1, src.key_attached_from)),
+                           key_pages=list(range(src.key_attached_from, total + 1)))  # fmt: skip
     key = find_key_pages(pdf)
     pages = [p for p in range(1, page_count(pdf) + 1) if p not in key]
     return SourceChunk(index=len(src.chunks) + 1, pages=pages or [1], key_pages=key)

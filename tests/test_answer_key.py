@@ -249,6 +249,22 @@ def test_numbered_answer_must_not_be_skipped(q3: ExamQuestion) -> None:
     assert any("문항 63, 64, 65의 해설이 이 쪽에 있는데 빠졌다" in p for p in problems)
 
 
+def test_type_mismatch(q3: ExamQuestion) -> None:
+    """다른 묶음의 같은 번호 답: 서술형에 '⑤'만, 객관식에 선지 번호 없는 답 → 버린다."""
+    from dawoni.ingest.answer_key import type_mismatch
+
+    def kq(answer: str) -> KeyQuestion:
+        part = KeyPart(label="", answer=answer, credit_policy="none")
+        return KeyQuestion(number="3", parts=[part])
+
+    essay = q3
+    mc = q3.model_copy(update={"item": q3.item.model_copy(update={"item_type": "multiple_choice"})})
+    assert type_mismatch(kq("⑤"), essay) and not type_mismatch(kq("4초, 40m/s"), essay)
+    assert type_mismatch(kq("4초, 40m/s"), mc) and not type_mismatch(kq("③ (ㄱ, ㄷ)"), mc)
+    blank = KeyQuestion(number="3", parts=[KeyPart(label="", credit_policy="none")])
+    assert not type_mismatch(blank, mc)
+
+
 # ---------------------------------------------------------------- 루브릭 검사
 
 

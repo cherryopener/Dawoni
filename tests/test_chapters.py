@@ -257,3 +257,24 @@ def test_text_toc_and_key_by_numbers(tmp_path: Path) -> None:
         "머리말 없는 해설 쪽도 해설, 번호로 나눔"
     )
     assert s.pages[0].kind == "other", "목차 쪽의 '1. … 2.'는 문항이 아님"
+
+
+def test_separate_key_pdf_is_appended(app_paths: AppPaths, tmp_path: Path) -> None:
+    """기출 해설 PDF가 따로 있으면 문제 PDF 뒤에 붙여 한 자료로 — 붙인 쪽이 그대로 해설 쪽."""
+    ws = create_workspace(tmp_path / "ws")
+    svc = open_services(ws.root, paths=app_paths)
+    exam = tmp_path / "exam.pdf"
+    doc = pymupdf.open()
+    for n in (1, 2):
+        _t(doc.new_page(width=595, height=842), 50, 100, f"{n}. 물리 문항 {n}", 11, width=480)
+    doc.save(str(exam))  # pyright: ignore[reportUnknownMemberType]
+    key = tmp_path / "key.pdf"
+    kd = pymupdf.open()
+    _t(kd.new_page(width=595, height=842), 50, 100, "정답및해설 1. ③ 2. ⑤", 11, width=480)
+    kd.save(str(key))  # pyright: ignore[reportUnknownMemberType]
+
+    src = bi.add_source(svc, str(exam), "mock_exam", title="2011 수능 물리I", unit_trees=["phy1"],
+                        key_path=str(key))  # fmt: skip
+    assert src.pages == 3 and src.key_attached_from == 3
+    c = bi.suggest_chunk(svc, src)
+    assert (c.pages, c.key_pages) == ([1, 2], [3])

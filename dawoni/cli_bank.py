@@ -6,6 +6,7 @@ dawoni units add gift --subject "영재 물리" --group 물리 --toc 목차.txt
 
 dawoni bank add 문제집.pdf --kind problem_bank --title "OO 물리 문제집" --units phy1 \\
     [--publisher OO학원] [--year 2026] [--pages 3-40 --key-pages 41-60 --unit phy1.1.1]
+dawoni bank add 기출.pdf --kind mock_exam --title "2011 수능 물리I" --units phy1 --key-pdf 해설.pdf
 dawoni bank chunk <자료ID> --pages 61-90 --key-pages 91-99 [--unit phy1.2]
 dawoni bank chapters <자료ID> [--apply]     # 교재 챕터 표 제안 (개념|문제|해설 쪽, AI 없음)
 dawoni bank ingest <자료ID> [--chunk 2] [--by 김선생] [--solve]  # DB화 (풀이는 --solve 때만)
@@ -133,8 +134,8 @@ def _print_chunks(src: Source) -> None:
 def _cmd_add(args: argparse.Namespace) -> int:
     svc = _svc(args)
     src = bi.add_source(svc, args.pdf, args.kind, title=args.title, publisher=args.publisher,
-                        year=args.year, level=args.level,
-                        unit_trees=args.units.split(","))  # fmt: skip
+                        year=args.year, level=args.level, unit_trees=args.units.split(","),
+                        key_path=args.key_pdf)  # fmt: skip
     if not src.chunks:
         if (c := _chunk(args)) is not None:
             src = bi.add_chunks(svc, src, [c])
@@ -159,6 +160,8 @@ def _cmd_chapters(args: argparse.Namespace, sid: str | None = None, apply: bool 
     s = suggest_chapters(bi.source_file(svc.workspace, src), [units.get(t) for t in src.unit_trees])
     for n in s.notes:
         _out(f"  · {n}")
+    for c in s.checks:
+        _out(f"  ! {c}")
     if apply or getattr(args, "apply", False):
         src = bi.set_chunks(svc, src, s.chapters)
         _out(f"챕터 표 저장: {src.title} ({len(src.chunks)}챕터)")
@@ -368,6 +371,7 @@ def register(sub: Any) -> None:
     a.add_argument("--publisher")
     a.add_argument("--year", type=int)
     a.add_argument("--level", help="교재: 학생 수준 (예: 고등학교 물리학 I)")
+    a.add_argument("--key-pdf", help="해설 PDF가 따로 있으면 (기출 등) — 문제 PDF 뒤에 붙인다")
     chunk_args(a)
     a.set_defaults(func=_wrap(_cmd_add))
 

@@ -64,6 +64,7 @@ function TreePicker({ trees, value, onChange }: { trees: UnitTree[]; value: stri
 
 function Upload({ trees, onDone }: { trees: UnitTree[]; onDone: () => void }) {
   const [file, setFile] = useState<File | null>(null);
+  const [keyFile, setKeyFile] = useState<File | null>(null);
   const [kind, setKind] = useState<BankSourceKind>("problem_bank");
   const [title, setTitle] = useState("");
   const [publisher, setPublisher] = useState("");
@@ -75,6 +76,7 @@ function Upload({ trees, onDone }: { trees: UnitTree[]; onDone: () => void }) {
   const send = () => {
     const f = new FormData();
     f.append("file", file!);
+    if (keyFile) f.append("key_file", keyFile);
     f.append("kind", kind);
     f.append("title", title);
     f.append("unit_trees", units.join(","));
@@ -108,6 +110,13 @@ function Upload({ trees, onDone }: { trees: UnitTree[]; onDone: () => void }) {
           <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
           <Select value={kind} onChange={setKind} options={KIND_OPTIONS} />
         </Row>
+        {kind !== "textbook" && (
+          <Row>
+            <span style={{ fontSize: 13 }}>해설 PDF (따로 있으면)</span>
+            <input type="file" accept="application/pdf" onChange={(e) => setKeyFile(e.target.files?.[0] ?? null)} />
+            <span style={{ fontSize: 12, color: "var(--text-3)" }}>문제 PDF 뒤에 붙여 한 자료로 등록합니다 (기출 해설 등)</span>
+          </Row>
+        )}
         <Row>
           <div style={{ flex: 2, minWidth: 220 }}>
             <Field label="출처 이름" hint="문제은행에 보이는 이름">
@@ -161,7 +170,7 @@ function SourceCard({ src, trees, onChanged }: { src: BankSource; trees: UnitTre
           {[src.publisher, src.year, `${src.pages ?? "?"}쪽`, mine.map((t) => t.subject).join(" · "),
             `${src.ingest.item_count}문항`].filter(Boolean).join(" · ")}
         </span>
-        {src.kind === "textbook" ? (
+        {src.kind === "textbook" || src.kind === "problem_bank" ? (
           <ChapterTable src={src} trees={mine} onChanged={onChanged} />
         ) : (
           <>

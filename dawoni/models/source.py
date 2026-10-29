@@ -74,6 +74,9 @@ class Source(DawoniModel):
     publisher: str | None = Field(default=None, description="출판사·저자·강사 (출처 표시)")
     year: int | None = None
     level: str | None = Field(default=None, description="교재: 학생 수준 (개념 범위 프로필에 씀)")
+    key_attached_from: int | None = Field(
+        default=None, ge=1, description="따로 받은 해설 PDF를 뒤에 붙였으면 그 첫 쪽 (기출 해설 등)"
+    )
     unit_trees: list[str] = Field(
         default_factory=lambda: list[str](), description="문제은행: 분류할 단원표 ID (예: phy1)"
     )

@@ -112,15 +112,18 @@ def upload_source(
     publisher: Annotated[str | None, Form()] = None,
     year: Annotated[int | None, Form()] = None,
     level: Annotated[str | None, Form()] = None,
+    key_file: Annotated[UploadFile | None, File(description="해설 PDF가 따로 있으면")] = None,
     st: AppState = State,
 ) -> dict[str, Any]:
     svc = st.services()
     tmp = upload_dir(st)
     try:
         path = save_upload(file, tmp)
+        key_path = save_upload(key_file, tmp) if key_file and key_file.filename else None
         trees = [t.strip() for t in unit_trees.split(",") if t.strip()]
         src = bi.add_source(svc, str(path), kind, title=title, publisher=publisher, year=year,
-                            level=level or None, unit_trees=trees)  # fmt: skip
+                            level=level or None, unit_trees=trees,
+                            key_path=str(key_path) if key_path else None)  # fmt: skip
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return {"source": src, "suggested": bi.suggest_chunk(svc, src)}
@@ -180,8 +183,29 @@ def suggest_chapters(source_id: str, st: AppState = State) -> Job:
         return {
             "chapters": [c.model_dump(mode="json") for c in s.chapters],
             "notes": s.notes,
+            "checks": s.checks,
             "pages": [{"number": p.number, "kind": p.kind} for p in s.pages],
         }
+
+    return st.jobs.submit("bank_chapters", run, {"source": source_id})
+
+
+@router.post("/bank/sources/{source_id}/chunks/check")
+def check_chunks(source_id: str, st: AppState = State) -> Job:
+    """지금 챕터(구간) 표 점검 (AI 없음).
+
+    구간마다 문항 번호를 실제로 찾아 빠진 번호 등을 알린다."""
+    from dawoni.bank.chapters import check_chunks as check
+    from dawoni.bank.chapters import classify_pages
+
+    svc = st.services()
+    src = get_source(svc.workspace, source_id)
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        ctx.progress(0, 1, "구간마다 문항 번호 확인")
+        pdf = source_file(svc.workspace, src)
+        pages = {p.number: p for p in classify_pages(pdf)}
+        return {"checks": check(pdf, src.chunks, pages)}
 
     return st.jobs.submit("bank_chapters", run, {"source": source_id})
 
