@@ -357,8 +357,14 @@ class ChunkResult:
     warnings: list[str] = field(default_factory=lambda: list[str]())
 
 
-def item_id_for(src: Source, chunk: SourceChunk, k: int) -> str:
-    return f"bk-{src.source_id[:10]}-c{chunk.index}-{k}"
+def item_id_for(src: Source, chunk: SourceChunk, number: str) -> str:
+    """문항 번호로 정한다 (순번이면 한 쪽이 빠졌다 다시 할 때 뒤 문항 ID가 밀려 겹쳐 들어감)."""
+    import hashlib
+
+    slug = number if re.fullmatch(r"\d+", number) else (
+        "x" + hashlib.sha1(number.encode()).hexdigest()[:8]
+    )  # fmt: skip
+    return f"bk-{src.source_id[:10]}-c{chunk.index}-{slug}"
 
 
 def ingest_chunk(
@@ -413,7 +419,8 @@ def ingest_chunk(
             progress(0, steps, f"문항 구조화 — {msg}")
 
         extracted = extract_exam(svc.engine, layout, work, subject=subject, level=scope.level,
-                                 workers=workers, progress=page_progress)  # fmt: skip
+                                 workers=workers, progress=page_progress,
+                                 partial=True)  # fmt: skip
         res = ChunkResult(chunk, warnings=list(extracted.warnings))
 
         keys: dict[str, list[KeyPart]] = {}
@@ -428,14 +435,14 @@ def ingest_chunk(
                 ) from e
             key = extract_answer_key(
                 svc.engine, pdf, chunk.key_pages, exam, work / "key", level=scope.level,
-                cross=False, ignore_other_numbers=True, workers=workers,
+                cross=False, ignore_other_numbers=True, workers=workers, partial=True,
             )  # fmt: skip
             keys = {k.question_number: k.parts for k in key.keys}
             res.warnings += key.warnings
 
         ref_kind = src.kind if src.kind != "handwriting" else "other"
         for k, q in enumerate(extracted.questions, start=1):
-            item_id = item_id_for(src, chunk, k)
+            item_id = item_id_for(src, chunk, q.number)
             progress(1 + k, steps, f"문항 {q.number} {'풀이·비교' if solve else '저장'}")
             chunk = chunk.model_copy(update={"updated_at": utcnow()})
             _set_chunk(svc, source_id, chunk)
@@ -469,11 +476,19 @@ def ingest_chunk(
             it = bank.save(it, by=by)
             res.items.append(it)
             chunk = chunk.model_copy(update={"item_ids": [*chunk.item_ids, item_id]})
+        missing = [n for nums in extracted.failed_pages.values() for n in nums]
+        message = f"{len(res.items)}문항 추가" + (
+            f", {len(res.skipped)}문항은 이미 있음" if res.skipped else ""
+        )
+        if missing:
+            pages = ", ".join(f"{p}쪽" for p in sorted(extracted.failed_pages))
+            message += (
+                f" · {pages}(문항 {', '.join(missing)}) 실패 — 다시 DB화하면 그 쪽만 읽습니다"
+            )
         chunk = chunk.model_copy(
-            update={"status": "ingested", "machine": None, "updated_at": utcnow(),
-                    "item_ids": sorted({*chunk.item_ids, *res.skipped}),
-                    "message": f"{len(res.items)}문항 추가"
-                    + (f", {len(res.skipped)}문항은 이미 있음" if res.skipped else "")}
+            update={"status": "failed" if missing else "ingested", "machine": None,
+                    "updated_at": utcnow(), "item_ids": sorted({*chunk.item_ids, *res.skipped}),
+                    "message": message}
         )  # fmt: skip
         res.chunk = chunk
         _set_chunk(svc, source_id, chunk)

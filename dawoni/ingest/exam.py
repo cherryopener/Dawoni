@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -32,6 +33,8 @@ from dawoni.models.content import Block, MathRun, iter_runs
 from dawoni.models.grading import ExamPart, ExamQuestion
 from dawoni.models.item import Choice, ItemContent, ItemType
 from dawoni.parallel import Progress
+
+log = logging.getLogger(__name__)
 
 DEFAULT_POINTS = 4.0
 
@@ -83,6 +86,8 @@ class IngestResult:
     figure_files: dict[str, dict[str, Path]]
     """문항 번호 → 그림 ID → 크롭 파일."""
     warnings: list[str] = field(default_factory=lambda: list[str]())
+    failed_pages: dict[int, list[str]] = field(default_factory=lambda: dict[int, list[str]]())
+    """`partial`일 때 구조화에 실패한 쪽 → 그 쪽의 문항 번호 (다시 하면 이 쪽만 읽는다)."""
 
 
 def prepare_regions(layout: DocumentLayout, out_dir: Path) -> list[PreparedRegion]:
@@ -230,8 +235,15 @@ def extract_exam(
     level: str | None = None,
     workers: int = 1,
     progress: Progress | None = None,
+    partial: bool = False,
 ) -> IngestResult:
-    """`workers`: 쪽 여러 개를 동시에 구조화 (쪽마다 새 세션 — 두꺼운 교재·문제집용)."""
+    """`workers`: 쪽 여러 개를 동시에 구조화 (쪽마다 새 세션 — 두꺼운 교재·문제집용).
+
+    `partial`: 어떤 쪽이 끝내 검증을 통과하지 못해도 나머지 쪽 문항은 돌려준다
+    (`failed_pages`). 쪽별 결과는 `work_dir/pages/`에 남겨, 다시 하면 그 쪽은 AI 없이 쓴다
+    (실측: 17쪽 중 1쪽 실패로 구간 전체를 잃음)."""
+    from dawoni.agents import AgentError
+    from dawoni.context import TaskFailed
     from dawoni.parallel import each_in_parallel
 
     prepared = prepare_regions(layout, work_dir)
@@ -239,10 +251,33 @@ def extract_exam(
     for pr in prepared:
         by_page.setdefault(pr.region.boxes[0][0], []).append(pr)
 
-    def read_page(page: int) -> dict[str, ExtractedQuestion]:
+    cache_dir = work_dir / "pages"
+    failed: dict[int, list[str]] = {}
+
+    def read_page(page: int) -> dict[str, ExtractedQuestion] | None:
         group = by_page[page]
         regions = [pr.region for pr in group]
+        labels = sorted(r.label for r in regions)
+        cached = cache_dir / f"p{page}.json"
+        if cached.is_file():
+            try:
+                hit = PageExtraction.model_validate_json(cached.read_text(encoding="utf-8"))
+                if sorted(q.label for q in hit.questions) == labels:
+                    return {q.label: q for q in hit.questions}
+            except ValueError:
+                pass
+        try:
+            return _read_page(page, group, regions, cached)
+        except (TaskFailed, AgentError) as e:
+            if not partial:
+                raise
+            failed[page] = [r.label for r in regions]
+            log.warning("%d쪽 구조화 실패 (나머지 쪽은 계속): %s", page, e)
+            return None
 
+    def _read_page(
+        page: int, group: list[PreparedRegion], regions: list[Region], cached: Path
+    ) -> dict[str, ExtractedQuestion]:
         def check(out: PageExtraction, regions: list[Region] = regions) -> list[str]:
             return check_page(out, regions, subject)
 
@@ -255,6 +290,8 @@ def extract_exam(
                 attachments=tuple(img for pr in group for img in pr.images),
             ),
         )
+        cached.parent.mkdir(parents=True, exist_ok=True)
+        cached.write_text(res.value.model_dump_json(), encoding="utf-8")
         return {q.label: q for q in res.value.questions}
 
     pages = sorted(by_page)
@@ -265,6 +302,10 @@ def extract_exam(
     questions: list[ExamQuestion] = []
     warnings: list[str] = list(layout.warnings)
     for page, by_label in zip(pages, reads, strict=True):
+        if by_label is None:
+            nums = ", ".join(failed.get(page, []))
+            warnings.append(f"{page}쪽(문항 {nums}) 구조화 실패 — 다시 하면 이 쪽만 읽습니다")
+            continue
         group = by_page[page]
         for pr in group:
             q = by_label[pr.region.label]
@@ -291,4 +332,5 @@ def extract_exam(
         questions=questions,
         figure_files={pr.region.label: pr.figure_files for pr in prepared},
         warnings=warnings,
+        failed_pages=failed,
     )

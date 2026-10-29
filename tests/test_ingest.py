@@ -291,6 +291,28 @@ def test_extract_exam_by_page_with_repair(
     assert all(p.exists() for p in result.figure_files["4"].values())
 
 
+def test_extract_exam_partial_keeps_pages_and_retries_only_failed(
+    app_paths: AppPaths, make_fake: MakeFake, exam_pdf: Path, tmp_path: Path
+) -> None:
+    """실측: 17쪽 중 1쪽이 검증을 끝내 통과하지 못해 구간 전체를 잃음 → 나머지는 돌려주고,
+    다시 하면 실패한 쪽만 읽는다 (성공한 쪽은 작업 폴더에 남김)."""
+    bad = copy.deepcopy(PAGE1)
+    bad["questions"].pop()
+    first = make_fake("script", script=[{"response": json.dumps(d, ensure_ascii=False)}
+                                        for d in (bad, bad, bad, PAGE2)])  # fmt: skip
+    work = tmp_path / "work"
+    r1 = extract_exam(_engine(app_paths, first), analyze(exam_pdf), work, partial=True)
+    assert [q.number for q in r1.questions] == ["서술형 1"]
+    assert r1.failed_pages == {1: ["1", "2", "3", "4", "5"]}
+    assert any("1쪽(문항 1, 2, 3, 4, 5) 구조화 실패" in w for w in r1.warnings)
+
+    again = make_fake("script", script=[{"response": json.dumps(PAGE1, ensure_ascii=False)}])
+    r2 = extract_exam(_engine(app_paths, again), analyze(exam_pdf), work, partial=True)
+    assert [q.number for q in r2.questions] == ["1", "2", "3", "4", "5", "서술형 1"]
+    assert len(fake_prompts(again)) == 1, "2쪽은 남겨 둔 결과를 쓰고 1쪽만 다시 읽음"
+    assert r2.failed_pages == {}
+
+
 # ---------------------------------------------------------------- 교재 → 범위 프로필
 
 

@@ -166,11 +166,15 @@ def extract_answer_key(
     cross: bool = True,
     ignore_other_numbers: bool = False,
     workers: int = 1,
+    partial: bool = False,
 ) -> KeyIngest:
     """`cross`: 새 세션에서 한 번 더 읽어 숫자를 비교한다 (읽기 1번 더).
 
     `ignore_other_numbers`: 해설 쪽에 다른 문항(옆 챕터)의 해설이 함께 있을 때 — 그 번호는
-    수리 요청 없이 버린다. `workers`: 쪽 묶음 여러 개를 동시에 읽는다."""
+    수리 요청 없이 버린다. `workers`: 쪽 묶음 여러 개를 동시에 읽는다.
+    `partial`: 어떤 쪽 묶음을 끝내 못 읽어도 나머지는 돌려준다 (경고로 알림)."""
+    from dawoni.agents import AgentError
+    from dawoni.context import TaskFailed
     from dawoni.parallel import each_in_parallel
 
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -212,8 +216,19 @@ def extract_answer_key(
                     doubts.setdefault(kq.number, []).extend(compare_reads(kq, second[kq.number]))
         return list(images), first, doubts
 
+    failed: list[list[int]] = []
+
+    def read_safe(group: list[int]) -> tuple[list[Path], list[KeyQuestion], dict[str, list[str]]]:
+        try:
+            return read(group)
+        except TaskFailed, AgentError:
+            if not partial:
+                raise
+            failed.append(group)
+            return [], [], {}
+
     reads = each_in_parallel(
-        groups, read, name=lambda g: f"{g[0]}쪽", what="해설지 읽기", workers=workers
+        groups, read_safe, name=lambda g: f"{g[0]}쪽", what="해설지 읽기", workers=workers
     )
     for images, first, doubts in reads:
         images_all += images
@@ -224,6 +239,9 @@ def extract_answer_key(
 
     source = f"{pdf.name} {', '.join(map(str, pages))}쪽"
     out = KeyIngest()
+    out.warnings += [
+        f"해설지 {g[0]}~{g[-1]}쪽을 읽지 못함 — 다시 하면 다시 읽습니다" for g in failed
+    ]
     for q in exam.questions:
         kq = found.get(q.number)
         if kq is None:
