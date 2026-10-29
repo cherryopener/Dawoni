@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AiTag } from "../../components/AiTag";
 import { ItemView } from "../../components/Item";
 import { Loose } from "../../components/Math";
 import {
@@ -132,6 +133,7 @@ export function SetCard({ s, scope, selected, onSelect, onChanged, toBank = fals
           <Badge tone={st.t}>{st.l}</Badge>
           {s.solution.verified ? <Badge tone="ok">독립 풀이와 답 일치</Badge> : <Badge tone="bad">답 미확인</Badge>}
           {s.rubric ? <Badge>루브릭 초안</Badge> : <Badge tone="warn">루브릭 없음</Badge>}
+          <AiTag agent={s.agent} model={s.model} what="문항" />
           {s.bank_item_id && <Badge tone="ok">문제은행에 넣음</Badge>}
           <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
             {s.kind === "new" ? "새 문제" : `원본 ${s.source.question_number}번`} · {s.points}점

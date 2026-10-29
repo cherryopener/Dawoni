@@ -125,6 +125,8 @@ export type Solution = {
   check_notes: string[];
   created_by?: string | null;
   created_at?: string | null;
+  agent?: string | null;
+  model?: string | null;
 };
 
 export type RubricItem = {
@@ -195,6 +197,8 @@ export type Rubric = RubricDraft & {
   approved_at?: string | null;
   created_by?: string | null;
   created_at?: string | null;
+  agent?: string | null;
+  model?: string | null;
 };
 
 // ---------------------------------------------------------------- 답안·채점
@@ -248,6 +252,7 @@ export type Grade = {
   confirmed_by?: string | null;
   examples_used?: string[];
   agent?: string | null;
+  model?: string | null;
 };
 
 // ---------------------------------------------------------------- 요약 (API 전용)
@@ -334,6 +339,7 @@ export type Status = {
   workspace_ok: boolean;
   workspace_error: string | null;
   workspace_mode: WorkspaceMode | null;
+  workspace_subjects?: string[];
   machine: string;
   default_agent: AgentName;
   agents: Record<AgentName, { enabled: boolean; model: string | null; executable: string | null }>;
@@ -476,6 +482,8 @@ export type GeneratedSet = {
   values: Record<string, number> | null;
   extension: Extension | null;
   skill_ids: string[];
+  agent?: string | null;
+  model?: string | null;
   created_at: string;
   bank_item_id?: string | null;
   parts?: ExamPart[];
@@ -514,7 +522,14 @@ export type LectureSummary = {
 // ---------------------------------------------------------------- 함께 쓰기 (M12)
 
 export type WorkspaceMode = "personal" | "team";
-export type Sharing = { mode: WorkspaceMode; provider: string | null; conflicts: { path: string; original: string }[] };
+export type Sharing = {
+  mode: WorkspaceMode;
+  subjects?: string[];
+  provider: string | null;
+  conflicts: { path: string; original: string }[];
+};
+/** 과목 팀 (단원표 과목군) — 과목마다 작업공간을 따로 두고 그 과목 강사들끼리 공유. */
+export const SUBJECTS = ["물리", "화학", "생명과학", "지구과학"] as const;
 export type Presence = { machine: string; teacher: string | null; host: string; at: string };
 
 // ---------------------------------------------------------------- 문제은행

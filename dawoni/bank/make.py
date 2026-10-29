@@ -14,6 +14,7 @@ from dawoni.bank.export import bank_answer
 from dawoni.bank.ingest import unit_scope
 from dawoni.bank.store import BankStore
 from dawoni.bank.units import UnitStore
+from dawoni.context import made_by
 from dawoni.generate import pipeline as gp
 from dawoni.generate import workflow as gw
 from dawoni.grading.pipeline import solve_question
@@ -251,6 +252,9 @@ def make_new_problem(
         unit_labels=[units.label(u) for u in unit_ids],
     )  # fmt: skip
     progress(0, 2, "AI가 문항·모범답안 작성")
-    s = make_new(svc.engine, req, scope)
+    with made_by() as calls:
+        s = make_new(svc.engine, req, scope)
+    if calls:
+        s = s.model_copy(update={"agent": calls[0][0], "model": calls[0][1]})
     progress(2, 2, "독립 풀이 확인 완료 — 검토 후 승인하세요")
     return gw.GenStore(svc.workspace).save(s)

@@ -25,6 +25,7 @@ from dawoni import __version__
 from dawoni.config import AGENT_NAMES, AgentName, load_config
 from dawoni.logs import setup_logging
 from dawoni.models import Figure, Item, ItemContent, Job, Source
+from dawoni.models.source import SUBJECT_GROUPS
 from dawoni.paths import AppPaths
 from dawoni.workspace import WorkspaceError, create_workspace
 
@@ -55,8 +56,9 @@ def _cmd_schema(args: argparse.Namespace) -> int:
 def _cmd_workspace_init(args: argparse.Namespace) -> int:
     try:
         ws = create_workspace(
-            Path(args.path).expanduser(), args.name, "team" if args.shared else "personal"
-        )
+            Path(args.path).expanduser(), args.name, "team" if args.shared else "personal",
+            args.subject or [],
+        )  # fmt: skip
     except WorkspaceError as e:
         sys.stderr.write(f"오류: {e}\n")
         return 1
@@ -72,17 +74,20 @@ def _cmd_workspace_init(args: argparse.Namespace) -> int:
 
 def _cmd_workspace_status(args: argparse.Namespace) -> int:
     from dawoni.sharing import cloud_provider, conflict_copies
-    from dawoni.workspace import open_workspace, set_mode
+    from dawoni.workspace import open_workspace, set_mode, set_subjects
 
     root = Path(args.path).expanduser()
     try:
         ws, meta = open_workspace(root)
         if getattr(args, "mode", None):
             meta = set_mode(root, args.mode)
+        if getattr(args, "subjects", None) is not None:
+            meta = set_subjects(root, args.subjects)
     except WorkspaceError as e:
         sys.stderr.write(f"오류: {e}\n")
         return 1
     _out(f"{ws.root}: {'함께 쓰기 (공유 폴더)' if meta.mode == 'team' else '혼자 쓰기'}")
+    _out(f"  과목(팀): {', '.join(meta.subjects) or '모든 과목'}")
     _out(f"  동기화 폴더: {cloud_provider(ws.root) or '아님 (또는 알 수 없음)'}")
     copies = conflict_copies(ws)
     for c in copies:
@@ -175,6 +180,10 @@ def build_parser() -> argparse.ArgumentParser:
     wi.add_argument("path")
     wi.add_argument("--name")
     wi.add_argument("--shared", action="store_true", help="여러 강사가 공유 폴더로 함께 씀")
+    wi.add_argument(
+        "--subject", action="append", choices=list(SUBJECT_GROUPS),
+        help="과목 팀 작업공간 (예: --subject 물리) — 그 과목 단원표만, 그 과목 강사들과 공유",
+    )  # fmt: skip
     wi.set_defaults(func=_cmd_workspace_init)
     wst = wsub.add_parser("status", help="모드·동기화 폴더·충돌 사본 확인")
     wst.add_argument("path")
@@ -183,6 +192,10 @@ def build_parser() -> argparse.ArgumentParser:
     wm.add_argument("mode", choices=["personal", "team"])
     wm.add_argument("path")
     wm.set_defaults(func=_cmd_workspace_status)
+    wj = wsub.add_parser("subjects", help="과목(팀) 바꾸기 — 비우면 모든 과목")
+    wj.add_argument("path")
+    wj.add_argument("subjects", nargs="*", choices=list(SUBJECT_GROUPS))
+    wj.set_defaults(func=_cmd_workspace_status)
 
     ap = sub.add_parser("agent", help="AI CLI 연결")
     asub = ap.add_subparsers(dest="agent_command", required=True)

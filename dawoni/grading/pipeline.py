@@ -153,7 +153,8 @@ def solve_question(
         scope=scope_layer(scope, with_extensions=with_extensions),
         material=exam_question_text(q),
     )
-    first = engine.run(task, inp, agent=agent, model=model).value
+    made = engine.run(task, inp, agent=agent, model=model)
+    first = made.value
     notes: list[str] = []
     verified = False
     if first.out_of_scope_note:
@@ -178,6 +179,8 @@ def solve_question(
         scope_version=scope.version,
         verified=verified,
         check_notes=notes,
+        agent=made.agent,
+        model=made.model,
     )
 
 
@@ -220,6 +223,8 @@ def derive_rubric(
     }
     layer = scope_layer(scope, with_extensions=with_extensions)
 
+    made: list[tuple[str, str | None]] = []
+
     def draft_once(feedback: list[str]) -> RubricDraft:
         extra = (
             ["[검토 의견] 이전 초안을 다른 검토자가 보고 지적한 점 — 반영해서 다시 만들 것:"]
@@ -227,12 +232,14 @@ def derive_rubric(
             if feedback
             else []
         )
-        return engine.run(
+        res = engine.run(
             task,
             TaskInput(variables=variables, scope=layer, material="\n\n".join(base + extra)),
             agent=agent,
             model=model,
-        ).value
+        )
+        made.append((res.agent, res.model))
+        return res.value
 
     def audit_once(d: RubricDraft) -> list[str]:
         assert key is not None
@@ -293,6 +300,8 @@ def derive_rubric(
         based_on_key=key is not None,
         review_notes=notes,
         version=(previous.version + 1) if previous else 1,
+        agent=made[-1][0],
+        model=made[-1][1],
     )
 
 
@@ -384,6 +393,10 @@ def edit_rubric(
         review_notes=previous.review_notes,
         version=previous.version + bump,
         status="draft",
+        created_by=previous.created_by,
+        created_at=previous.created_at,
+        agent=previous.agent,
+        model=previous.model,
     )
 
 

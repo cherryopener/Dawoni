@@ -84,8 +84,17 @@ WorkspaceMode = Literal["personal", "team"]
 """personal: 혼자 쓰는 폴더 · team: 여러 강사가 공유 폴더로 함께 씀."""
 
 
+SUBJECT_GROUPS: tuple[str, ...] = ("물리", "화학", "생명과학", "지구과학")
+"""과목 팀 단위 (단원표의 과목군과 같다)."""
+
+
 class WorkspaceMeta(DawoniModel):
     schema_version: int = 1
     name: str
     mode: WorkspaceMode = "personal"
+    subjects: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="이 작업공간의 과목(팀) — 예: ['물리']. 비면 모든 과목. 과목마다 작업공간을 "
+        "따로 두면 그 과목 강사들끼리 폴더 하나를 공유한다",
+    )
     created_at: datetime = Field(default_factory=utcnow)

@@ -631,6 +631,7 @@ def test_variant_from_bank_item_goes_back_to_bank(
     assert len(fake_prompts(exe)) == 4, "고른 범위로 기준 문항을 먼저 풀고 제작"
     s = sets[0]
     assert s.source.bank_item_id == "bk-base1" and s.source.exam_id is None
+    assert s.agent == "agy", "문항을 만든 AI 기록"
     assert GenStore(ws).for_bank_item("bk-base1") == [s]
 
     made = approve_to_bank(svc, s.id, by="김선생")

@@ -9,6 +9,7 @@ import shutil
 from collections.abc import Callable
 from pathlib import Path
 
+from dawoni.context import made_by
 from dawoni.fsio import read_json, write_model_atomic
 from dawoni.generate import checks as gc
 from dawoni.generate import pipeline as gp
@@ -127,6 +128,34 @@ def generate_from(
 
     progress(0, 1, "AI가 문항 틀·초안 작성")
     warnings: list[str] = []
+    with made_by() as calls:
+        drafts, warnings = _drafts(svc, src, src_sol, scope, kind, opts, extension, others)
+    who = calls[0] if calls else (None, None)
+    total = 1 + len(drafts)
+    out: list[GeneratedSet] = []
+    gs = GenStore(svc.workspace)
+    for k, d in enumerate(drafts, start=1):
+        progress(k, total, f"제작물 {k}/{len(drafts)}: 독립 풀이로 확인 · 루브릭")
+        s = gp.finish(svc.engine, d, kind, src, scope, source)
+        s = s.model_copy(
+            update={"warnings": [*warnings, *s.warnings], "agent": who[0], "model": who[1]}
+        )
+        out.append(gs.save(s))
+    progress(total, total, f"제작 {len(out)}개 완료 — 검토 후 승인하세요")
+    return out
+
+
+def _drafts(
+    svc: Services,
+    src: ExamQuestion,
+    src_sol: SolutionDraft | None,
+    scope: ScopeProfile,
+    kind: VariantKind,
+    opts: gp.Options,
+    extension: ExtensionConcept | None,
+    others: list[tuple[str, ItemContent, set[str]]] | None,
+) -> tuple[list[gp.Draft], list[str]]:
+    warnings: list[str] = []
     match kind:
         case "numeric":
             drafts, warnings = gp.numeric_drafts(svc.engine, src, src_sol, scope, opts)
@@ -139,16 +168,7 @@ def generate_from(
         case "novel_b":
             assert extension is not None
             drafts = [gp.novel_b_draft(svc.engine, src, src_sol, scope, extension)]
-    total = 1 + len(drafts)
-    out: list[GeneratedSet] = []
-    gs = GenStore(svc.workspace)
-    for k, d in enumerate(drafts, start=1):
-        progress(k, total, f"제작물 {k}/{len(drafts)}: 독립 풀이로 확인 · 루브릭")
-        s = gp.finish(svc.engine, d, kind, src, scope, source)
-        s.warnings = [*warnings, *s.warnings]
-        out.append(gs.save(s))
-    progress(total, total, f"제작 {len(out)}개 완료 — 검토 후 승인하세요")
-    return out
+    return drafts, warnings
 
 
 def propose(svc: Services, store: ExamStore, q_number: str) -> ExtensionProposals:

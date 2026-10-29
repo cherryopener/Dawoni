@@ -110,6 +110,7 @@ def test_exam_end_to_end(
     made = c.get(f"{base}/questions/1").json()
     assert made["solution"]["created_by"] == "김선생" and made["solution"]["created_at"]
     assert made["rubric"]["created_by"] == "이선생", "팀원이 누가 만들었는지 본다"
+    assert made["solution"]["agent"] == made["rubric"]["agent"] == "agy", "만든 AI 기록 (태그)"
     assert not (tmp_path / "ws" / "exams" / eid / ".locks").exists() or not any(
         (tmp_path / "ws" / "exams" / eid / ".locks").iterdir()
     ), "끝나면 만드는 중 표식을 지운다"

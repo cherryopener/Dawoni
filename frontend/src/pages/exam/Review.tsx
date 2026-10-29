@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AiTag } from "../../components/AiTag";
 import { ItemView } from "../../components/Item";
 import { Loose, Tex } from "../../components/Math";
 import {
@@ -172,7 +173,7 @@ function GradeModal({ examId, row, onClose, onSaved }: {
         <Badge tone={STATUS[g.status]!.tone}>{STATUS[g.status]!.label}</Badge>
         {r && g.rubric_version !== r.version && <Badge tone="warn">루브릭 v{g.rubric_version}로 채점 (지금 v{r.version})</Badge>}
         {g.confirmed_by && <Badge tone="ok">확정: {g.confirmed_by}</Badge>}
-        {g.agent === null && <Badge tone="accent">강사 직접 채점</Badge>}
+        {g.agent === null ? <Badge tone="accent">강사 직접 채점</Badge> : <AiTag agent={g.agent} model={g.model} what="채점" />}
         {(g.examples_used ?? []).length > 0 && <Badge title="채점에 넣은 강사 기준 예시">기준 예시: {(g.examples_used ?? []).join(", ")}</Badge>}
       </Row>
       {g.flags.filter((f) => !f.startsWith("이중 채점 불일치")).map((f, i) => (

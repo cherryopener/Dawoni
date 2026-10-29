@@ -16,7 +16,7 @@ import {
   teacherName,
 } from "../components/ui";
 import { api, errorText, useJob, useLoad } from "../lib/api";
-import type { AgentName, DetectedAgent, Sharing, Status, WorkspaceMode } from "../lib/types";
+import { SUBJECTS, type AgentName, type DetectedAgent, type Sharing, type Status, type WorkspaceMode } from "../lib/types";
 
 const LOGIN_HELP: Record<AgentName, string> = {
   agy: "터미널에서 `agy`를 한 번 실행해 구독 계정으로 로그인하세요.",
@@ -30,6 +30,18 @@ const AGENT_LABEL: Record<AgentName, string> = {
 };
 
 const MODE_LABEL: Record<WorkspaceMode, string> = { personal: "혼자 쓰기", team: "함께 쓰기 (공유 폴더)" };
+
+function SubjectPicker({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  return (
+    <>
+      {SUBJECTS.map((s) => (
+        <Check key={s} checked={value.includes(s)} onChange={(on) => onChange(on ? [...value, s] : value.filter((x) => x !== s))}>
+          {s}
+        </Check>
+      ))}
+    </>
+  );
+}
 
 /** 연결한 작업공간의 모드·동기화 폴더·충돌 사본. */
 function SharingPanel() {
@@ -49,6 +61,9 @@ function SharingPanel() {
         <span>쓰는 방식</span>
         <Badge tone={data.mode === "team" ? "accent" : "neutral"}>{MODE_LABEL[data.mode]}</Badge>
         {data.provider && <Badge>{data.provider} 폴더</Badge>}
+        <Badge tone={(data.subjects ?? []).length ? "accent" : "neutral"}>
+          {(data.subjects ?? []).length ? `${data.subjects!.join("·")} 팀` : "모든 과목"}
+        </Badge>
         <span style={{ flex: 1 }} />
         <Button small onClick={() => setMode(data.mode === "team" ? "personal" : "team")}>
           {data.mode === "team" ? "혼자 쓰기로 바꾸기" : "함께 쓰기로 바꾸기"}
@@ -56,6 +71,15 @@ function SharingPanel() {
         <Button small variant="ghost" onClick={reload}>
           다시 확인
         </Button>
+      </Row>
+      <Row>
+        <span style={{ fontSize: 13 }}>과목 (팀)</span>
+        <SubjectPicker
+          value={data.subjects ?? []}
+          onChange={(subjects) =>
+            api.put<Sharing>("/workspace/subjects", { subjects }).then(setData).catch((e: unknown) => setErr(errorText(e)))
+          }
+        />
       </Row>
       {data.mode === "personal" && data.provider && (
         <Notice>{data.provider} 폴더입니다. 다른 강사와 함께 쓴다면 '함께 쓰기'로 바꾸세요 — 같은 시험을 동시에 열면 서로 알려 줍니다.</Notice>
@@ -92,6 +116,7 @@ function SharingPanel() {
 function WorkspaceCard({ status, onChanged }: { status: Status; onChanged: () => void }) {
   const [path, setPath] = useState(status.workspace ?? "");
   const [mode, setMode] = useState<WorkspaceMode>("personal");
+  const [subjects, setSubjects] = useState<string[]>([]);
   const [provider, setProvider] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -110,7 +135,7 @@ function WorkspaceCard({ status, onChanged }: { status: Status; onChanged: () =>
   const submit = (create: boolean) => {
     setError(null);
     api
-      .post<Status>("/workspace", { path, create, mode })
+      .post<Status>("/workspace", { path, create, mode, subjects })
       .then(onChanged)
       .catch((e: unknown) => setError(errorText(e)));
   };
@@ -149,6 +174,13 @@ function WorkspaceCard({ status, onChanged }: { status: Status; onChanged: () =>
             함께 쓰기 (공유 폴더)
           </Check>
           <span style={{ fontSize: 12, color: "var(--text-3)" }}>새로 만들 때 적용 · 기존 작업공간은 그 폴더의 설정을 따릅니다</span>
+        </Row>
+        <Row>
+          <span>과목 (팀)</span>
+          <SubjectPicker value={subjects} onChange={setSubjects} />
+          <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+            과목마다 작업공간을 따로 만들면 그 과목 강사들끼리 폴더 하나로 공유합니다 (비우면 모든 과목)
+          </span>
         </Row>
         <Row>
           <Button onClick={() => submit(false)} disabled={!path}>

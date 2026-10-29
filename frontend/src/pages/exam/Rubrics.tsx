@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AiTag } from "../../components/AiTag";
 import { ItemView } from "../../components/Item";
 import { Loose, Tex } from "../../components/Math";
 import {
@@ -382,6 +383,7 @@ export function SolutionView({ sol, scope, withKey = false }: { sol: Solution; s
     <Stack gap={8}>
       <Row>
         <b>{withKey ? "AI 독립 풀이 (해설지를 보지 않고)" : "범위 해설"}</b>
+        <AiTag agent={sol.agent} model={sol.model} what="풀이" />
         <Made by={sol.created_by} at={sol.created_at} />
         {sol.verified ? <Badge tone="ok">독립 재풀이와 답 일치</Badge> : <Badge>재풀이 안 함</Badge>}
       </Row>
@@ -464,6 +466,7 @@ function RubricEditor({ examId, q, rubric, onChanged }: {
     <Stack gap={10}>
       <Row>
         <b>루브릭 v{rubric.version}</b>
+        <AiTag agent={rubric.agent} model={rubric.model} what="루브릭 초안" />
         <Made by={rubric.created_by} at={rubric.created_at} />
         {rubric.status === "approved" && !dirty ? (
           <Badge tone="ok">승인됨{rubric.approved_by ? ` · ${rubric.approved_by}` : ""}</Badge>

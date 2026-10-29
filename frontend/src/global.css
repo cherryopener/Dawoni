@@ -17,6 +17,13 @@
   --warn-soft: #fdf1dc;
   --bad: #c2362f;
   --bad-soft: #fbe7e5;
+  /* 만든 AI 태그: Gemini 파랑, Claude 주황, ChatGPT(OpenAI) 청록 */
+  --ai-gemini: #1a5fd0;
+  --ai-gemini-soft: #e6effd;
+  --ai-claude: #b4532a;
+  --ai-claude-soft: #fbece4;
+  --ai-openai: #0b7a5e;
+  --ai-openai-soft: #e1f4ee;
   --radius: 8px;
   --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 8%);
   font-family: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", system-ui,

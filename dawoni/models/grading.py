@@ -142,6 +142,8 @@ class ScopedSolution(SolutionDraft):
     check_notes: list[str] = Field(default_factory=lambda: list[str]())
     created_by: str | None = None
     created_at: datetime | None = None
+    agent: str | None = Field(default=None, description="만든 AI (agy·claude·codex)")
+    model: str | None = Field(default=None, description="만든 모델 (예: gemini-3.8-flash-medium)")
 
 
 # ---------------------------------------------------------------- 루브릭
@@ -372,6 +374,8 @@ class Rubric(RubricDraft):
     created_at: datetime | None = Field(
         default=None, description="AI 초안을 만든 때 (강사 편집은 판만 올림)"
     )
+    agent: str | None = Field(default=None, description="초안을 만든 AI")
+    model: str | None = Field(default=None, description="초안을 만든 모델")
 
 
 # ---------------------------------------------------------------- 학생

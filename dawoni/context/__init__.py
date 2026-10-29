@@ -7,6 +7,7 @@ from dawoni.context.engine import (
     TaskInput,
     TaskResult,
     call_context,
+    made_by,
 )
 from dawoni.context.rules import GlobalRule, RuleStore
 from dawoni.context.tasks import RuleTarget, TaskDef
@@ -24,4 +25,5 @@ __all__ = [
     "TaskResult",
     "TemplateStore",
     "call_context",
+    "made_by",
 ]

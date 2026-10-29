@@ -146,6 +146,7 @@ export function App() {
           작업공간
           <br />
           <b title={status.workspace ?? ""}>{status.workspace?.split(/[\\/]/).pop() ?? "없음"}</b>
+          {(status.workspace_subjects ?? []).length > 0 && <> · {status.workspace_subjects!.join("·")}</>}
           <br />v{status.version}
         </div>
       </aside>

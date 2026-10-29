@@ -23,15 +23,21 @@ GROUP_ORDER = ("물리", "화학", "생명과학", "지구과학")
 
 class UnitStore:
     def __init__(self, ws: WorkspacePaths) -> None:
+        self.ws = ws
         self.dir = ws.units
 
     def _path(self, tree_id: str) -> Path:
         return self.dir / f"{tree_id}.json"
 
     def _ensure(self) -> None:
+        """처음 쓸 때 기본 단원표를 깐다. 과목 팀 작업공간이면 그 과목 것만."""
         if not self.dir.is_dir() or not any(self.dir.glob("*.json")):
+            from dawoni.workspace import workspace_subjects
+
+            subjects = workspace_subjects(self.ws)
             for t in default_trees():
-                write_model_atomic(self._path(t.id), t)
+                if not subjects or t.group in subjects:
+                    write_model_atomic(self._path(t.id), t)
 
     def all(self) -> list[UnitTree]:
         """과목군 순서(물리·화학·생명과학·지구과학, 그 밖은 뒤) → 단원표 ID 순."""

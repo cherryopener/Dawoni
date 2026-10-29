@@ -160,6 +160,8 @@ class GeneratedSet(DawoniModel):
     values: dict[str, float] | None = Field(default=None, description="수치형: 고른 값")
     extension: ExtensionConcept | None = None
     skill_ids: list[str] = Field(default_factory=lambda: list[str]())
+    agent: str | None = Field(default=None, description="문항을 만든 AI")
+    model: str | None = Field(default=None, description="문항을 만든 모델")
     created_at: datetime = Field(default_factory=utcnow)
     reviewed_by: str | None = None
     bank_item_id: str | None = Field(default=None, description="승인해 문제은행에 넣은 문항 ID")

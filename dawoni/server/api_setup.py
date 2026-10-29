@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from dawoni import __version__
 from dawoni.config import AGENT_NAMES, AgentName, AppConfig
@@ -17,7 +17,7 @@ from dawoni.server import files
 from dawoni.server.jobs import JobContext
 from dawoni.server.state import AppState, NeedsSetup
 from dawoni.sharing import cloud_provider, conflict_copies
-from dawoni.workspace import create_workspace, open_workspace, set_mode
+from dawoni.workspace import create_workspace, open_workspace, set_mode, set_subjects
 
 router = APIRouter(prefix="/api")
 
@@ -41,8 +41,10 @@ def status(st: AppState = State) -> dict[str, Any]:
     ws_ok = True
     ws_error: str | None = None
     mode: WorkspaceMode | None = None
+    subjects: list[str] = []
     try:
-        mode = open_workspace(st.services().workspace.root)[1].mode
+        meta = open_workspace(st.services().workspace.root)[1]
+        mode, subjects = meta.mode, meta.subjects
     except NeedsSetup as e:
         ws_ok, ws_error = False, str(e)
     return {
@@ -51,6 +53,7 @@ def status(st: AppState = State) -> dict[str, Any]:
         "workspace_ok": ws_ok,
         "workspace_error": ws_error,
         "workspace_mode": mode,
+        "workspace_subjects": subjects,
         "machine": st.machine,
         "default_agent": cfg.default_agent,
         "agents": {n: cfg.agent(n).model_dump(mode="json") for n in AGENT_NAMES},
@@ -155,13 +158,16 @@ class WorkspaceBody(BaseModel):
     create: bool = False
     name: str | None = None
     mode: WorkspaceMode = "personal"
+    subjects: list[str] = Field(
+        default_factory=lambda: list[str](), description="과목 팀 (비면 전체)"
+    )
 
 
 @router.post("/workspace")
 def set_workspace(body: WorkspaceBody, st: AppState = State) -> dict[str, Any]:
     root = Path(body.path).expanduser()
     if body.create:
-        create_workspace(root, body.name, body.mode)
+        create_workspace(root, body.name, body.mode, body.subjects)
     else:
         open_workspace(root)
     cfg = st.config()
@@ -179,6 +185,7 @@ def sharing(path: str | None = None, st: AppState = State) -> dict[str, Any]:
     _, meta = open_workspace(ws.root)
     return {
         "mode": meta.mode,
+        "subjects": meta.subjects,
         "provider": cloud_provider(ws.root),
         "conflicts": [c.model_dump() for c in conflict_copies(ws)],
     }
@@ -191,6 +198,16 @@ class ModeBody(BaseModel):
 @router.put("/workspace/mode")
 def put_mode(body: ModeBody, st: AppState = State) -> dict[str, Any]:
     set_mode(st.services().workspace.root, body.mode)
+    return sharing(None, st)
+
+
+class SubjectsBody(BaseModel):
+    subjects: list[str]
+
+
+@router.put("/workspace/subjects")
+def put_subjects(body: SubjectsBody, st: AppState = State) -> dict[str, Any]:
+    set_subjects(st.services().workspace.root, body.subjects)
     return sharing(None, st)
 
 

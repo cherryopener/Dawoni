@@ -46,6 +46,22 @@ _PREVIOUS_CLIP = 4_000
 
 _CANCEL: ContextVar[threading.Event | None] = ContextVar("dawoni_cancel", default=None)
 _PROGRESS: ContextVar[ProgressCallback | None] = ContextVar("dawoni_progress", default=None)
+_MADE_BY: ContextVar[list[tuple[str, str | None]] | None] = ContextVar(
+    "dawoni_made_by", default=None
+)
+
+
+@contextmanager
+def made_by() -> Generator[list[tuple[str, str | None]]]:
+    """이 안에서 성공한 `engine.run`의 (AI, 모델)을 차례로 모은다.
+
+    결과에 누가 만들었는지 남길 때 쓴다."""
+    calls: list[tuple[str, str | None]] = []
+    token = _MADE_BY.set(calls)
+    try:
+        yield calls
+    finally:
+        _MADE_BY.reset(token)
 
 
 @contextmanager
@@ -281,6 +297,8 @@ class ContextEngine:
                     if not errors:
                         rec.ok = True
                         self._log(rec)
+                        if (made := _MADE_BY.get()) is not None:
+                            made.append((res.agent, res.model))
                         return TaskResult(
                             value=value,
                             attempts=attempt,
