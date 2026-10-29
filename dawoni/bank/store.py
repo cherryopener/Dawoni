@@ -27,6 +27,10 @@ from dawoni.paths import WorkspacePaths
 PREVIEW_CHARS = 120
 
 
+SUMMARY_VERSION = 2
+"""요약 필드가 바뀌면 올린다 (PC별 캐시를 다시 만들게)."""
+
+
 class BankSummary(DawoniModel):
     """목록 한 줄."""
 
@@ -42,6 +46,7 @@ class BankSummary(DawoniModel):
     origin: ItemOrigin
     original_level: OriginalLevel | None
     solution_by: Literal["source", "ai"] | None
+    solved: bool = Field(description="풀이·해설이 있음 (없으면 DB화만 한 문항)")
     needs_check: bool
     reviewed: bool
     difficulty: int | None
@@ -65,6 +70,7 @@ def summarize(it: BankItem) -> BankSummary:
         origin=it.origin,
         original_level=it.original.level if it.original else None,
         solution_by=it.solution_by,
+        solved=it.solution is not None,
         needs_check=it.needs_check,
         reviewed=it.reviewed,
         difficulty=it.difficulty,
@@ -154,11 +160,15 @@ class BankStore:
         for item_id in self.ids():
             mtime = self._path(item_id).stat().st_mtime_ns
             hit = cache.get(item_id)
-            if hit and hit.get("mtime") == mtime:
+            if hit and hit.get("mtime") == mtime and hit.get("v") == SUMMARY_VERSION:
                 s = BankSummary.model_validate(hit["summary"])
             else:
                 s = summarize(self.get(item_id))
-            fresh[item_id] = {"mtime": mtime, "summary": s.model_dump(mode="json")}
+            fresh[item_id] = {
+                "mtime": mtime,
+                "v": SUMMARY_VERSION,
+                "summary": s.model_dump(mode="json"),
+            }
             out.append(s)
         if self._cache and fresh != cache:
             write_json_atomic(self._cache, fresh)

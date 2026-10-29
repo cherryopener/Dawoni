@@ -4,6 +4,7 @@ import {
   Badge,
   Button,
   Card,
+  Check,
   Empty,
   ErrorBox,
   Field,
@@ -20,6 +21,7 @@ import { api, errorText, useJob, useLoad } from "../../lib/api";
 import type { BankSource, BankSourceKind, SourceChunk, UnitTree } from "../../lib/types";
 import { unitLabel, walk } from "../../lib/units";
 import { SOURCE_KIND } from "../../lib/bank";
+import { SolveButton } from "../../components/SolveButton";
 
 /** '3-40, 45' → [3..40, 45] */
 export function parsePages(s: string): number[] {
@@ -119,7 +121,8 @@ function Upload({ trees, onDone }: { trees: UnitTree[]; onDone: () => void }) {
       <Stack>
         <span style={{ color: "var(--text-2)", fontSize: 13 }}>
           PDF를 넣으면 먼저 등록만 합니다 (AI 호출 없음). 두꺼운 책은 아래에서 단원·쪽 범위로 구간을 나눠 구간마다 DB화하세요.
-          문항마다 AI가 원본 답을 보지 않고 먼저 풀어 원본과 비교하고, 해설이 없거나 짧으면 학생용 해설을 답니다.
+          DB화는 문항과 원본 정답·해설을 옮겨 적기만 합니다. 풀이·해설은 필요할 때 “풀이 만들기”로 만듭니다 — AI가 원본 답을
+          보지 않고 먼저 풀어 원본과 비교하고, 해설이 없거나 짧으면 학생용 해설을 답니다.
         </span>
         <Row>
           <input type="file" accept="application/pdf" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
@@ -162,6 +165,7 @@ const STATUS: Record<SourceChunk["status"], { l: string; t: "neutral" | "warn" |
 
 function SourceCard({ src, trees, onChanged }: { src: BankSource; trees: UnitTree[]; onChanged: () => void }) {
   const mine = trees.filter((t) => src.unit_trees.includes(t.id));
+  const [solve, setSolve] = useState(false);
   return (
     <Card
       title={<>{src.title} <Badge>{SOURCE_KIND[src.kind]}</Badge></>}
@@ -172,18 +176,26 @@ function SourceCard({ src, trees, onChanged }: { src: BankSource; trees: UnitTre
           {[src.publisher, src.year, `${src.pages ?? "?"}쪽`, mine.map((t) => t.subject).join(" · "),
             `${src.ingest.item_count}문항`].filter(Boolean).join(" · ")}
         </span>
-        {src.chunks.map((c) => <ChunkRow key={c.index} src={src} c={c} trees={trees} onChanged={onChanged} />)}
-        <AddChunk src={src} trees={mine} onDone={onChanged} />
+        {src.chunks.map((c) => <ChunkRow key={c.index} src={src} c={c} trees={trees} solve={solve} onChanged={onChanged} />)}
+        <Row>
+          <AddChunk src={src} trees={mine} onDone={onChanged} />
+          <span style={{ flex: 1 }} />
+          <Check checked={solve} onChange={setSolve}>DB화하면서 풀이도 만들기 (느림)</Check>
+        </Row>
       </Stack>
     </Card>
   );
 }
 
-function ChunkRow({ src, c, trees, onChanged }: { src: BankSource; c: SourceChunk; trees: UnitTree[]; onChanged: () => void }) {
+function ChunkRow({ src, c, trees, solve, onChanged }: {
+  src: BankSource; c: SourceChunk; trees: UnitTree[]; solve: boolean; onChanged: () => void;
+}) {
   const job = useJob(onChanged);
   const st = STATUS[c.status];
   const start = () =>
-    void job.run(() => api.post(`/bank/sources/${src.source_id}/chunks/${c.index}/ingest`, { by: teacherName() || null }));
+    void job.run(() =>
+      api.post(`/bank/sources/${src.source_id}/chunks/${c.index}/ingest`, { by: teacherName() || null, solve }),
+    );
   return (
     <Stack gap={4}>
       <Row>
@@ -199,12 +211,17 @@ function ChunkRow({ src, c, trees, onChanged }: { src: BankSource; c: SourceChun
         <Button small variant={c.status === "ingested" ? "default" : "primary"} onClick={start} disabled={job.running}>
           {c.status === "ingested" ? "다시 (빠진 문항만)" : c.status === "failed" ? "다시 DB화" : "DB화"}
         </Button>
+        {c.item_ids.length > 0 && (
+          <SolveButton ids={[]} url={`/bank/sources/${src.source_id}/chunks/${c.index}/solve`}
+                       label={`이 구간 풀이 만들기 (${c.item_ids.length}문항 중 없는 것)`} onDone={onChanged} />
+        )}
       </Row>
       <JobProgress job={job.job} />
       <ErrorBox error={job.error} />
       {job.job?.status === "succeeded" && job.job.result && (
         <Info>
-          {String(job.job.result.added)}문항 추가 · 답 확인 필요 {String(job.job.result.needs_check)}
+          {String(job.job.result.added)}문항 추가
+          {solve ? ` · 답 확인 필요 ${String(job.job.result.needs_check)}` : " · 풀이는 “풀이 만들기”로"}
           {(job.job.result.warnings as string[]).map((w, i) => <div key={i}>! {w}</div>)}
         </Info>
       )}

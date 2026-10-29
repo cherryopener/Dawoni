@@ -7,7 +7,8 @@ dawoni units add gift --subject "영재 물리" --group 물리 --toc 목차.txt
 dawoni bank add 문제집.pdf --kind problem_bank --title "OO 물리 문제집" --units phy1 \\
     [--publisher OO학원] [--year 2026] [--pages 3-40 --key-pages 41-60 --unit phy1.1.1]
 dawoni bank chunk <자료ID> --pages 61-90 --key-pages 91-99 [--unit phy1.2]
-dawoni bank ingest <자료ID> [--chunk 2] [--by 김선생]      # AI 호출
+dawoni bank ingest <자료ID> [--chunk 2] [--by 김선생] [--solve]  # DB화 (풀이는 --solve 때만)
+dawoni bank solve <문항ID> … | --source <자료ID> [--chunk 2] [--redo]   # 풀이·해설 만들기 (AI)
 dawoni bank sources
 dawoni bank list [--unit phy1.1] [--check]
 dawoni bank show <문항ID>
@@ -166,11 +167,36 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
     for i in todo:
         _out(f"구간 {i}")
         res = bi.ingest_chunk(svc, sid, i, by=args.by, machine=machine_id(svc.paths),
-                              progress=progress)  # fmt: skip
+                              solve=args.solve, progress=progress)  # fmt: skip
         check = sum(it.needs_check for it in res.items)
-        _out(f"  → {len(res.items)}문항 추가, 이미 있음 {len(res.skipped)}, 답 확인 필요 {check}")
+        tail = f", 답 확인 필요 {check}" if args.solve else " (풀이는 `bank solve`로)"
+        _out(f"  → {len(res.items)}문항 추가, 이미 있음 {len(res.skipped)}{tail}")
         for w in res.warnings:
             _out(f"  ! {w}")
+    return 0
+
+
+def _cmd_solve(args: argparse.Namespace) -> int:
+    svc = _svc(args)
+    ids: list[str] = list(args.ids)
+    if args.source:
+        src = bi.get_source(svc.workspace, _source_id(svc, args.source))
+        ids += [i for c in src.chunks if args.chunk in (None, c.index) for i in c.item_ids]
+    if not ids:
+        return _err("풀 문항이 없습니다 (문항 ID나 --source를 주세요)")
+
+    def progress(done: int, total: int, msg: str) -> None:
+        _out(f"  [{done}/{total}] {msg}")
+
+    res = bi.solve_items(svc, ids, by=args.by, redo=args.redo, machine=machine_id(svc.paths),
+                         progress=progress)  # fmt: skip
+    check = [it.id for it in res.solved if it.needs_check]
+    _out(
+        f"풀이 {len(res.solved)}문항, 이미 있어 건너뜀 {len(res.skipped)}, "
+        f"답 확인 필요 {len(check)}"
+    )
+    for i in check:
+        _out(f"  ! {i}: 원본 답과 AI 답이 다름 — `bank show {i}`")
     return 0
 
 
@@ -296,7 +322,16 @@ def register(sub: Any) -> None:
     ig.add_argument("source")
     ig.add_argument("--chunk", type=int, help="이 구간만 (다시 하기 포함)")
     ig.add_argument("--by")
+    ig.add_argument("--solve", action="store_true", help="DB화하면서 풀이도 (느림)")
     ig.set_defaults(func=_wrap(_cmd_ingest))
+
+    so = bs.add_parser("solve", help="풀이·해설 만들기 (AI 호출)")
+    so.add_argument("ids", nargs="*", help="문항 ID")
+    so.add_argument("--source", help="이 자료의 DB화한 문항 전부")
+    so.add_argument("--chunk", type=int, help="--source의 이 구간만")
+    so.add_argument("--redo", action="store_true", help="이미 풀이가 있어도 다시")
+    so.add_argument("--by")
+    so.set_defaults(func=_wrap(_cmd_solve))
 
     bs.add_parser("sources", help="자료 목록").set_defaults(func=_wrap(_cmd_sources))
 

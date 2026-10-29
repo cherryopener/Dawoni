@@ -158,6 +158,7 @@ def add_chunks(source_id: str, body: ChunksBody, st: AppState = State) -> Source
 
 class IngestBody(BaseModel):
     by: str | None = None
+    solve: bool = Field(default=False, description="DB화하면서 풀이도 (느림 — 보통은 나중에)")
 
 
 @router.post("/bank/sources/{source_id}/chunks/{index}/ingest")
@@ -168,7 +169,7 @@ def ingest_chunk(source_id: str, index: int, body: IngestBody, st: AppState = St
 
     def run(ctx: JobContext) -> dict[str, Any]:
         res = bi.ingest_chunk(svc, source_id, index, by=body.by, machine=st.machine,
-                              progress=ctx.progress)  # fmt: skip
+                              solve=body.solve, progress=ctx.progress)  # fmt: skip
         return {
             "added": len(res.items),
             "skipped": len(res.skipped),
@@ -177,6 +178,45 @@ def ingest_chunk(source_id: str, index: int, body: IngestBody, st: AppState = St
         }
 
     return st.jobs.submit("bank_ingest", run, {"source": source_id, "chunk": index})
+
+
+class SolveBody(BaseModel):
+    ids: list[str] = Field(default_factory=lambda: list[str]())
+    redo: bool = Field(default=False, description="이미 풀이가 있어도 다시")
+    by: str | None = None
+
+
+def _solve_job(st: AppState, ids: list[str], body: SolveBody, params: dict[str, Any]) -> Job:
+    svc = st.services()
+    if not ids:
+        raise BankError("풀 문항을 고르세요")
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        res = bi.solve_items(svc, ids, by=body.by, redo=body.redo, machine=st.machine,
+                             progress=ctx.progress)  # fmt: skip
+        return {
+            "solved": len(res.solved),
+            "skipped": len(res.skipped),
+            "needs_check": sum(it.needs_check for it in res.solved),
+        }
+
+    return st.jobs.submit("bank_solve", run, params)
+
+
+@router.post("/bank/items/solve")
+def solve_items(body: SolveBody, st: AppState = State) -> Job:
+    """고른 문항의 풀이·해설 만들기 (원본을 보지 않고 풀어 원본 답과 비교)."""
+    return _solve_job(st, body.ids, body, {"items": len(body.ids)})
+
+
+@router.post("/bank/sources/{source_id}/chunks/{index}/solve")
+def solve_chunk(source_id: str, index: int, body: SolveBody, st: AppState = State) -> Job:
+    """구간(챕터)의 DB화한 문항 전부 풀이 만들기."""
+    src = get_source(st.services().workspace, source_id)
+    chunk = next((c for c in src.chunks if c.index == index), None)
+    if chunk is None:
+        raise KeyError(f"구간 {index} 없음")
+    return _solve_job(st, chunk.item_ids, body, {"source": source_id, "chunk": index})
 
 
 # ---------------------------------------------------------------- 문항

@@ -27,6 +27,7 @@ import { go } from "../lib/router";
 import type { BankItem, BankSummary, ExportResult, Scope, ScopeSummary, UnitTree } from "../lib/types";
 import { bankFileUrl, SOURCE_KIND } from "../lib/bank";
 import { descendants, resolve, unitCounts, unitLabel } from "../lib/units";
+import { SolveButton } from "../components/SolveButton";
 import { SolutionView } from "./exam/Rubrics";
 import { SourcesTab } from "./bank/Sources";
 import { UnitsTab } from "./bank/Units";
@@ -69,7 +70,7 @@ export function BankPage({ tab }: { tab?: string }) {
 
 // ---------------------------------------------------------------- 문항 목록
 
-type Status = "all" | "check" | "ai" | "unreviewed" | "reviewed";
+type Status = "all" | "unsolved" | "check" | "ai" | "unreviewed" | "reviewed";
 
 export function useBank() {
   const trees = useLoad<UnitTree[]>("/units");
@@ -98,6 +99,7 @@ export function BankBrowser({ trees, items, picked, onPick, selected, onSelect }
       if (want && !i.unit_ids.some((u) => want.has(resolve(trees, u)))) return false;
       if (kind !== "all" && i.source_kind !== kind) return false;
       if (itype !== "all" && i.item_type !== itype) return false;
+      if (status === "unsolved" && i.solved) return false;
       if (status === "check" && !i.needs_check) return false;
       if (status === "ai" && i.solution_by !== "ai") return false;
       if (status === "unreviewed" && i.reviewed) return false;
@@ -130,6 +132,7 @@ export function BankBrowser({ trees, items, picked, onPick, selected, onSelect }
           ]} /></div>
           <div style={{ width: 140 }}><Select<Status> value={status} onChange={setStatus} options={[
             { value: "all", label: "상태 전체" },
+            { value: "unsolved", label: "풀이 없음" },
             { value: "check", label: "답 확인 필요" },
             { value: "ai", label: "AI 해설" },
             { value: "unreviewed", label: "검토 전" },
@@ -182,6 +185,7 @@ export function BankBrowser({ trees, items, picked, onPick, selected, onSelect }
                     <span style={{ fontSize: 12, color: "var(--text-2)" }}>{i.source}</span>
                     <Badge>{ITEM_TYPE[i.item_type]}</Badge>
                     {i.unit_ids[0] && <Badge tone="accent">{unitLabel(trees, i.unit_ids[0], true)}</Badge>}
+                    {!i.solved && <Badge tone="warn">풀이 없음</Badge>}
                     {i.needs_check && <Badge tone="bad">답 확인 필요</Badge>}
                     {i.solution_by === "ai" && <Badge>AI 해설</Badge>}
                     {i.origin !== "ingested" && <Badge tone="ok">{i.origin === "variant" ? "동형" : "새 문제"}</Badge>}
@@ -203,10 +207,14 @@ function ItemsTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   if (trees.error || items.error) return <ErrorBox error={trees.error ?? items.error} />;
   if (!trees.data || !items.data) return <Loading />;
-  const ids = items.data.filter((i) => selected.has(i.id)).map((i) => i.id);
+  const chosen = items.data.filter((i) => selected.has(i.id));
+  const ids = chosen.map((i) => i.id);
   return (
     <Stack gap={12}>
-      {ids.length > 0 && <SelectionBar ids={ids} />}
+      {ids.length > 0 && (
+        <SelectionBar ids={ids} unsolved={chosen.filter((i) => !i.solved).map((i) => i.id)}
+                      onSolved={() => items.reload()} />
+      )}
       <BankBrowser trees={trees.data} items={items.data} picked={picked} onPick={setPicked}
                    selected={selected} onSelect={setSelected} />
       {picked && (
@@ -219,7 +227,7 @@ function ItemsTab() {
 
 // ---------------------------------------------------------------- 고른 문항으로
 
-function SelectionBar({ ids }: { ids: string[] }) {
+function SelectionBar({ ids, unsolved, onSolved }: { ids: string[]; unsolved: string[]; onSolved: () => void }) {
   const [title, setTitle] = useState("단원 평가");
   const [withQ, setWithQ] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -246,6 +254,9 @@ function SelectionBar({ ids }: { ids: string[] }) {
           <Button small onClick={() => make("key")} disabled={busy}>정답 및 해설 Word</Button>
           <Check checked={withQ} onChange={setWithQ}>해설에 문제도</Check>
           <span style={{ flex: 1 }} />
+          {unsolved.length > 0 && (
+            <SolveButton ids={unsolved} label={`풀이 없는 ${unsolved.length}문항 풀이 만들기`} onDone={onSolved} />
+          )}
           <Button small onClick={() => setToExam(true)}>채점용 시험으로 만들기</Button>
           {ids.length === 1 && (
             <Button small onClick={() => go("make", "variant", ids[0] ?? "")}>이 문제로 동형 만들기</Button>
@@ -382,6 +393,27 @@ export function ItemDetail({ id, trees, onClose, onChanged }: {
             )}
           </Card>
 
+          {!it.solution && (
+            <Notice>
+              <Row>
+                <span>
+                  아직 풀이·해설이 없습니다 (DB화만 한 문항).
+                  {it.original?.parts.some((p) => p.answer) && " 원본 정답은 아래에 있습니다."} AI가 원본을 보지 않고 풀어 원본 답과 비교합니다.
+                </span>
+                <span style={{ flex: 1 }} />
+                <SolveButton ids={[it.id]} label="풀이·해설 만들기" onDone={() => { reload(); onChanged(); }} />
+              </Row>
+            </Notice>
+          )}
+          {!it.solution && it.original?.parts.some((p) => p.answer) && (
+            <Card title="원본 정답">
+              <Row>
+                {it.original.parts.filter((p) => p.answer).map((p, k) => (
+                  <span key={k}>{p.label && <b>{p.label} </b>}<Loose text={p.answer ?? ""} /></span>
+                ))}
+              </Row>
+            </Card>
+          )}
           <AnswerCompare it={it} onResolve={resolveSide} />
 
           {it.original && it.original.parts.some((p) => p.solution.trim()) && (
@@ -394,7 +426,9 @@ export function ItemDetail({ id, trees, onClose, onChanged }: {
             </Card>
           )}
           {it.solution && (
-            <Card title={aiTitle(it)}>
+            <Card title={aiTitle(it)} actions={
+              <SolveButton ids={[it.id]} redo label="다시 풀기" onDone={() => { reload(); onChanged(); }} />
+            }>
               <SolutionView sol={it.solution} scope={unitScope(it, data.unit_labels)} />
             </Card>
           )}

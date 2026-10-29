@@ -50,7 +50,15 @@ def auto_scope(svc: Services, tree_ids: list[str]) -> tuple[ScopeProfile, dict[s
 def base_for(
     svc: Services, it: BankItem, scope_id: str | None
 ) -> tuple[ScopeProfile, ScopedSolution | None, list[str]]:
-    """(범위, 기준 문항 풀이, 경고). 풀이 ID가 범위와 맞지 않으면 그 범위로 다시 푼다."""
+    """(범위, 기준 문항 풀이, 경고). 풀이 ID가 범위와 맞지 않으면 그 범위로 다시 푼다.
+
+    아직 풀지 않은 문항(풀이 없이 DB화)이면 먼저 풀어 문제은행에 저장한다 (원본 답과 비교 포함).
+    """
+    if it.solution is None and it.answer_check is None:
+        from dawoni.bank.ingest import solve_items
+        from dawoni.sharing import machine_id
+
+        it = solve_items(svc, [it.id], machine=machine_id(svc.paths)).solved[0]
     if it.needs_check:
         raise BankError(
             "답 확인이 필요한 문항입니다 — 문제은행에서 원본 답과 AI 답 중 맞는 쪽을 먼저 고르세요"

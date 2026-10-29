@@ -1,13 +1,18 @@
 """교재·문제집·기출 PDF → 문제은행 (구간 단위).
 
 구간 하나 = 문제 쪽 + 정답·해설 쪽. 문제집은 단원마다 번호가 1번부터 다시 시작하므로
-해설 번호는 구간 안에서만 맞춘다. 순서:
+해설 번호는 구간 안에서만 맞춘다.
+
+**DB화** (`ingest_chunk`) — AI 풀이 없이:
 1. 레이아웃 분석 → 쪽별 문항 구조화 (시험지 DB화와 같은 `extract_exam`)
-2. 정답·해설 쪽이 있으면 읽는다 (`extract_answer_key`)
-3. 문항마다 AI가 **원본을 보지 않고** 단원표 범위로 푼다 → 풀이에 쓴 개념으로 단원을 정한다
-4. 원본 답이 있으면 코드로 비교, 다르거나 비교할 수 없으면 두 답을 각각 독립 검산
+2. 정답·해설 쪽이 있으면 읽는다 (`extract_answer_key`) — 원본을 옮겨 적을 뿐 풀지 않는다
+3. 단원은 구간 단원으로 둔다
+
+**풀이** (`solve_items`, 강사가 요청할 때 — DB화하면서 같이 할 수도 있음):
+1. AI가 **원본을 보지 않고** 단원표 범위로 푼다 → 풀이에 쓴 개념으로 단원을 정한다
+2. 원본 답이 있으면 코드로 비교, 다르거나 비교할 수 없으면 두 답을 각각 독립 검산
    (실측: 해설지 자체가 틀린 경우가 있다 — θ·α 뒤바뀜). 원본 답이 없으면 한 번 더 풀어 비교
-5. 원본 해설이 충분하면 원본을, 없거나 짧으면 AI 해설을 쓴다. 원본은 지우지 않고 둔다
+3. 원본 해설이 충분하면 원본을, 없거나 짧으면 AI 해설을 쓴다. 원본은 지우지 않고 둔다
 """
 
 from __future__ import annotations
@@ -325,8 +330,12 @@ def ingest_chunk(
     *,
     by: str | None = None,
     machine: str = "",
+    solve: bool = False,
     progress: Progress = _noop,
 ) -> ChunkResult:
+    """구간 하나를 DB화. `solve`면 문항마다 AI 풀이·원본 비교도 한다.
+
+    풀이는 느려서 보통은 끄고, 필요할 때 `solve_items`로."""
     from dawoni.ingest.answer_key import extract_answer_key
     from dawoni.ingest.exam import extract_exam
 
@@ -380,14 +389,13 @@ def ingest_chunk(
         ref_kind = src.kind if src.kind != "handwriting" else "other"
         for k, q in enumerate(extracted.questions, start=1):
             item_id = item_id_for(src, chunk, k)
-            progress(1 + k, steps, f"문항 {q.number} 풀이·비교")
+            progress(1 + k, steps, f"문항 {q.number} {'풀이·비교' if solve else '저장'}")
             chunk = chunk.model_copy(update={"updated_at": utcnow()})
             _set_chunk(svc, source_id, chunk)
             if bank.exists(item_id):
                 res.skipped.append(item_id)
                 continue
             parts = keys.get(q.number, [])
-            sol, cmp = solve_bank_question(svc, q, scope, parts)
             level = original_level(parts)
             figs = bank.add_figures(item_id, extracted.figure_files.get(q.number, {}))
             item = q.item.model_copy(
@@ -399,7 +407,7 @@ def ingest_chunk(
                 id=item_id,
                 question=q.model_copy(update={"item": item}),
                 subject=trees[0].subject if len(trees) == 1 else subject,
-                unit_ids=units_from_solution(sol, mapping, chunk.unit_hint),
+                unit_ids=[chunk.unit_hint] if chunk.unit_hint else [],
                 origin="ingested",
                 source=BankSourceRef(
                     source_id=src.source_id, title=src.title or src.filename, kind=ref_kind,
@@ -408,12 +416,9 @@ def ingest_chunk(
                 ),
                 original=OriginalSolution(level=level, parts=parts, pages=chunk.key_pages)
                 if parts else OriginalSolution(level="none"),
-                solution=sol,
-                solution_by="source" if level == "full" and cmp.verdict == "same" else "ai",
-                concept_units={c: u for c, u in mapping.items()
-                               if any(c in s.uses for s in sol.steps)},
-                answer_check=cmp,
             )  # fmt: skip
+            if solve:
+                it = with_solution(it, *solve_bank_question(svc, q, scope, parts), mapping)
             it = bank.save(it, by=by)
             res.items.append(it)
             chunk = chunk.model_copy(update={"item_ids": [*chunk.item_ids, item_id]})
@@ -434,6 +439,87 @@ def ingest_chunk(
         )  # fmt: skip
         _set_chunk(svc, source_id, failed)
         raise
+
+
+# ---------------------------------------------------------------- 풀이 (요청할 때)
+
+
+def with_solution(
+    it: BankItem, sol: ScopedSolution, cmp: AnswerComparison, mapping: dict[str, str]
+) -> BankItem:
+    """AI 풀이·원본 비교를 문항에 넣고, 풀이에 쓴 개념으로 단원을 정한다 (구간 단원이 맨 앞)."""
+    level = it.original.level if it.original else "none"
+    hint = it.unit_ids[0] if it.unit_ids else None
+    return it.model_copy(
+        update={
+            "solution": sol,
+            "solution_by": "source" if level == "full" and cmp.verdict == "same" else "ai",
+            "concept_units": {c: u for c, u in mapping.items()
+                              if any(c in st.uses for st in sol.steps)},
+            "answer_check": cmp,
+            "unit_ids": units_from_solution(sol, mapping, hint) if mapping else it.unit_ids,
+        }
+    )  # fmt: skip
+
+
+def solve_trees(svc: Services, it: BankItem) -> list[UnitTree]:
+    """풀 때 쓸 단원표: DB화한 자료의 단원표, 없으면 문항 단원의 단원표."""
+    units = UnitStore(svc.workspace)
+    ids: list[str] = []
+    if it.source.source_id:
+        try:
+            ids = get_source(svc.workspace, it.source.source_id).unit_trees
+        except KeyError:
+            ids = []
+    if not ids:
+        ids = list(dict.fromkeys(u.split(".", 1)[0] for u in it.unit_ids))
+    if not ids:
+        raise BankError(f"{it.id}: 단원이 없는 문항입니다 — 단원을 먼저 정하세요")
+    return [units.get(t) for t in ids]
+
+
+@dataclass
+class SolveResult:
+    solved: list[BankItem] = field(default_factory=lambda: list[BankItem]())
+    skipped: list[str] = field(default_factory=lambda: list[str]())
+    """이미 풀이가 있어 건너뜀 (`redo`가 아니면)."""
+
+
+def solve_items(
+    svc: Services,
+    item_ids: list[str],
+    *,
+    by: str | None = None,
+    redo: bool = False,
+    machine: str = "",
+    progress: Progress = _noop,
+) -> SolveResult:
+    """문항 풀이·해설을 만든다 (원본을 보지 않고 풀어 원본 답과 비교). 문항 여러 개는 동시에.
+
+    다른 PC가 같은 문항을 풀고 있으면 그 문항은 막고,
+    그새 다른 강사가 문항을 고쳤으면 저장을 거부한다.
+    """
+    from dawoni import sharing
+    from dawoni.grading.workflow import each_in_parallel
+
+    bank = BankStore(svc.workspace)
+    items = [bank.get(i) for i in dict.fromkeys(item_ids)]
+    res = SolveResult(skipped=[it.id for it in items if it.solution is not None and not redo])
+    todo = [it for it in items if it.id not in res.skipped]
+
+    def one(it: BankItem) -> BankItem:
+        with sharing.work_mark(bank.item_dir(it.id), "solve", "solve", machine, by):
+            scope, mapping = unit_scope(solve_trees(svc, it))
+            parts = it.original.parts if it.original else []
+            sol, cmp = solve_bank_question(svc, it.question, scope, parts)
+            return bank.save(with_solution(it, sol, cmp, mapping), by=by, base_revision=it.revision)
+
+    res.solved = each_in_parallel(
+        todo, one, name=lambda it: f"{it.source.display()}", what="풀이",
+        workers=svc.config.parallel_questions, progress=progress,
+    )  # fmt: skip
+    progress(len(todo), len(todo), f"{len(res.solved)}문항 풀이 완료")
+    return res
 
 
 def safe_message(e: BaseException) -> str:

@@ -214,6 +214,7 @@ def setup(
         cfg.agents["agy"].executable = str(exe)
         cfg.agents["claude"].enabled = False
         cfg.agents["codex"].enabled = False
+        cfg.parallel_questions = 1  # 가짜 AI 응답 순서를 고정
         save_config(app_paths, cfg)
         ws = create_workspace(tmp_path / "ws")
         svc = open_services(ws.root, paths=app_paths)
@@ -242,7 +243,7 @@ def test_ingest_chunk_compares_with_original(setup: Setup) -> None:
             {"verdict": "invalid", "reasoning": "질량을 두 번 나눔"},
         ]
     )
-    res = bi.ingest_chunk(svc, sid, 1, by="김선생", machine="pc-a")
+    res = bi.ingest_chunk(svc, sid, 1, by="김선생", machine="pc-a", solve=True)
     assert len(fake_prompts(exe)) == 4, "원본 답이 있으면 한 번만 풀고, 다를 때만 검산"
     one, two = res.items
     assert one.answer_check and one.answer_check.verdict == "same" and not one.needs_check
@@ -268,11 +269,51 @@ def test_no_original_answer_solves_twice(setup: Setup) -> None:
     )
     src = bi.get_source(svc.workspace, sid)
     src = bi.add_chunks(svc, src, [SourceChunk(index=1, pages=[1])])  # 해설 쪽 없음
-    res = bi.ingest_chunk(svc, sid, 2)
+    res = bi.ingest_chunk(svc, sid, 2, solve=True)
     one, two = res.items
     assert one.needs_check and one.answer_check and one.answer_check.verdict == "unsure"
     assert two.answer_check and two.answer_check.verdict == "no_original" and not two.needs_check
     assert two.original and two.original.level == "none"
+    assert len(fake_prompts(exe)) == 4
+
+
+def test_ingest_without_solving_then_solve_on_request(setup: Setup) -> None:
+    from dawoni.sharing import WorkInProgress, work_mark
+
+    svc, sid, exe = setup(
+        [
+            _sol("③", ["C5"]),
+            _sol("4", ["C4", "C4", "C3"], "4"),
+            {"verdict": "valid", "reasoning": "a=2가 조건을 만족"},
+            {"verdict": "invalid", "reasoning": "질량을 두 번 나눔"},
+        ]
+    )
+    res = bi.ingest_chunk(svc, sid, 1, by="김선생", machine="pc-a")
+    assert fake_prompts(exe) == [], "DB화만: AI 풀이 없음 (문항 구조화·해설지 읽기만)"
+    one, two = res.items
+    assert one.solution is None and one.answer_check is None and not one.needs_check
+    assert one.unit_ids == ["phy1.1.1"], "단원은 구간 단원"
+    assert one.original and one.original.parts[0].answer == "③", "원본 답은 옮겨 둔다"
+
+    # 다른 PC가 풀고 있는 문항은 막는다
+    bank = BankStore(svc.workspace)
+    with (
+        work_mark(bank.item_dir(one.id), "solve", "solve", "pc-b", "이선생"),
+        pytest.raises(WorkInProgress, match="이선생 선생님이 지금 만들고"),
+    ):
+        bi.solve_items(svc, [one.id], machine="pc-a")
+    assert fake_prompts(exe) == []
+
+    out = bi.solve_items(svc, [one.id, two.id], by="이선생", machine="pc-a")
+    assert len(fake_prompts(exe)) == 4 and out.skipped == []
+    one, two = out.solved
+    assert one.answer_check and one.answer_check.verdict == "same"
+    assert one.unit_ids == ["phy1.1.1", "phy1.1.1.3"], "풀고 나면 풀이에 쓴 단원도"
+    assert two.needs_check and two.updated_by == "이선생" and two.created_by == "김선생"
+    assert bank.get(two.id).solution is not None, "저장됨"
+
+    again = bi.solve_items(svc, [one.id, two.id], machine="pc-a")
+    assert again.solved == [] and again.skipped == [one.id, two.id], "이미 풀었으면 건너뜀"
     assert len(fake_prompts(exe)) == 4
 
 
@@ -455,7 +496,10 @@ def test_api_units_items_export(app_paths: AppPaths, tmp_path: Path) -> None:
     assert r.status_code == 400 and "이선생" in r.json()["detail"], "옛 판으로 고치면 거부"
 
     rows = c.get("/api/bank/items").json()
-    assert [(x["id"], x["needs_check"]) for x in rows] == [("bk-a1", True)]
+    assert [(x["id"], x["needs_check"], x["solved"]) for x in rows] == [("bk-a1", True, False)]
+    r = c.post("/api/bank/items/solve", json={"ids": []})
+    assert r.status_code == 400 and "풀 문항" in r.json()["detail"]
+    assert c.post("/api/bank/sources/none/chunks/1/solve", json={}).status_code == 404
     got = c.get("/api/bank/items/bk-a1").json()
     assert got["unit_labels"]["phy1.1.1"].endswith("에너지와 열"), "합친 단원 이름으로 보임"
     r = c.post(
@@ -597,3 +641,19 @@ def test_variant_from_bank_item_goes_back_to_bank(
     assert made.answer_check and made.answer_check.verdict == "no_original" and not made.needs_check
     assert GenStore(ws).get(s.id).status == "approved"
     assert approve_to_bank(svc, s.id).id == made.id, "두 번 넣지 않음"
+
+
+def test_variant_base_is_solved_first_when_unsolved(setup: Setup) -> None:
+    from dawoni.bank.make import base_for
+
+    svc, sid, exe = setup([_sol("③", ["C5"])])
+    one, _ = bi.ingest_chunk(svc, sid, 1, machine="pc-a").items
+    assert one.solution is None
+    _, sol, warnings = base_for(svc, one, None)
+    assert sol is not None and sol.final_answer.latex == "③" and warnings == []
+    assert len(fake_prompts(exe)) == 1, "한 번 풀어 원본 답과 비교 (같으면 검산 없음)"
+    saved = BankStore(svc.workspace).get(one.id)
+    assert saved.solution is not None and saved.answer_check is not None, (
+        "푼 결과는 문제은행에 저장"
+    )
+    assert saved.answer_check.verdict == "same"

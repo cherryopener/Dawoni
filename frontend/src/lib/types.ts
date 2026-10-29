@@ -548,6 +548,7 @@ export type BankSummary = {
   origin: "ingested" | "variant" | "new";
   original_level: OriginalLevel | null;
   solution_by: "source" | "ai" | null;
+  solved: boolean;
   needs_check: boolean;
   reviewed: boolean;
   difficulty: number | null;

@@ -12,7 +12,7 @@ import re
 import socket
 import uuid
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -115,13 +115,13 @@ class WorkMark(DawoniModel):
 
 
 @contextmanager
-def working_on(
-    ws: WorkspacePaths, exam_id: str, task: str, label: str, machine: str, teacher: str | None
+def work_mark(
+    folder: Path, name: str, task: str, machine: str, teacher: str | None
 ) -> Generator[None]:
-    """`exams/<id>/.locks/<task>-<label>.json` 표식을 두고 작업한다.
+    """`<folder>/.locks/<name>.json` 표식을 두고 작업한다.
 
-    다른 PC의 새 표식이 있으면 막는다 (같은 문항의 AI 호출이 겹치지 않게)."""
-    path = ws.exams / exam_id / ".locks" / f"{task}-{_safe(label)}.json"
+    다른 PC의 새 표식이 있으면 막는다 (같은 것의 AI 호출이 겹치지 않게)."""
+    path = folder / ".locks" / f"{_safe(name)}.json"
     if path.is_file():
         try:
             x = WorkMark.model_validate(read_json(path))
@@ -135,6 +135,13 @@ def working_on(
         yield
     finally:
         path.unlink(missing_ok=True)
+
+
+def working_on(
+    ws: WorkspacePaths, exam_id: str, task: str, label: str, machine: str, teacher: str | None
+) -> AbstractContextManager[None]:
+    """시험 문항 하나의 해설·루브릭 등: `exams/<id>/.locks/<task>-<label>.json`."""
+    return work_mark(ws.exams / exam_id, f"{task}-{label}", task, machine, teacher)
 
 
 def _safe(s: str) -> str:
