@@ -261,6 +261,8 @@ def test_type_mismatch(q3: ExamQuestion) -> None:
     mc = q3.model_copy(update={"item": q3.item.model_copy(update={"item_type": "multiple_choice"})})
     assert type_mismatch(kq("⑤"), essay) and not type_mismatch(kq("4초, 40m/s"), essay)
     assert type_mismatch(kq("4초, 40m/s"), mc) and not type_mismatch(kq("③ (ㄱ, ㄷ)"), mc)
+    assert not type_mismatch(kq("ㄱ, ㄷ"), mc), "합답형 조합"
+    assert not type_mismatch(kq("3"), mc), "숫자 번호"
     blank = KeyQuestion(number="3", parts=[KeyPart(label="", credit_policy="none")])
     assert not type_mismatch(blank, mc)
 

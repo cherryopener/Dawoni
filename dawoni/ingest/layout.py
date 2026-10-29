@@ -46,7 +46,8 @@ _BARE_NUMBER = re.compile(r"^\s*\d{1,3}\s*[.．]\s*(?:[A-Za-z]{1,2})?\s*$")
 "7. 원운동" 같은 챕터 머리말은 해당하지 않는다."""
 MAX_STEP = 5
 """번호 흐름: 다음 문항 번호는 앞 번호보다 크고 이만큼 이내."""
-_POINTS = re.compile(r"\[\s*(?:총\s*)?(\d+(?:\.\d+)?)\s*점\s*\]")
+_POINTS = re.compile(r"[\[［~]\s*(?:총\s*)?(\d+(?:\.\d+)?)\s*점\s*[\]］₩]")
+"""배점 "[3점]" — 수능 PDF는 괄호가 글꼴 탓에 "~3점₩"로 나온다 (실측)."""
 _TOTAL = re.compile(r"\[\s*총\s*(\d+(?:\.\d+)?)\s*점\s*\]")
 
 
@@ -247,15 +248,26 @@ def _drawings(
     """(영역, 그리기 명령 종류, 채움 여부). 머리말·꼬리말·구분선 제외."""
     out: list[tuple[Rect, list[str], bool]] = []
     col_w = min(b - a for a, b in columns)
+    body_h = footer_y - header_y
+
+    def separator(r: Rect) -> bool:
+        return (r.w < 3 and r.h > body_h * 0.6) or (r.h < 3 and r.w > col_w * 0.85)
+
     for d in page.get_drawings():
         r = Rect.of(d["rect"])
-        if r.y1 <= header_y or r.y0 >= footer_y:
+        if r.y1 <= header_y or r.y0 >= footer_y or separator(r):
             continue
-        if r.w < 3 and r.h > (footer_y - header_y) * 0.6:  # 단 구분선
+        items = d["items"]
+        kinds = [str(item[0]) for item in items]
+        if all(k == "l" for k in kinds) and len(items) > 1 and (r.w > col_w or r.h > body_h * 0.5):
+            # 여러 선이 한 명령으로 묶인 큰 것 (실측: 쪽 위 가로선 + 단 구분 세로선 → 쪽 전체 크기가
+            # 되어 쪽의 그림을 모두 하나로 이었다) → 선마다 따로, 구분선은 뺀다
+            for item in items:
+                a, b = item[1], item[2]
+                seg = Rect(min(a.x, b.x), min(a.y, b.y), max(a.x, b.x), max(a.y, b.y))
+                if not separator(seg) and header_y < seg.cy < footer_y:
+                    out.append((seg, ["l"], False))
             continue
-        if r.h < 3 and r.w > col_w * 0.85:  # 가로 구분선
-            continue
-        kinds = [str(item[0]) for item in d["items"]]
         out.append((r, kinds, d.get("fill") is not None))
     return out
 

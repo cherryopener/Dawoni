@@ -29,6 +29,8 @@ uv run dawoni ui                               # 앱 창 (macOS: pywebview, Wind
 - 화면 개발: `uv run dawoni ui --no-window`로 서버를 켠 채 `cd frontend && npm run dev`,
   터미널에 찍힌 주소의 `/login?t=…` 부분을 `http://localhost:5173/login?t=…`로 열기.
 - 프론트 검사: `cd frontend && npm run typecheck && npm test`
+- 실제 자료 회귀 테스트: `tests/test_real_layouts.py` — `real_data/`(git 제외)에 실측한 교재·기출이 있을 때만
+  돈다 (AI 없음). 레이아웃·챕터 제안을 고친 뒤 꼭 돌린다. 새 자료를 실측하면 기대값을 더한다.
 
 ## 서술형 채점: 해설지 기준 루브릭
 
@@ -118,7 +120,9 @@ uv run dawoni bank ingest <자료ID> [--chunk 2] [--solve]   # 구간 DB화 (AI 
 uv run dawoni bank solve <문항ID> … | --source <자료ID> [--chunk 2] [--redo]   # 풀이·해설 만들기
 uv run dawoni bank add 교재.pdf --kind textbook --title "OO 물리학 I" --units phy1 \
     --level "고등학교 물리학 I"                              # 교재: 챕터 표를 제안해 저장 (AI 없음)
-uv run dawoni bank chapters <자료ID> [--apply]             # 챕터 표 다시 제안
+uv run dawoni bank chapters <자료ID> [--apply]             # 챕터 표 다시 제안 (+ 점검 보고)
+uv run dawoni bank add 기출.pdf --kind mock_exam --title "2011 수능 물리I" --units phy1 \
+    --key-pdf 기출_해설.pdf                                 # 해설 PDF가 따로 있으면 뒤에 붙여 한 자료로
 uv run dawoni bank list [--unit phy1.1] [--check]
 uv run dawoni bank export <문항ID> … --kind paper|key --title "단원 평가"
 ```
@@ -137,8 +141,16 @@ uv run dawoni bank export <문항ID> … --kind paper|key --title "단원 평가
   - 챕터 개념 쪽 → 그 단원이 붙은 **범위 프로필**(범위 프로필 → 단원으로 만들기에 그대로 쓰임).
     챕터 문제 쪽 → 문제은행 (풀지 않고).
   - 문항 번호는 챕터마다 1번부터 시작해도, 책 전체에서 이어져도 된다 (가장 길게 이어지는 번호 줄기를 문항으로).
-    PDF 목차가 없으면 앞쪽의 글 목차("1. 속도와 가속도 ……… 2")를 읽고, 권말 해설은 문항 번호로 챕터에 나눈다.
+    챕터 경계는 PDF 목차 → 앞쪽 글 목차("1. 속도와 가속도 ……… 2") → 강 제목 줄("제1강 등속운동") 순으로 찾는다.
+  - 한 강에 문제 묶음("기본 문제", "학습 과제", "실전 문제" …)이 여럿이면 묶음마다 구간 하나 — 번호가 묶음마다
+    1번부터 다시 시작해도 된다. 문항 영역은 묶음 제목에서 끊긴다.
+  - 권말 해설은 문항 번호로(번호가 이어질 때) 또는 챕터 제목으로 나눈다. 묶음마다 1번부터인데 해설을 챕터
+    단위로만 나눌 수 있으면 붙이지 않고 알린다 (다른 묶음의 같은 번호 답이 붙지 않게). 해설 읽기는 문항 유형과
+    모양이 맞지 않는 답(서술형에 ⑤만, 객관식에 선지 번호 없음)을 버린다.
+  - **DB화 전 점검**: 챕터 제안·"점검" 버튼이 구간마다 실제로 문항 번호를 찾아 빠진 번호, 두 번 인쇄된 번호,
+    해설 쪽 없는 구간을 알린다 (AI 없음, AI 비용을 쓰기 전에 표를 고치게).
   - 쪽 하나가 구조화 검증을 끝내 통과하지 못해도 나머지 문항은 저장하고 그 쪽을 알린다. 다시 DB화하면 그 쪽만 읽는다.
+    중간 결과(쪽 그림·쪽별 읽기)는 공유 폴더가 아니라 PC의 앱 데이터 폴더(`cache/bank-work/`)에 둔다.
 - **해설 채우기** (풀이할 때): AI는 원본 답을 보지 않고 단원표 범위로 먼저 푼다. 풀이에 쓴 개념으로 단원이 정해진다.
   - 원본 답이 있으면 코드로 비교하고, 다르면 두 답을 각각 독립 검산해 **답 확인 필요**로 표시한다. 강사가 맞는 쪽을 고른다.
   - 원본 답이 없으면 두 번 풀어 비교한다.

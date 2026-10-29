@@ -100,7 +100,9 @@ def type_mismatch(kq: KeyQuestion, q: ExamQuestion) -> bool:
     if not answers:
         return False
     if q.item.item_type == "multiple_choice":
-        return not any(_CIRCLED.search(a) for a in answers)
+        # ①~⑤, 합답형 조합("ㄱ, ㄷ" — 실측: 수능 해설), 숫자 번호("3") 모두 선지 답
+        choice = re.compile(r"[①②③④⑤ㄱ-ㅎ]|^\s*\(?[1-5]\)?\s*(번)?\s*$")
+        return not any(choice.search(a) for a in answers)
     only_choice = re.compile(r"^[\s,()①②③④⑤]+$")
     return all(only_choice.match(a) for a in answers)
 

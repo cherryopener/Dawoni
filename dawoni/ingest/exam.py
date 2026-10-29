@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, ValidationError
 
-from dawoni.context import ContextEngine, TaskDef, TaskInput
+from dawoni.context import ContextEngine, TaskDef, TaskFailed, TaskInput
 from dawoni.context.extract import describe_validation_error
 from dawoni.grading.render import blocks_text, runs_text
 from dawoni.grading.store import safe_name
@@ -175,6 +176,13 @@ def _check_parts(q: ExtractedQuestion, r: Region) -> list[str]:
     return []
 
 
+def _failing_labels(e: Exception, labels: list[str]) -> set[str]:
+    """검증 실패 메시지("문항 18: …")에서 문제가 된 문항 번호. 쪽 전체 문제면 빈 집합."""
+    errors: list[str] = list(e.errors) if isinstance(e, TaskFailed) else []
+    found = {m.group(1) for err in errors for m in re.finditer(r"문항 ([^\s:]+):", err)}
+    return found & set(labels) if found and found < set(labels) else set()
+
+
 def check_page(out: PageExtraction, regions: list[Region], subject: str | None) -> list[str]:
     problems: list[str] = []
     by_label = {r.label: r for r in regions}
@@ -236,6 +244,7 @@ def extract_exam(
     workers: int = 1,
     progress: Progress | None = None,
     partial: bool = False,
+    default_points: float = DEFAULT_POINTS,
 ) -> IngestResult:
     """`workers`: 쪽 여러 개를 동시에 구조화 (쪽마다 새 세션 — 두꺼운 교재·문제집용).
 
@@ -243,7 +252,6 @@ def extract_exam(
     (`failed_pages`). 쪽별 결과는 `work_dir/pages/`에 남겨, 다시 하면 그 쪽은 AI 없이 쓴다
     (실측: 17쪽 중 1쪽 실패로 구간 전체를 잃음)."""
     from dawoni.agents import AgentError
-    from dawoni.context import TaskFailed
     from dawoni.parallel import each_in_parallel
 
     prepared = prepare_regions(layout, work_dir)
@@ -271,6 +279,19 @@ def extract_exam(
         except (TaskFailed, AgentError) as e:
             if not partial:
                 raise
+            # 한두 문항 때문이면 그 문항만 빼고 한 번 더
+            # (실측: 그래프 선지 18번 때문에 17·19·20번까지 잃음)
+            bad = _failing_labels(e, labels)
+            rest = [pr for pr in group if pr.region.label not in bad]
+            if bad and rest:
+                try:
+                    part_cache = cache_dir / f"p{page}-without-{'-'.join(sorted(bad))}.json"
+                    got = _read_page(page, rest, [pr.region for pr in rest], part_cache)
+                    failed[page] = sorted(bad)
+                    log.warning("%d쪽 문항 %s 구조화 실패 — 나머지 문항만 저장", page, sorted(bad))
+                    return got
+                except TaskFailed, AgentError:
+                    pass
             failed[page] = [r.label for r in regions]
             log.warning("%d쪽 구조화 실패 (나머지 쪽은 계속): %s", page, e)
             return None
@@ -302,19 +323,22 @@ def extract_exam(
     questions: list[ExamQuestion] = []
     warnings: list[str] = list(layout.warnings)
     for page, by_label in zip(pages, reads, strict=True):
-        if by_label is None:
-            nums = ", ".join(failed.get(page, []))
+        if page in failed:
+            nums = ", ".join(failed[page])
             warnings.append(f"{page}쪽(문항 {nums}) 구조화 실패 — 다시 하면 이 쪽만 읽습니다")
+        if by_label is None:
             continue
         group = by_page[page]
         for pr in group:
-            q = by_label[pr.region.label]
+            q = by_label.get(pr.region.label)
+            if q is None:
+                continue
             item = to_item(q, pr.region, subject)
             points = item.points
             if points is None and q.parts:
                 points = sum(p.points for p in q.parts)
             if points is None:
-                points = DEFAULT_POINTS
+                points = default_points
                 warnings.append(
                     f"문항 {pr.region.label}: 배점 표시가 없어 {points:g}점으로 둠 — 확인 필요"
                 )

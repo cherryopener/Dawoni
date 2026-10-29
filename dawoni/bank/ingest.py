@@ -386,6 +386,11 @@ class ChunkResult:
     """이미 있던 문항 중 이번에 원본 정답·해설을 붙인 것."""
 
 
+def default_points(src: Source) -> float:
+    """배점 표시가 없는 문항의 배점 — 기출·모의고사는 2점 (수능은 [3점]만 표시한다)."""
+    return 2.0 if src.kind == "mock_exam" else 4.0
+
+
 def work_dir(svc: Services, source_id: str, index: int) -> Path:
     """구간 DB화의 중간 결과(쪽 그림·쪽별 읽기 캐시).
 
@@ -459,8 +464,8 @@ def ingest_chunk(
             progress(0, steps, f"문항 구조화 — {msg}")
 
         extracted = extract_exam(svc.engine, layout, work, subject=subject, level=scope.level,
-                                 workers=workers, progress=page_progress,
-                                 partial=True)  # fmt: skip
+                                 workers=workers, progress=page_progress, partial=True,
+                                 default_points=default_points(src))  # fmt: skip
         res = ChunkResult(chunk, warnings=list(extracted.warnings))
 
         keys: dict[str, list[KeyPart]] = {}

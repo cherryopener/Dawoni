@@ -313,6 +313,33 @@ def test_extract_exam_partial_keeps_pages_and_retries_only_failed(
     assert r2.failed_pages == {}
 
 
+def test_extract_exam_partial_drops_only_failing_question(
+    app_paths: AppPaths, make_fake: MakeFake, exam_pdf: Path, tmp_path: Path
+) -> None:
+    """한 문항이 끝내 검증을 못 넘으면 그 문항만 빼고 같은 쪽을 다시 읽는다 (실측: 그래프 선지 18번
+    때문에 같은 쪽 17·19·20번까지 잃음)."""
+    bad = copy.deepcopy(PAGE1)
+    q3 = next(q for q in bad["questions"] if q["label"] == "3")
+    q3["stem"] = [
+        {
+            "type": "paragraph",
+            "runs": [
+                {"t": "text", "v": "학생은 반드시 운동량 보존 법칙을 써서 정리해야만 만점이다"}
+            ],
+        }
+    ]
+    rest = copy.deepcopy(PAGE1)
+    rest["questions"] = [q for q in rest["questions"] if q["label"] != "3"]
+    script = [bad, bad, bad, rest, PAGE2]
+    exe = make_fake(
+        "script", script=[{"response": json.dumps(d, ensure_ascii=False)} for d in script]
+    )
+    r = extract_exam(_engine(app_paths, exe), analyze(exam_pdf), tmp_path / "work", partial=True)
+    assert [q.number for q in r.questions] == ["1", "2", "4", "5", "서술형 1"]
+    assert r.failed_pages == {1: ["3"]}
+    assert any("1쪽(문항 3) 구조화 실패" in w for w in r.warnings)
+
+
 # ---------------------------------------------------------------- 교재 → 범위 프로필
 
 
