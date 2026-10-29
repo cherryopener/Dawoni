@@ -19,7 +19,12 @@ export function aiFamily(agent?: string | null, model?: string | null): Family {
 /** "gemini-3.8-flash-medium" → "3.8 flash medium" (브랜드는 앞에 따로 붙인다). */
 export function shortModel(model: string, family: Family): string {
   const prefix = { gemini: /^gemini-?/i, claude: /^claude-?/i, openai: /^(gpt-?|openai-?)/i, other: /^$/ }[family];
-  return model.replace(prefix, "").replace(/-/g, " ").trim();
+  return model
+    .replace(prefix, "")
+    .replace(/(\d)-(?=\d)/g, "$1.") // opus-5-5 → opus 5.5
+    .replace(/-/g, " ")
+    .replace(/\b([a-z])/g, (c) => c.toUpperCase())
+    .trim();
 }
 
 /** 만든 AI·모델 태그 — 색으로 한눈에 구분 (Gemini 파랑, Claude 주황, ChatGPT 청록). */
@@ -27,7 +32,7 @@ export function AiTag({ agent, model, what }: { agent?: string | null; model?: s
   if (!agent && !model) return null;
   const f = aiFamily(agent, model);
   const name = model ? `${BRAND[f]} ${shortModel(model, f)}`.trim() : BRAND[f];
-  const title = [what && `${what}을(를) 만든 AI`, agent && `CLI: ${agent}`, model && `모델: ${model}`].filter(Boolean).join(" · ");
+  const title = [what ? `만든 AI (${what})` : "만든 AI", agent && `CLI: ${agent}`, model && `모델: ${model}`].filter(Boolean).join(" · ");
   return (
     <span className={`${s.tag} ${s[f]}`} title={title}>
       <span className={s.dot} />
