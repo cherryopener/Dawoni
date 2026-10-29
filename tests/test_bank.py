@@ -29,6 +29,7 @@ from dawoni.models.grading import ExamQuestion, ScopedSolution
 from dawoni.models.item import ChoiceAnswer
 from dawoni.models.scope import Concept, ForbiddenTechnique, ScopeProfile, Skill
 from dawoni.models.source import SourceChunk
+from dawoni.models.units import UnitTree
 from dawoni.paths import AppPaths
 from dawoni.services import Services, open_services
 from dawoni.workspace import create_workspace
@@ -47,6 +48,14 @@ def test_default_trees_seeded_once(tmp_path: Path) -> None:
     assert phy1.descendants("phy1.1.1") == {"phy1.1.1", "phy1.1.1.1", "phy1.1.1.2", "phy1.1.1.3"}
     (ws.units / "phy2.json").unlink()
     assert "phy2" not in {t.id for t in store.all()}, "강사가 지운 기본 단원표는 되살리지 않음"
+
+
+def test_default_trees_seeded_even_if_teacher_made_one_first(tmp_path: Path) -> None:
+    """실측: 교재 단원표를 먼저 만든 물리 작업공간에 물리학 I·II가 깔리지 않았음."""
+    ws = create_workspace(tmp_path / "ws", subjects=["물리"])
+    tree = UnitTree(id="gphy1", subject="영재 물리", group="물리", units=[])
+    (ws.units / "gphy1.json").write_text(tree.model_dump_json(), encoding="utf-8")
+    assert {t.id for t in UnitStore(ws).all()} == {"gphy1", "phy1", "phy2"}
 
 
 def test_parse_toc() -> None:

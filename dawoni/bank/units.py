@@ -30,14 +30,20 @@ class UnitStore:
         return self.dir / f"{tree_id}.json"
 
     def _ensure(self) -> None:
-        """처음 쓸 때 기본 단원표를 깐다. 과목 팀 작업공간이면 그 과목 것만."""
-        if not self.dir.is_dir() or not any(self.dir.glob("*.json")):
-            from dawoni.workspace import workspace_subjects
+        """처음 쓸 때 기본 단원표를 깐다 (과목 팀 작업공간이면 그 과목 것만). 한 번만, 빠진 것만 —
+        강사가 단원표를 먼저 만들어도 기본 단원표가 빠지지 않게 (실측: 교재 단원표를 먼저 만든
+        작업공간에 물리학 I·II가 없었음). 깔았다는 표시는 `.seeded`."""
+        mark = self.dir / ".seeded"
+        if mark.exists():
+            return
+        from dawoni.workspace import workspace_subjects
 
-            subjects = workspace_subjects(self.ws)
-            for t in default_trees():
-                if not subjects or t.group in subjects:
-                    write_model_atomic(self._path(t.id), t)
+        subjects = workspace_subjects(self.ws)
+        self.dir.mkdir(parents=True, exist_ok=True)
+        for t in default_trees():
+            if (not subjects or t.group in subjects) and not self._path(t.id).exists():
+                write_model_atomic(self._path(t.id), t)
+        mark.write_text("1", encoding="utf-8")
 
     def all(self) -> list[UnitTree]:
         """과목군 순서(물리·화학·생명과학·지구과학, 그 밖은 뒤) → 단원표 ID 순."""
