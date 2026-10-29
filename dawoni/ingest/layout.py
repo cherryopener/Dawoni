@@ -32,6 +32,18 @@ _ANCHOR = re.compile(
     r"^\s*(?:\[\s*(서술형|단답형)\s*(\d+)\s*\]|(서술형|단답형)\s*(\d+)\s*[.)]|(\d{1,3})\s*[.．](?!\d))"
 )
 """문항 번호 줄. 숫자는 세 자리까지 (문제집·교재는 수백 번까지), "1.5 m" 같은 소수는 아님."""
+SET_MARK = re.compile(
+    r"^\s*(기본\s*문제|학습\s*과제|연습\s*문제|확인\s*문제|실전\s*문제|심화\s*문제|도전\s*문제|"
+    r"종합\s*문제|발전\s*문제|대표\s*문제|기출\s*문제|서술형\s*문제|단원\s*(?:평가|마무리)|유제)"
+    r"\s*[\dⅠⅡⅢ]*\s*$"
+)
+"""문제 묶음 제목 ("기본 문제", "학습 과제" …).
+
+한 강·챕터에 묶음이 여럿이면 번호가 1번부터 다시 시작한다."""
+_BARE_NUMBER = re.compile(r"^\s*\d{1,3}\s*[.．]\s*(?:[A-Za-z]{1,2})?\s*$")
+"""번호뿐인 줄 ("2.", "7. A") — 문항 번호이지 머리말이 아니다.
+
+"7. 원운동" 같은 챕터 머리말은 해당하지 않는다."""
 MAX_STEP = 5
 """번호 흐름: 다음 문항 번호는 앞 번호보다 크고 이만큼 이내."""
 _POINTS = re.compile(r"\[\s*(?:총\s*)?(\d+(?:\.\d+)?)\s*점\s*\]")
@@ -294,7 +306,10 @@ def _header_footer(
             footer_y = min(footer_y, ln.rect.y0 - 2)
     # 문항 번호 줄은 머리말이 아니다: 쪽마다 같은 자리의 "[총 10점]" 조각("[", "10", "점")이
     # '반복 줄'로 잡혀 그 위의 "2. …" 줄까지 머리말로 삼키던 문제
-    tops = [ln.rect.y0 for ln in others if ln.rect.y0 < header_y and _anchor_label(ln.text)]
+    # 배너(채운 사각형) 안이어도 마찬가지
+    tops = [ln.rect.y0 for ln in lines
+            if ln.rect.cy < h * HEADER_BAND and ln.rect.y0 < header_y
+            and ln.text not in repeated and _anchor_label(ln.text)]  # fmt: skip
     if tops:
         header_y = min(tops) - 1
     return header_y, footer_y
@@ -370,6 +385,25 @@ def _anchors(pages: list[PageInfo]) -> list[Anchor]:
     return [x for i, x in enumerate(found) if not x.label.isdigit() or i in keep]
 
 
+def _fences(pages: list[PageInfo], anchors: list[Anchor]) -> list[tuple[int, int, float]]:
+    """문항 영역을 끊는 곳 (쪽, 단, y): 문제 묶음 제목, 그리고 번호 줄기 밖에서 다시 시작하는 "1."
+    (실측: 한 쪽에 "9. … 학습 과제 1. 2." — 9번 영역이 다음 묶음 문항까지 먹음)."""
+    chosen = {id(a.line) for a in anchors}
+    first = min(((a.page, a.line.rect.y0) for a in anchors), default=None)
+    out: list[tuple[int, int, float]] = []
+    for p in pages:
+        for ln in p.lines:
+            col = _column_of(ln.rect, p.columns)
+            if SET_MARK.match(ln.text) or (
+                first is not None
+                and id(ln) not in chosen
+                and _anchor_label(ln.text) == "1"
+                and (p.number, ln.rect.y0) > first
+            ):
+                out.append((p.number, col, ln.rect.y0))
+    return out
+
+
 def number_chain(cands: list[tuple[int, int]]) -> set[int]:
     """읽는 순서의 번호 후보 중 가장 길게 이어지는 줄기 (앞 번호 < 다음 ≤ 앞 + MAX_STEP).
 
@@ -425,10 +459,13 @@ def analyze(path: Path, *, exclude: Collection[int] = ()) -> DocumentLayout:
         for i in range(doc.page_count):
             pg = doc.load_page(i)
             h = float(pg.rect.height)
+            # 번호만 있는 줄("2.")은 여러 쪽 같은 자리에 나와도 머리말이 아니다
+            # (실측: 쪽 맨 위 문항이 잘림). "1. 속도와 가속도" 같은 챕터 머리말은 그대로 반복 줄
             seen = {
                 ln.text
                 for ln in _lines(pg, i + 1)
-                if ln.rect.cy < h * HEADER_BAND or ln.rect.cy > h * FOOTER_BAND
+                if (ln.rect.cy < h * HEADER_BAND or ln.rect.cy > h * FOOTER_BAND)
+                and not _BARE_NUMBER.match(ln.text)
             }
             for s in seen:
                 bands[s] = bands.get(s, 0) + 1
@@ -446,20 +483,28 @@ def analyze(path: Path, *, exclude: Collection[int] = ()) -> DocumentLayout:
     if not anchors:
         layout.warnings.append("문항 번호를 찾지 못했습니다.")
         return layout
+    fences = _fences(question_pages, anchors)
 
     regions: list[Region] = []
     current: Region | None = None
     for p in question_pages:
         for col, (a, b) in enumerate(p.columns):
             col_anchors = [x for x in anchors if x.page == p.number and x.column == col]
-            starts = [x.line.rect.y0 - 2 for x in col_anchors]
-            cuts = [p.header_y, *starts, p.footer_y]
+            # 앵커(새 문항)와 울타리(묶음 제목 등 — 그 뒤는 앞 문항이 아님)를 위에서부터
+            marks: list[tuple[float, Anchor | None]] = []
+            marks += [(x.line.rect.y0 - 2, x) for x in col_anchors]
+            marks += [(y - 2, None) for pg, c, y in fences if pg == p.number and c == col]
+            marks.sort(key=lambda m: m[0])
+            cuts = [p.header_y, *[y for y, _ in marks], p.footer_y]
             # 첫 앵커 위쪽 = 앞 문항의 이어짐
             segments: list[tuple[Region | None, float, float]] = []
             segments.append((current, cuts[0], cuts[1]))
-            for k, anc in enumerate(col_anchors):
-                current = Region(label=anc.label)
-                regions.append(current)
+            for k, (_, anc) in enumerate(marks):
+                if anc is None:
+                    current = None
+                else:
+                    current = Region(label=anc.label)
+                    regions.append(current)
                 segments.append((current, cuts[k + 1], cuts[k + 2]))
             for region, y0, y1 in segments:
                 box = Rect(a, y0, b, y1)
@@ -468,9 +513,10 @@ def analyze(path: Path, *, exclude: Collection[int] = ()) -> DocumentLayout:
                 if not content and not figs:
                     continue
                 if region is None:
-                    layout.warnings.append(
-                        f"{p.number}쪽 첫 문항 앞의 내용은 어느 문항에도 속하지 않음"
-                    )
+                    if y0 <= cuts[0] + 1:
+                        layout.warnings.append(
+                            f"{p.number}쪽 첫 문항 앞의 내용은 어느 문항에도 속하지 않음"
+                        )
                     continue
                 bottom = max([ln.rect.y1 for ln in content] + [f.rect.y1 for f in figs]) + 4
                 top = min([ln.rect.y0 for ln in content] + [f.rect.y0 for f in figs]) - 4
