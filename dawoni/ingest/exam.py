@@ -31,6 +31,7 @@ from dawoni.models.base import DawoniModel
 from dawoni.models.content import Block, MathRun, iter_runs
 from dawoni.models.grading import ExamPart, ExamQuestion
 from dawoni.models.item import Choice, ItemContent, ItemType
+from dawoni.parallel import Progress
 
 DEFAULT_POINTS = 4.0
 
@@ -227,15 +228,18 @@ def extract_exam(
     *,
     subject: str | None = None,
     level: str | None = None,
+    workers: int = 1,
+    progress: Progress | None = None,
 ) -> IngestResult:
+    """`workers`: 쪽 여러 개를 동시에 구조화 (쪽마다 새 세션 — 두꺼운 교재·문제집용)."""
+    from dawoni.parallel import each_in_parallel
+
     prepared = prepare_regions(layout, work_dir)
     by_page: dict[int, list[PreparedRegion]] = {}
     for pr in prepared:
         by_page.setdefault(pr.region.boxes[0][0], []).append(pr)
 
-    questions: list[ExamQuestion] = []
-    warnings: list[str] = list(layout.warnings)
-    for page in sorted(by_page):
+    def read_page(page: int) -> dict[str, ExtractedQuestion]:
         group = by_page[page]
         regions = [pr.region for pr in group]
 
@@ -251,7 +255,17 @@ def extract_exam(
                 attachments=tuple(img for pr in group for img in pr.images),
             ),
         )
-        by_label = {q.label: q for q in res.value.questions}
+        return {q.label: q for q in res.value.questions}
+
+    pages = sorted(by_page)
+    reads = each_in_parallel(
+        pages, read_page, name=lambda p: f"{p}쪽", what="문항 구조화", workers=workers,
+        **({"progress": progress} if progress else {}),
+    )  # fmt: skip
+    questions: list[ExamQuestion] = []
+    warnings: list[str] = list(layout.warnings)
+    for page, by_label in zip(pages, reads, strict=True):
+        group = by_page[page]
         for pr in group:
             q = by_label[pr.region.label]
             item = to_item(q, pr.region, subject)

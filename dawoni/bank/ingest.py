@@ -407,7 +407,13 @@ def ingest_chunk(
         steps = 2 + len(layout.regions)
         progress(0, steps, f"문항 {len(layout.regions)}개 구조화")
         subject = " · ".join(t.subject for t in trees)
-        extracted = extract_exam(svc.engine, layout, work, subject=subject, level=scope.level)
+        workers = svc.config.parallel_questions
+
+        def page_progress(done: int, total: int, msg: str) -> None:
+            progress(0, steps, f"문항 구조화 — {msg}")
+
+        extracted = extract_exam(svc.engine, layout, work, subject=subject, level=scope.level,
+                                 workers=workers, progress=page_progress)  # fmt: skip
         res = ChunkResult(chunk, warnings=list(extracted.warnings))
 
         keys: dict[str, list[KeyPart]] = {}
@@ -421,8 +427,9 @@ def ingest_chunk(
                     f"구간 안에 같은 번호의 문항이 있습니다 — 단원별로 구간을 나누세요 ({e})"
                 ) from e
             key = extract_answer_key(
-                svc.engine, pdf, chunk.key_pages, exam, work / "key", level=scope.level, cross=False
-            )
+                svc.engine, pdf, chunk.key_pages, exam, work / "key", level=scope.level,
+                cross=False, ignore_other_numbers=True, workers=workers,
+            )  # fmt: skip
             keys = {k.question_number: k.parts for k in key.keys}
             res.warnings += key.warnings
 
@@ -650,7 +657,7 @@ def solve_items(
     그새 다른 강사가 문항을 고쳤으면 저장을 거부한다.
     """
     from dawoni import sharing
-    from dawoni.grading.workflow import each_in_parallel
+    from dawoni.parallel import each_in_parallel
 
     bank = BankStore(svc.workspace)
     items = [bank.get(i) for i in dict.fromkeys(item_ids)]

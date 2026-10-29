@@ -164,19 +164,31 @@ def extract_answer_key(
     *,
     level: str | None = None,
     cross: bool = True,
+    ignore_other_numbers: bool = False,
+    workers: int = 1,
 ) -> KeyIngest:
-    """`cross`: 새 세션에서 한 번 더 읽어 숫자를 비교한다 (읽기 1번 더)."""
+    """`cross`: 새 세션에서 한 번 더 읽어 숫자를 비교한다 (읽기 1번 더).
+
+    `ignore_other_numbers`: 해설 쪽에 다른 문항(옆 챕터)의 해설이 함께 있을 때 — 그 번호는
+    수리 요청 없이 버린다. `workers`: 쪽 묶음 여러 개를 동시에 읽는다."""
+    from dawoni.parallel import each_in_parallel
+
     work_dir.mkdir(parents=True, exist_ok=True)
     found: dict[str, KeyQuestion] = {}
     doubtful: dict[str, list[str]] = {}
     images_all: list[Path] = []
-    for start in range(0, len(pages), PAGES_PER_CALL):
-        group = pages[start : start + PAGES_PER_CALL]
+    numbers = {q.number for q in exam.questions}
+    groups = [pages[i : i + PAGES_PER_CALL] for i in range(0, len(pages), PAGES_PER_CALL)]
+
+    def read(group: list[int]) -> tuple[list[Path], list[KeyQuestion], dict[str, list[str]]]:
         images = tuple(render_page(pdf, p, work_dir / f"key_p{p}.png", dpi=170) for p in group)
-        images_all += images
         text = page_text(pdf, group)
 
         def check(out: KeyExtraction, text: str = text) -> list[str]:
+            if ignore_other_numbers:
+                out = out.model_copy(
+                    update={"questions": [q for q in out.questions if q.number in numbers]}
+                )
             return check_key(out, exam, text)
 
         task = dataclasses.replace(
@@ -191,13 +203,23 @@ def extract_answer_key(
             "(수식은 글꼴 문자라 깨져 있을 수 있음 — 수식은 이미지로 읽을 것):\n" + text,
             attachments=images,
         )
-        first = engine.run(task, inp).value
+        first = [q for q in engine.run(task, inp).value.questions if q.number in numbers]
+        doubts: dict[str, list[str]] = {}
         if cross:
             second = {kq.number: kq for kq in engine.run(task, inp).value.questions}
-            for kq in first.questions:
+            for kq in first:
                 if kq.number in second:
-                    doubtful.setdefault(kq.number, []).extend(compare_reads(kq, second[kq.number]))
-        for kq in first.questions:
+                    doubts.setdefault(kq.number, []).extend(compare_reads(kq, second[kq.number]))
+        return list(images), first, doubts
+
+    reads = each_in_parallel(
+        groups, read, name=lambda g: f"{g[0]}쪽", what="해설지 읽기", workers=workers
+    )
+    for images, first, doubts in reads:
+        images_all += images
+        for n, d in doubts.items():
+            doubtful.setdefault(n, []).extend(d)
+        for kq in first:
             found[kq.number] = _merge(found[kq.number], kq) if kq.number in found else kq
 
     source = f"{pdf.name} {', '.join(map(str, pages))}쪽"

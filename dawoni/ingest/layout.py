@@ -29,8 +29,11 @@ CLUSTER_GAP = 8.0
 CHOICE_MARKS = "①②③④⑤"
 
 _ANCHOR = re.compile(
-    r"^\s*(?:\[\s*(서술형|단답형)\s*(\d+)\s*\]|(서술형|단답형)\s*(\d+)\s*[.)]|(\d{1,2})\s*[.．])"
+    r"^\s*(?:\[\s*(서술형|단답형)\s*(\d+)\s*\]|(서술형|단답형)\s*(\d+)\s*[.)]|(\d{1,3})\s*[.．](?!\d))"
 )
+"""문항 번호 줄. 숫자는 세 자리까지 (문제집·교재는 수백 번까지), "1.5 m" 같은 소수는 아님."""
+MAX_STEP = 5
+"""번호 흐름: 다음 문항 번호는 앞 번호보다 크고 이만큼 이내."""
 _POINTS = re.compile(r"\[\s*(?:총\s*)?(\d+(?:\.\d+)?)\s*점\s*\]")
 _TOTAL = re.compile(r"\[\s*총\s*(\d+(?:\.\d+)?)\s*점\s*\]")
 
@@ -197,11 +200,9 @@ def _columns(
         x += 2
     left = sum(1 for ln in body if ln.rect.x1 <= best_x)
     right = sum(1 for ln in body if ln.rect.x0 >= best_x)
-    if (
-        best_cross <= max(1, len(body) * 0.05)
-        and left >= len(body) * 0.2
-        and right >= len(body) * 0.2
-    ):
+    # 한쪽 단이 짧아도(그림이 큰 문항 하나) 가운데 빈 띠가 있으면 2단 — 실측: 왼쪽 4줄·오른쪽 20줄
+    side = min(len(body) * 0.2, max(3, len(body) * 0.15))
+    if best_cross <= max(1, len(body) * 0.05) and left >= side and right >= side:
         return [(0.0, best_x), (best_x, width)]
     return [(0.0, width)]
 
@@ -353,7 +354,6 @@ def _anchor_label(text: str) -> str | None:
 
 def _anchors(pages: list[PageInfo]) -> list[Anchor]:
     found: list[Anchor] = []
-    last_number = 0
     for p in pages:
         for col, (a, b) in enumerate(p.columns):
             col_lines = sorted(
@@ -365,13 +365,33 @@ def _anchors(pages: list[PageInfo]) -> list[Anchor]:
                 label = _anchor_label(ln.text)
                 if label is None or ln.rect.x0 > left + (b - a) * 0.12:
                     continue
-                if label.isdigit():
-                    n = int(label)
-                    if n <= last_number or n > last_number + 5:
-                        continue  # 번호 흐름에 맞지 않음 (본문 속 "2." 등)
-                    last_number = n
                 found.append(Anchor(p.number, col, label, ln))
-    return found
+    keep = number_chain([(i, int(x.label)) for i, x in enumerate(found) if x.label.isdigit()])
+    return [x for i, x in enumerate(found) if not x.label.isdigit() or i in keep]
+
+
+def number_chain(cands: list[tuple[int, int]]) -> set[int]:
+    """읽는 순서의 번호 후보 중 가장 길게 이어지는 줄기 (앞 번호 < 다음 ≤ 앞 + MAX_STEP).
+
+    본문 속 "2." 같은 번호는 줄기에서 빠진다. 1번부터 시작하지 않아도 된다 (문제집 31번부터 등 —
+    실측: 개념 설명의 "1.~4."를 문항으로 잡고 31~48번을 놓쳤다).
+    """
+    if not cands:
+        return set()
+    best = [1] * len(cands)
+    prev = [-1] * len(cands)
+    for i, (_, n) in enumerate(cands):
+        for j in range(i):
+            m = cands[j][1]
+            # 길이가 같으면 읽는 순서상 가까운 앞 번호 (본문 속 "2." 뒤의 진짜 2번을 고르게)
+            if m < n <= m + MAX_STEP and best[j] + 1 >= best[i]:
+                best[i], prev[i] = best[j] + 1, j
+    end = max(range(len(cands)), key=lambda i: (best[i], -i))
+    out: set[int] = set()
+    while end >= 0:
+        out.add(cands[end][0])
+        end = prev[end]
+    return out
 
 
 _KEY_MARK = re.compile(r"부분\s*점수|정답\s*[및과]\s*해설|빠른\s*정답|모범\s*답안|채점\s*기준")

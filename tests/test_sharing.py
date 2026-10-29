@@ -119,8 +119,7 @@ def test_each_in_parallel() -> None:
     import contextvars
     import time
 
-    from dawoni.grading.pipeline import PipelineError
-    from dawoni.grading.workflow import each_in_parallel
+    from dawoni.parallel import ParallelError, each_in_parallel
 
     var: contextvars.ContextVar[str] = contextvars.ContextVar("v", default="없음")
     var.set("작업")
@@ -148,11 +147,36 @@ def test_each_in_parallel() -> None:
         done.append(n)
         return n
 
-    with pytest.raises(PipelineError, match=r"1개 실패 \(나머지는 저장됨\) — 문항 2: AI 응답 오류"):
+    with pytest.raises(ParallelError, match=r"1개 실패 \(나머지는 저장됨\) — 문항 2: AI 응답 오류"):
         each_in_parallel([1, 2, 3], flaky, name=lambda n: f"문항 {n}", what="해설", workers=2)
     assert sorted(done) == [1, 3], "실패한 문항이 있어도 나머지는 끝까지"
     with pytest.raises(ValueError, match="AI 응답 오류"):
         each_in_parallel([2], flaky, name=str, what="해설", workers=3)
+
+
+def test_subject_team_workspace(tmp_path: Path, app_paths: AppPaths) -> None:
+    """과목 팀 작업공간: 그 과목 단원표만 깔린다.
+
+    과목은 표식 파일에 있어 공유 폴더의 모든 PC에 같다."""
+    from dawoni.bank.units import UnitStore
+    from dawoni.workspace import WorkspaceError, set_subjects, workspace_subjects
+
+    ws = create_workspace(tmp_path / "phy", mode="team", subjects=["물리"])
+    assert workspace_subjects(ws) == ["물리"]
+    assert {t.group for t in UnitStore(ws).all()} == {"물리"}
+    assert {t.id for t in UnitStore(ws).all()} == {"phy1", "phy2"}
+    with pytest.raises(WorkspaceError, match="알 수 없는 과목"):
+        create_workspace(tmp_path / "x", subjects=["수학"])
+    assert set_subjects(ws.root, []).subjects == [], "비우면 모든 과목"
+
+    c = _client(app_paths)
+    r = c.post("/api/workspace", json={"path": str(tmp_path / "chem"), "create": True,
+                                       "mode": "team", "subjects": ["화학"]})  # fmt: skip
+    assert r.json()["workspace_subjects"] == ["화학"]
+    assert [t["group"] for t in c.get("/api/units").json()] == ["화학", "화학"]
+    sh = c.put("/api/workspace/subjects", json={"subjects": ["화학", "생명과학"]}).json()
+    assert sh["subjects"] == ["화학", "생명과학"]
+    assert len(c.get("/api/units").json()) == 2, "이미 깔린 단원표는 그대로 (지우지 않음)"
 
 
 def test_mode_and_presence_api(app_paths: AppPaths, tmp_path: Path) -> None:
@@ -164,7 +188,7 @@ def test_mode_and_presence_api(app_paths: AppPaths, tmp_path: Path) -> None:
     st = c.post("/api/workspace", json={"path": str(root), "create": True, "mode": "team"}).json()
     assert st["workspace_mode"] == "team" and st["machine"]
     sh = c.get("/api/workspace/sharing").json()
-    assert sh == {"mode": "team", "provider": "Google Drive", "conflicts": []}
+    assert sh == {"mode": "team", "subjects": [], "provider": "Google Drive", "conflicts": []}
 
     ws, _ = open_workspace(root)
     q = ExamQuestion.model_validate(read_json(FIX / "questions.json")[0])

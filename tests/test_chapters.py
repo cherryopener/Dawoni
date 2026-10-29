@@ -213,3 +213,43 @@ def test_chapter_api(app_paths: AppPaths, tmp_path: Path) -> None:
     ]
     bad = c.put(f"/api/bank/sources/{sid}/chunks", json={"chunks": [{"index": 1, "label": "x"}]})
     assert bad.status_code == 422 and "문제 쪽이나 개념 쪽" in bad.text
+
+
+def continuous_book(path: Path) -> Path:
+    """글 목차 + 번호가 책 전체에서 이어짐(1~6) + 권말 해설(머리말은 첫 쪽에만, 번호만 한 줄)."""
+    doc = pymupdf.open()
+    toc = doc.new_page(width=595, height=842)
+    _t(toc, 50, 100, "1. 힘과 운동 ........................................ 2", 11, width=480)
+    _t(toc, 50, 130, "2. 에너지와 열 ...................................... 4", 11, width=480)
+    _concept(doc, CH1, "힘")
+    p = doc.new_page(width=595, height=842)
+    for k, n in enumerate([1, 2, 3]):
+        _t(p, 50, 120 + 200 * k, f"{n}. 힘에 대한 설명으로 옳은 것은?", 11, width=480)
+    _concept(doc, CH2, "에너지")
+    p = doc.new_page(width=595, height=842)
+    _t(p, 50, 120, "4. 에너지에 대한 설명으로 옳은 것은?", 11, width=480)  # 한 쪽에 한 문항
+    p = doc.new_page(width=595, height=842)
+    for k, n in enumerate([5, 6]):
+        _t(p, 50, 120 + 200 * k, f"{n}. 일과 에너지 문항", 11, width=480)
+    k1 = doc.new_page(width=595, height=842)
+    _t(k1, 50, 60, "정답 및 해설", 14, width=480)
+    for k, n in enumerate([1, 2, 3, 4]):
+        _t(k1, 50, 110 + 80 * k, str(n), 11, width=40)
+        _t(k1, 60, 135 + 80 * k, "알짜힘이 0이면 속도가 일정하다. 1", 10, width=400)
+    k2 = doc.new_page(width=595, height=842)  # 머리말 없음 (짝수 쪽에만 있는 책)
+    for k, n in enumerate([5, 6]):
+        _t(k2, 50, 110 + 80 * k, str(n), 11, width=40)
+        _t(k2, 60, 135 + 80 * k, "역학적 에너지가 보존된다.", 10, width=400)
+    _t(k2, 50, 400, "끝", 11, width=40)
+    doc.save(str(path))  # pyright: ignore[reportUnknownMemberType]
+    return path
+
+
+def test_text_toc_and_key_by_numbers(tmp_path: Path) -> None:
+    s = suggest_chapters(continuous_book(tmp_path / "c.pdf"), TREES)
+    assert "글 목차" in s.notes[0] and "문항 번호로" in s.notes[1]
+    c1, c2 = s.chapters
+    assert (c1.label, c1.concept_pages, c1.pages) == ("1. 힘과 운동", [2], [3])
+    assert (c2.concept_pages, c2.pages) == ([4], [5, 6]), "한 문항뿐인 쪽부터 문제"
+    assert c1.key_pages == [7] and c2.key_pages == [7, 8], "머리말 없는 해설 쪽도 해설, 번호로 나눔"
+    assert s.pages[0].kind == "other", "목차 쪽의 '1. … 2.'는 문항이 아님"

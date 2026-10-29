@@ -127,8 +127,9 @@ def ingest_exam_pdf(
     exam_dir = svc.workspace.exams / exam_id
     progress(1, steps, f"문항 {len(layout.regions)}개 구조화")
     result = extract_exam(
-        svc.engine, layout, exam_dir / "ingest", subject=subject or scope.subject, level=scope.level
-    )
+        svc.engine, layout, exam_dir / "ingest", subject=subject or scope.subject,
+        level=scope.level, workers=svc.config.parallel_questions,
+    )  # fmt: skip
     for label, figs in result.figure_files.items():
         target = exam_dir / "figures" / safe_name(label)
         target.mkdir(parents=True, exist_ok=True)
@@ -146,8 +147,9 @@ def ingest_exam_pdf(
 
         progress(2, steps, f"해설지 {', '.join(map(str, key_pages))}쪽 읽기")
         key = extract_answer_key(
-            svc.engine, path, key_pages, exam, exam_dir / "key_work", level=scope.level
-        )
+            svc.engine, path, key_pages, exam, exam_dir / "key_work", level=scope.level,
+            workers=svc.config.parallel_questions,
+        )  # fmt: skip
         for k in key.keys:
             store.save_key(k)
         out.keys = key.keys

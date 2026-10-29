@@ -117,6 +117,24 @@ def test_out_of_sequence_number_is_not_anchor(tmp_path: Path) -> None:
     assert "15. 본문 속 번호" in layout.region("1").text
 
 
+def test_number_chain_not_starting_at_one(tmp_path: Path) -> None:
+    """문제집 구간은 31번부터 — 앞의 개념 설명 속 "1.~4."가 아니라 가장 길게 이어지는 번호를 문항으로.
+    세 자리 번호(132.)도 읽고, 소수("1.5 m")는 번호가 아니다."""
+    from dawoni.ingest.layout import number_chain
+
+    pdf = tmp_path / "chunk.pdf"
+    doc = pymupdf.open()
+    p = doc.new_page()
+    lines = [(80, "1. 개념 설명 하나"), (100, "2. 개념 설명 둘"), (120, "1.5 m 떨어진 곳")]
+    lines += [(160 + 40 * k, f"{n}. 문항 {n}") for k, n in enumerate([98, 99, 100, 101, 102])]
+    for y, t in lines:
+        p.insert_text((50, y), t, fontname="korea", fontsize=10)  # pyright: ignore[reportUnknownMemberType]
+    doc.save(str(pdf))  # pyright: ignore[reportUnknownMemberType]
+    assert [r.label for r in analyze(pdf).regions] == ["98", "99", "100", "101", "102"]
+    # 길이가 같으면 읽는 순서상 가까운 앞 번호: 1, (본문 속 2), 진짜 2, 3 → 진짜 2
+    assert number_chain([(0, 1), (1, 2), (2, 2), (3, 3)]) == {0, 2, 3}
+
+
 def test_repeated_point_fragments_do_not_hide_question_number(tmp_path: Path) -> None:
     """실제 시험지: 쪽마다 맨 위 문항의 "[총 10점]"이 조각("[", "10", "점", "]")으로 같은
     자리에 반복돼 머리말로 잡혔고, 그 위의 "2." 줄까지 머리말로 지워졌다."""
@@ -354,6 +372,7 @@ def test_cli_ingest_textbook_then_exam(
     )
     cfg = AppConfig()
     cfg.agents["agy"].executable = str(exe)
+    cfg.parallel_questions = 1  # 가짜 AI 응답 순서를 고정
     save_config(app_paths, cfg)
     w = ["ingest", "--workspace", str(ws.root)]
 
