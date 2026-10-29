@@ -7,6 +7,7 @@ dawoni units add gift --subject "영재 물리" --group 물리 --toc 목차.txt
 dawoni bank add 문제집.pdf --kind problem_bank --title "OO 물리 문제집" --units phy1 \\
     [--publisher OO학원] [--year 2026] [--pages 3-40 --key-pages 41-60 --unit phy1.1.1]
 dawoni bank chunk <자료ID> --pages 61-90 --key-pages 91-99 [--unit phy1.2]
+dawoni bank chapters <자료ID> [--apply]     # 교재 챕터 표 제안 (개념|문제|해설 쪽, AI 없음)
 dawoni bank ingest <자료ID> [--chunk 2] [--by 김선생] [--solve]  # DB화 (풀이는 --solve 때만)
 dawoni bank solve <문항ID> … | --source <자료ID> [--chunk 2] [--redo]   # 풀이·해설 만들기 (AI)
 dawoni bank sources
@@ -32,7 +33,7 @@ from dawoni.grading.pipeline import PipelineError
 from dawoni.grading.render import exam_question_text, solution_text
 from dawoni.ingest.sources import all_sources
 from dawoni.models.bank import ORIGINAL_LEVEL_LABELS
-from dawoni.models.source import SourceChunk
+from dawoni.models.source import Source, SourceChunk
 from dawoni.models.units import UnitTree
 from dawoni.services import Services, open_services
 from dawoni.sharing import machine_id
@@ -117,19 +118,57 @@ def _chunk(args: argparse.Namespace) -> SourceChunk | None:
                        unit_hint=args.unit, label=args.label)  # fmt: skip
 
 
+def _pages(ps: list[int]) -> str:
+    return f"{ps[0]}~{ps[-1]}쪽" if len(ps) > 1 else f"{ps[0]}쪽" if ps else "없음"
+
+
+def _print_chunks(src: Source) -> None:
+    for c in src.chunks:
+        concept = f"개념 {_pages(c.concept_pages)}, " if c.concept_pages else ""
+        unit = f"  [{c.unit_hint}]" if c.unit_hint else ""
+        _out(f"  구간 {c.index} {c.label or ''}: {concept}문제 {_pages(c.pages)}, "
+             f"해설 {_pages(c.key_pages)}{unit}")  # fmt: skip
+
+
 def _cmd_add(args: argparse.Namespace) -> int:
     svc = _svc(args)
     src = bi.add_source(svc, args.pdf, args.kind, title=args.title, publisher=args.publisher,
-                        year=args.year, unit_trees=args.units.split(","))  # fmt: skip
-    chunk = _chunk(args) or bi.suggest_chunk(svc, src)
+                        year=args.year, level=args.level,
+                        unit_trees=args.units.split(","))  # fmt: skip
     if not src.chunks:
-        src = bi.add_chunks(svc, src, [chunk])
+        if (c := _chunk(args)) is not None:
+            src = bi.add_chunks(svc, src, [c])
+        elif src.kind == "textbook":
+            return _cmd_chapters(args, src.source_id, apply=True)
+        else:
+            src = bi.add_chunks(svc, src, [bi.suggest_chunk(svc, src)])
     _out(f"자료 등록: {src.title} ({KINDS.get(src.kind, src.kind)}, {src.pages}쪽)")
     _out(f"  ID {src.source_id[:12]}")
-    for c in src.chunks:
-        _out(f"  구간 {c.index}: 문제 {c.pages[0]}~{c.pages[-1]}쪽, "
-             f"해설 {', '.join(map(str, c.key_pages)) or '없음'}")  # fmt: skip
+    _print_chunks(src)
     _out("DB화: dawoni bank ingest " + src.source_id[:12])
+    return 0
+
+
+def _cmd_chapters(args: argparse.Namespace, sid: str | None = None, apply: bool = False) -> int:
+    from dawoni.bank.chapters import suggest_chapters
+
+    svc = _svc(args)
+    sid = sid or _source_id(svc, args.source)
+    src = bi.get_source(svc.workspace, sid)
+    units = UnitStore(svc.workspace)
+    s = suggest_chapters(bi.source_file(svc.workspace, src), [units.get(t) for t in src.unit_trees])
+    for n in s.notes:
+        _out(f"  · {n}")
+    if apply or getattr(args, "apply", False):
+        src = bi.set_chunks(svc, src, s.chapters)
+        _out(f"챕터 표 저장: {src.title} ({len(src.chunks)}챕터)")
+        _print_chunks(src)
+        _out(
+            "DB화 (개념 → 범위 프로필, 문제 → 문제은행, 풀이 없이): dawoni bank ingest " + sid[:12]
+        )
+    else:
+        _print_chunks(src.model_copy(update={"chunks": s.chapters}))
+        _out("저장하려면 --apply (기존 표를 바꿉니다)")
     return 0
 
 
@@ -155,8 +194,13 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
     svc = _svc(args)
     sid = _source_id(svc, args.source)
     src = bi.get_source(svc.workspace, sid)
+
+    def left(c: SourceChunk) -> bool:
+        concept = src.kind == "textbook" and c.concept_pages and c.concept_status != "ingested"
+        return c.status != "ingested" or bool(concept)
+
     todo = [c.index for c in src.chunks if args.chunk in (None, c.index)
-            and (args.chunk is not None or c.status != "ingested")]  # fmt: skip
+            and (args.chunk is not None or left(c))]  # fmt: skip
     if not todo:
         _out("DB화할 구간이 없습니다 (모두 완료).")
         return 0
@@ -164,6 +208,19 @@ def _cmd_ingest(args: argparse.Namespace) -> int:
     def progress(done: int, total: int, msg: str) -> None:
         _out(f"  [{done}/{total}] {msg}")
 
+    if src.kind == "textbook":
+        res_ch = bi.ingest_chapters(svc, sid, [args.chunk] if args.chunk else None, by=args.by,
+                                    machine=machine_id(svc.paths), solve=args.solve,
+                                    progress=progress)  # fmt: skip
+        for r in res_ch:
+            if r.scope:
+                _out(f"  개념 → 범위 프로필 {r.scope.id} ({len(r.scope.concepts)}개)")
+            if r.problems:
+                _out(
+                    f"  문제 → {len(r.problems.items)}문항 추가, "
+                    f"이미 있음 {len(r.problems.skipped)}"
+                )
+        return 0
     for i in todo:
         _out(f"구간 {i}")
         res = bi.ingest_chunk(svc, sid, i, by=args.by, machine=machine_id(svc.paths),
@@ -310,8 +367,14 @@ def register(sub: Any) -> None:
     a.add_argument("--units", required=True, help="분류할 단원표 ID (쉼표로 여러 개)")
     a.add_argument("--publisher")
     a.add_argument("--year", type=int)
+    a.add_argument("--level", help="교재: 학생 수준 (예: 고등학교 물리학 I)")
     chunk_args(a)
     a.set_defaults(func=_wrap(_cmd_add))
+
+    cp = bs.add_parser("chapters", help="교재 챕터 표 제안 (AI 없음)")
+    cp.add_argument("source")
+    cp.add_argument("--apply", action="store_true", help="제안을 챕터 표로 저장")
+    cp.set_defaults(func=_wrap(_cmd_chapters))
 
     ch = bs.add_parser("chunk", help="구간 추가")
     ch.add_argument("source")

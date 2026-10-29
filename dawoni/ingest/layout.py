@@ -374,7 +374,7 @@ def _anchors(pages: list[PageInfo]) -> list[Anchor]:
     return found
 
 
-_KEY_MARK = re.compile(r"부분\s*점수|정답\s*및\s*해설|모범\s*답안|채점\s*기준")
+_KEY_MARK = re.compile(r"부분\s*점수|정답\s*[및과]\s*해설|빠른\s*정답|모범\s*답안|채점\s*기준")
 """조각난 PDF 글("부분 점수" / "[" / ": 1~5" / "]")에서도 잡히게 괄호·쌍점은 보지 않는다."""
 
 

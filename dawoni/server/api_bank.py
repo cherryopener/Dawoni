@@ -111,6 +111,7 @@ def upload_source(
     unit_trees: Annotated[str, Form(description="쉼표로 구분한 단원표 ID")],
     publisher: Annotated[str | None, Form()] = None,
     year: Annotated[int | None, Form()] = None,
+    level: Annotated[str | None, Form()] = None,
     st: AppState = State,
 ) -> dict[str, Any]:
     svc = st.services()
@@ -119,7 +120,7 @@ def upload_source(
         path = save_upload(file, tmp)
         trees = [t.strip() for t in unit_trees.split(",") if t.strip()]
         src = bi.add_source(svc, str(path), kind, title=title, publisher=publisher, year=year,
-                            unit_trees=trees)  # fmt: skip
+                            level=level or None, unit_trees=trees)  # fmt: skip
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return {"source": src, "suggested": bi.suggest_chunk(svc, src)}
@@ -130,14 +131,15 @@ class SourceMetaBody(BaseModel):
     title: str
     publisher: str | None = None
     year: int | None = None
+    level: str | None = None
     unit_trees: list[str]
 
 
 @router.put("/bank/sources/{source_id}")
 def update_source_meta(source_id: str, body: SourceMetaBody, st: AppState = State) -> Source:
     b = body
-    return bi.add_source(st.services(), source_id, b.kind, title=b.title,
-                         publisher=b.publisher, year=b.year, unit_trees=b.unit_trees)  # fmt: skip
+    return bi.add_source(st.services(), source_id, b.kind, title=b.title, publisher=b.publisher,
+                         year=b.year, level=b.level, unit_trees=b.unit_trees)  # fmt: skip
 
 
 @router.get("/bank/sources/{source_id}/pdf")
@@ -154,6 +156,60 @@ class ChunksBody(BaseModel):
 def add_chunks(source_id: str, body: ChunksBody, st: AppState = State) -> Source:
     svc = st.services()
     return bi.add_chunks(svc, get_source(svc.workspace, source_id), body.chunks)
+
+
+@router.put("/bank/sources/{source_id}/chunks")
+def set_chunks(source_id: str, body: ChunksBody, st: AppState = State) -> Source:
+    """챕터(구간) 표 저장. DB화한 부분의 쪽은 바꿀 수 없다."""
+    svc = st.services()
+    return bi.set_chunks(svc, get_source(svc.workspace, source_id), body.chunks)
+
+
+@router.post("/bank/sources/{source_id}/chapters/suggest")
+def suggest_chapters(source_id: str, st: AppState = State) -> Job:
+    """교재 챕터 표 제안 (AI 없음 — 목차·쪽 분류). 큰 PDF는 몇 초 걸려 작업으로 돈다."""
+    from dawoni.bank.chapters import suggest_chapters as suggest
+
+    svc = st.services()
+    src = get_source(svc.workspace, source_id)
+    units = UnitStore(svc.workspace)
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        ctx.progress(0, 1, "쪽 분류 (개념·문제·해설)")
+        s = suggest(source_file(svc.workspace, src), [units.get(t) for t in src.unit_trees])
+        return {
+            "chapters": [c.model_dump(mode="json") for c in s.chapters],
+            "notes": s.notes,
+            "pages": [{"number": p.number, "kind": p.kind} for p in s.pages],
+        }
+
+    return st.jobs.submit("bank_chapters", run, {"source": source_id})
+
+
+class ChaptersBody(BaseModel):
+    indexes: list[int] | None = Field(default=None, description="없으면 아직 안 한 부분 전부")
+    concepts: bool = True
+    problems: bool = True
+    solve: bool = False
+    by: str | None = None
+
+
+@router.post("/bank/sources/{source_id}/chapters/ingest")
+def ingest_chapters(source_id: str, body: ChaptersBody, st: AppState = State) -> Job:
+    """챕터마다 개념 → 범위 프로필, 문제 → 문제은행 (풀이는 `solve`일 때만)."""
+    svc = st.services()
+    bi._check_lock(get_source(svc.workspace, source_id), st.machine)  # pyright: ignore[reportPrivateUsage]
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        res = bi.ingest_chapters(svc, source_id, body.indexes, concepts=body.concepts,
+                                 problems=body.problems, solve=body.solve, by=body.by,
+                                 machine=st.machine, progress=ctx.progress)  # fmt: skip
+        return {
+            "scopes": [r.scope.id for r in res if r.scope],
+            "items": sum(len(r.problems.items) for r in res if r.problems),
+        }
+
+    return st.jobs.submit("bank_chapter_ingest", run, {"source": source_id})
 
 
 class IngestBody(BaseModel):

@@ -589,13 +589,18 @@ export type BankItem = {
   updated_by?: string | null;
   updated_at: string;
 };
+export type ChunkStatus = "new" | "ingesting" | "ingested" | "failed";
 export type SourceChunk = {
   index: number;
   pages: number[];
   key_pages: number[];
+  concept_pages?: number[];
   unit_hint?: string | null;
   label?: string | null;
-  status: "new" | "ingesting" | "ingested" | "failed";
+  status: ChunkStatus;
+  concept_status?: ChunkStatus;
+  concept_message?: string | null;
+  scope_id?: string | null;
   item_ids: string[];
   message?: string | null;
   by?: string | null;
@@ -611,6 +616,7 @@ export type BankSource = {
   title?: string | null;
   publisher?: string | null;
   year?: number | null;
+  level?: string | null;
   unit_trees: string[];
   chunks: SourceChunk[];
   ingest: { status: string; item_count: number; message?: string | null };

@@ -229,6 +229,7 @@ def add_source(
     title: str,
     publisher: str | None = None,
     year: int | None = None,
+    level: str | None = None,
     unit_trees: list[str],
 ) -> Source:
     """자료 등록 (이미 있으면 정보만 고침). 구간은 `add_chunks`로."""
@@ -244,7 +245,7 @@ def add_source(
     pages = page_count(source_file(svc.workspace, src))
     src = src.model_copy(
         update={"kind": kind, "title": title, "publisher": publisher, "year": year,
-                "unit_trees": unit_trees, "pages": pages}
+                "level": level or src.level, "unit_trees": unit_trees, "pages": pages}
     )  # fmt: skip
     update_source(svc.workspace, src)
     return src
@@ -258,19 +259,55 @@ def suggest_chunk(svc: Services, src: Source) -> SourceChunk:
     return SourceChunk(index=len(src.chunks) + 1, pages=pages or [1], key_pages=key)
 
 
-def add_chunks(svc: Services, src: Source, chunks: list[SourceChunk]) -> Source:
+def _check_chunk(svc: Services, src: Source, c: SourceChunk) -> None:
     total = src.pages or page_count(source_file(svc.workspace, src))
-    trees = UnitStore(svc.workspace)
+    bad = [p for p in [*c.pages, *c.key_pages, *c.concept_pages] if not 1 <= p <= total]
+    if bad:
+        raise BankError(f"없는 쪽: {bad} (전체 {total}쪽)")
+    if c.unit_hint:
+        t = UnitStore(svc.workspace).find(c.unit_hint)
+        if t is None or t.resolve(c.unit_hint) is None:
+            raise BankError(f"없는 단원: {c.unit_hint}")
+
+
+_FRESH: dict[str, object] = {"status": "new", "item_ids": list[str](), "concept_status": "new",
+                              "scope_id": None, "message": None, "concept_message": None,
+                              "machine": None}  # fmt: skip
+
+
+def add_chunks(svc: Services, src: Source, chunks: list[SourceChunk]) -> Source:
     out = list(src.chunks)
     for c in chunks:
-        bad = [p for p in [*c.pages, *c.key_pages] if not 1 <= p <= total]
-        if bad:
-            raise BankError(f"없는 쪽: {bad} (전체 {total}쪽)")
-        if c.unit_hint:
-            t = trees.find(c.unit_hint)
-            if t is None or t.resolve(c.unit_hint) is None:
-                raise BankError(f"없는 단원: {c.unit_hint}")
-        out.append(c.model_copy(update={"index": len(out) + 1, "status": "new", "item_ids": []}))
+        _check_chunk(svc, src, c)
+        out.append(c.model_copy(update={"index": len(out) + 1, **_FRESH}))
+    src = src.model_copy(update={"chunks": out})
+    update_source(svc.workspace, src)
+    return src
+
+
+def set_chunks(svc: Services, src: Source, chunks: list[SourceChunk]) -> Source:
+    """챕터(구간) 표 전체를 바꾼다. 이미 DB화한 부분의 쪽은 바꿀 수 없다 (이름·단원은 된다).
+
+    같은 번호의 구간은 상태·문항·범위 프로필을 그대로 둔다. 번호는 표 순서대로 다시 매긴다.
+    """
+    _check_lock(src, "")
+    old = {c.index: c for c in src.chunks}
+    out: list[SourceChunk] = []
+    for n, c in enumerate(chunks, start=1):
+        _check_chunk(svc, src, c)
+        prev = old.get(c.index)
+        if prev is None:
+            out.append(c.model_copy(update={"index": n, **_FRESH}))
+            continue
+        if prev.status != "new" and (prev.pages, prev.key_pages) != (c.pages, c.key_pages):
+            raise BankError(f"구간 {prev.index}의 문제는 이미 DB화해 쪽을 바꿀 수 없습니다")
+        if prev.concept_status != "new" and prev.concept_pages != c.concept_pages:
+            raise BankError(f"구간 {prev.index}의 개념은 이미 DB화해 쪽을 바꿀 수 없습니다")
+        keep = {k: getattr(prev, k) for k in _FRESH}
+        out.append(c.model_copy(update={**keep, "index": n, "updated_at": prev.updated_at}))
+    dropped = [c for i, c in old.items() if i not in {x.index for x in chunks}]
+    if any(c.item_ids or c.scope_id for c in dropped):
+        raise BankError("DB화한 구간은 표에서 지울 수 없습니다 (문항·범위 프로필이 있음)")
     src = src.model_copy(update={"chunks": out})
     update_source(svc.workspace, src)
     return src
@@ -302,7 +339,8 @@ def _set_chunk(svc: Services, src_id: str, chunk: SourceChunk) -> Source:
 
 def _check_lock(src: Source, machine: str) -> None:
     for c in src.chunks:
-        other = c.status == "ingesting" and c.machine and c.machine != machine
+        busy = c.status == "ingesting" or c.concept_status == "ingesting"
+        other = busy and c.machine and c.machine != machine
         if other and utcnow() - c.updated_at < LOCK_FRESH:
             who = f"{c.by} 선생님" if c.by else "다른 PC"
             raise BankError(
@@ -343,6 +381,8 @@ def ingest_chunk(
     src = get_source(ws, source_id)
     _check_lock(src, machine)
     chunk = _chunk(src, index)
+    if not chunk.pages:
+        raise BankError(f"구간 {index}에는 문제 쪽이 없습니다")
     trees = [UnitStore(ws).get(t) for t in src.unit_trees]
     if not trees:
         raise BankError("자료에 분류할 단원표가 정해지지 않았습니다")
@@ -439,6 +479,116 @@ def ingest_chunk(
         )  # fmt: skip
         _set_chunk(svc, source_id, failed)
         raise
+
+
+# ---------------------------------------------------------------- 교재 챕터: 개념 + 문제
+
+
+def chapter_level(svc: Services, src: Source) -> str:
+    if src.level:
+        return src.level
+    trees = [UnitStore(svc.workspace).get(t) for t in src.unit_trees]
+    subject = " · ".join(t.subject for t in trees) or "교재"
+    return f"고등학교 {subject}" if any(t.curriculum for t in trees) else subject
+
+
+def ingest_concepts(
+    svc: Services,
+    source_id: str,
+    index: int,
+    *,
+    by: str | None = None,
+    machine: str = "",
+    progress: Progress = _noop,
+) -> ScopeProfile:
+    """챕터의 개념 쪽 → 범위 프로필 (챕터 단원이 붙어 '단원 체크로 범위 만들기'에 쓰인다).
+
+    다시 하면 같은 범위 프로필을 고쳐 쓴다."""
+    from dawoni.grading.store import ScopeStore
+    from dawoni.ingest.textbook import extract_scope
+
+    ws = svc.workspace
+    src = get_source(ws, source_id)
+    _check_lock(src, machine)
+    chunk = _chunk(src, index)
+    if not chunk.concept_pages:
+        raise BankError(f"구간 {index}에는 개념 쪽이 없습니다")
+    title = " · ".join(x for x in (src.title or src.filename, chunk.label) if x)
+    chunk = chunk.model_copy(
+        update={"concept_status": "ingesting", "machine": machine, "by": by,
+                "updated_at": utcnow(), "concept_message": None}
+    )  # fmt: skip
+    _set_chunk(svc, source_id, chunk)
+    try:
+        progress(0, 1, f"{chunk.label or f'구간 {index}'} 개념 {len(chunk.concept_pages)}쪽 정리")
+        subject = " · ".join(UnitStore(ws).get(t).subject for t in src.unit_trees) or None
+        draft = extract_scope(svc.engine, source_file(ws, src), title=title,
+                              level=chapter_level(svc, src), subject=subject,
+                              pages=chunk.concept_pages)  # fmt: skip
+        update: dict[str, object] = {"unit_ids": [chunk.unit_hint] if chunk.unit_hint else []}
+        if chunk.scope_id:
+            update["id"] = chunk.scope_id
+        scope = draft.scope.model_copy(update=update)
+        ScopeStore(ws).save(scope)
+        n = len(scope.concepts)
+        chunk = chunk.model_copy(
+            update={"concept_status": "ingested", "scope_id": scope.id, "machine": None,
+                    "updated_at": utcnow(),
+                    "concept_message": f"개념 {n}개 · 기법 {len(scope.skills)}개"}
+        )  # fmt: skip
+        _set_chunk(svc, source_id, chunk)
+        progress(1, 1, chunk.concept_message or "완료")
+        return scope
+    except BaseException as e:
+        failed = chunk.model_copy(
+            update={"concept_status": "failed", "machine": None, "updated_at": utcnow(),
+                    "concept_message": safe_message(e)}
+        )  # fmt: skip
+        _set_chunk(svc, source_id, failed)
+        raise
+
+
+@dataclass
+class ChapterResult:
+    scope: ScopeProfile | None = None
+    problems: ChunkResult | None = None
+
+
+def ingest_chapters(
+    svc: Services,
+    source_id: str,
+    indexes: list[int] | None = None,
+    *,
+    concepts: bool = True,
+    problems: bool = True,
+    solve: bool = False,
+    by: str | None = None,
+    machine: str = "",
+    progress: Progress = _noop,
+) -> list[ChapterResult]:
+    """챕터마다 개념 → 범위 프로필, 문제 → 문제은행 (풀이는 `solve`일 때만).
+
+    `indexes`가 없으면 아직 안 한 부분만 (끊긴 뒤 이어 하기)."""
+    src = get_source(svc.workspace, source_id)
+    todo = [c for c in src.chunks if indexes is None or c.index in indexes]
+    out: list[ChapterResult] = []
+    for k, c in enumerate(todo):
+        name = c.label or f"구간 {c.index}"
+
+        def step(done: int, total: int, msg: str, k: int = k, name: str = name) -> None:
+            progress(k, len(todo), f"{name}: {msg}")
+
+        r = ChapterResult()
+        again = indexes is not None
+        if concepts and c.concept_pages and (again or c.concept_status != "ingested"):
+            r.scope = ingest_concepts(svc, source_id, c.index, by=by, machine=machine,
+                                      progress=step)  # fmt: skip
+        if problems and c.pages and (again or c.status != "ingested"):
+            r.problems = ingest_chunk(svc, source_id, c.index, by=by, machine=machine,
+                                      solve=solve, progress=step)  # fmt: skip
+        out.append(r)
+    progress(len(todo), len(todo), f"챕터 {len(todo)}개 완료")
+    return out
 
 
 # ---------------------------------------------------------------- 풀이 (요청할 때)

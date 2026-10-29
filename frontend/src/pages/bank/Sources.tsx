@@ -21,31 +21,9 @@ import { api, errorText, useJob, useLoad } from "../../lib/api";
 import type { BankSource, BankSourceKind, SourceChunk, UnitTree } from "../../lib/types";
 import { unitLabel, walk } from "../../lib/units";
 import { SOURCE_KIND } from "../../lib/bank";
+import { pagesText, parsePages } from "../../lib/pages";
+import { ChapterTable } from "./Chapters";
 import { SolveButton } from "../../components/SolveButton";
-
-/** '3-40, 45' → [3..40, 45] */
-export function parsePages(s: string): number[] {
-  const out = new Set<number>();
-  for (const part of s.split(",").map((x) => x.trim()).filter(Boolean)) {
-    const m = /^(\d+)\s*[-~]\s*(\d+)$/.exec(part);
-    if (m) for (let p = Number(m[1]); p <= Number(m[2]); p++) out.add(p);
-    else if (/^\d+$/.test(part)) out.add(Number(part));
-  }
-  return [...out].sort((a, b) => a - b);
-}
-
-export function pagesText(pages: number[]): string {
-  const out: string[] = [];
-  let start = pages[0];
-  for (let i = 1; i <= pages.length; i++) {
-    const prev = pages[i - 1] ?? 0;
-    if (pages[i] !== prev + 1) {
-      out.push(start === prev ? `${start}` : `${start}-${prev}`);
-      start = pages[i];
-    }
-  }
-  return out.join(", ");
-}
 
 const KIND_OPTIONS = (["problem_bank", "mock_exam", "textbook"] as BankSourceKind[]).map((k) => ({
   value: k, label: SOURCE_KIND[k] ?? k,
@@ -90,6 +68,7 @@ function Upload({ trees, onDone }: { trees: UnitTree[]; onDone: () => void }) {
   const [title, setTitle] = useState("");
   const [publisher, setPublisher] = useState("");
   const [year, setYear] = useState("");
+  const [level, setLevel] = useState("");
   const [units, setUnits] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -101,12 +80,13 @@ function Upload({ trees, onDone }: { trees: UnitTree[]; onDone: () => void }) {
     f.append("unit_trees", units.join(","));
     if (publisher) f.append("publisher", publisher);
     if (year) f.append("year", year);
+    if (kind === "textbook" && level) f.append("level", level);
     setBusy(true);
     setErr(null);
     api
       .upload<{ source: BankSource; suggested: SourceChunk }>("/bank/sources", f)
       .then(async (r) => {
-        if (r.source.chunks.length === 0) {
+        if (r.source.chunks.length === 0 && r.source.kind !== "textbook") {
           await api.post(`/bank/sources/${r.source.source_id}/chunks`, { chunks: [r.suggested] });
         }
         setFile(null);
@@ -142,6 +122,11 @@ function Upload({ trees, onDone }: { trees: UnitTree[]; onDone: () => void }) {
             <Field label="연도 (선택)"><TextInput value={year} onChange={setYear} /></Field>
           </div>
         </Row>
+        {kind === "textbook" && (
+          <Field label="학생 수준" hint="개념을 범위 프로필로 만들 때 씁니다 (비우면 과목 이름으로)">
+            <TextInput value={level} onChange={setLevel} placeholder="고등학교 물리학 I" />
+          </Field>
+        )}
         <Field label="분류할 단원표" hint="문항을 이 단원표의 단원으로 나눕니다">
           <TreePicker trees={trees} value={units} onChange={setUnits} />
         </Field>
@@ -176,12 +161,18 @@ function SourceCard({ src, trees, onChanged }: { src: BankSource; trees: UnitTre
           {[src.publisher, src.year, `${src.pages ?? "?"}쪽`, mine.map((t) => t.subject).join(" · "),
             `${src.ingest.item_count}문항`].filter(Boolean).join(" · ")}
         </span>
-        {src.chunks.map((c) => <ChunkRow key={c.index} src={src} c={c} trees={trees} solve={solve} onChanged={onChanged} />)}
-        <Row>
-          <AddChunk src={src} trees={mine} onDone={onChanged} />
-          <span style={{ flex: 1 }} />
-          <Check checked={solve} onChange={setSolve}>DB화하면서 풀이도 만들기 (느림)</Check>
-        </Row>
+        {src.kind === "textbook" ? (
+          <ChapterTable src={src} trees={mine} onChanged={onChanged} />
+        ) : (
+          <>
+            {src.chunks.map((c) => <ChunkRow key={c.index} src={src} c={c} trees={trees} solve={solve} onChanged={onChanged} />)}
+            <Row>
+              <AddChunk src={src} trees={mine} onDone={onChanged} />
+              <span style={{ flex: 1 }} />
+              <Check checked={solve} onChange={setSolve}>DB화하면서 풀이도 만들기 (느림)</Check>
+            </Row>
+          </>
+        )}
       </Stack>
     </Card>
   );

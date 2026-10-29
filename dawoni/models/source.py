@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from dawoni.models.base import DawoniModel, utcnow
 
@@ -23,14 +23,26 @@ class SourceIngestState(DawoniModel):
 
 
 class SourceChunk(DawoniModel):
-    """문제은행 DB화 구간: 두꺼운 책은 단원·쪽 범위로 나눠 넣는다 (끊겨도 이어 하기)."""
+    """문제은행 DB화 구간: 두꺼운 책은 단원·쪽 범위로 나눠 넣는다 (끊겨도 이어 하기).
+
+    교재에서는 구간 하나가 **챕터** 하나다: 개념 쪽(→ 범위 프로필) + 문제 쪽(→ 문제은행).
+    """
 
     index: int = Field(ge=1)
-    pages: list[int] = Field(min_length=1, description="문제 쪽 (1부터)")
+    pages: list[int] = Field(
+        default_factory=lambda: list[int](), description="문제 쪽 (1부터, 개념만 있는 챕터는 비움)"
+    )
     key_pages: list[int] = Field(default_factory=lambda: list[int](), description="정답·해설 쪽")
+    concept_pages: list[int] = Field(
+        default_factory=lambda: list[int](), description="교재: 개념 설명 쪽 (→ 범위 프로필)"
+    )
     unit_hint: str | None = Field(default=None, description="이 구간의 단원 ID (강사가 아는 경우)")
     label: str | None = Field(default=None, description="예: 1단원 힘과 운동")
     status: IngestStatus = "new"
+    """문제 쪽 DB화 상태."""
+    concept_status: IngestStatus = "new"
+    concept_message: str | None = None
+    scope_id: str | None = Field(default=None, description="교재: 이 챕터 개념의 범위 프로필")
     item_ids: list[str] = Field(default_factory=lambda: list[str]())
     message: str | None = None
     by: str | None = None
@@ -38,6 +50,12 @@ class SourceChunk(DawoniModel):
         default=None, description="DB화 중인 PC (팀 공유: 두 PC가 동시에 안 하게)"
     )
     updated_at: datetime = Field(default_factory=utcnow)
+
+    @model_validator(mode="after")
+    def _has_pages(self) -> SourceChunk:
+        if not self.pages and not self.concept_pages:
+            raise ValueError("문제 쪽이나 개념 쪽을 하나 이상 적어 주세요")
+        return self
 
 
 class Source(DawoniModel):
@@ -55,6 +73,7 @@ class Source(DawoniModel):
     ingest: SourceIngestState = Field(default_factory=SourceIngestState)
     publisher: str | None = Field(default=None, description="출판사·저자·강사 (출처 표시)")
     year: int | None = None
+    level: str | None = Field(default=None, description="교재: 학생 수준 (개념 범위 프로필에 씀)")
     unit_trees: list[str] = Field(
         default_factory=lambda: list[str](), description="문제은행: 분류할 단원표 ID (예: phy1)"
     )
