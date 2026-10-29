@@ -217,6 +217,12 @@ def test_check_key(q3: ExamQuestion) -> None:
     problems = check_key(_extraction(invented), exam, source)
     assert any("PDF 글자에 없는 한글" in p for p in problems)
 
+    # 실측: 해설 끝 문장을 답 칸에도 옮겨 적음 — 칸마다 따로 비교하므로 지어낸 것이 아님
+    repeated = copy.deepcopy(KEY["parts"])
+    repeated[1]["answer"] = "세 번 반사하여 P로 되돌아오려면"
+    repeated[1]["solution"] = "세 번 반사하여 P로 되돌아오려면 두 번째 반사점은 A이다."
+    assert check_key(_extraction(repeated), exam, source + " 두 번째 반사점은 A이다.") == []
+
 
 # ---------------------------------------------------------------- 루브릭 검사
 

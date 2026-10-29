@@ -96,11 +96,14 @@ def check_key(out: KeyExtraction, exam: Exam, source_text: str) -> list[str]:
                 "solution을 비우고 credit_policy를 unspecified로 적을 것. 여러 소문항에 함께 적힌 "
                 "부분 점수 표기(예: (1) 전체 '부분 점수: 없음')는 소문항마다 적을 것"
             )
-        written = " ".join(
-            " ".join(x for x in (p.answer or "", p.solution, p.credit_text or "", *p.zero_if) if x)
-            for p in kq.parts
-        )
-        missing, total = hangul_missing(written, source_text)
+        # 칸(답·해설·부분 점수…)마다 따로 원본과 비교한다 — 해설 끝 문장을 답 칸에도 옮겨 적는 것은
+        # 지어낸 것이 아니다 (실측: 합쳐서 세면 같은 글자가 두 번 나와 23% '없는 한글'로 잡힘)
+        fields = [x for p in kq.parts for x in (p.answer or "", p.solution, p.credit_text or "",
+                                                *p.zero_if) if x]  # fmt: skip
+        missing = total = 0
+        for f in fields:
+            m, t = hangul_missing(f, source_text)
+            missing, total = missing + m, total + t
         outside = missing / total if total else 0.0
         # 짧은 답("15m/s 서쪽")에 몇 글자 붙은 것까지 비율로 막지 않게 글자 수도 본다
         if outside > 0.15 and missing >= MIN_MISSING:
