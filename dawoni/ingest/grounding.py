@@ -12,16 +12,20 @@ from collections import Counter
 _HANGUL = re.compile(r"[가-힣]")
 
 
-def hangul_outside(produced: str, source: str) -> float:
-    """만든 글의 한글 중 PDF 글자에 없는 것의 비율."""
+def hangul_missing(produced: str, source: str) -> tuple[int, int]:
+    """(만든 글의 한글 중 PDF 글자에 없는 글자 수, 만든 글의 한글 수)."""
     have = Counter(_HANGUL.findall(source))
     got = _HANGUL.findall(produced)
-    if not got:
-        return 0.0
     missing = 0
     for ch in got:
         if have[ch] > 0:
             have[ch] -= 1
         else:
             missing += 1
-    return missing / len(got)
+    return missing, len(got)
+
+
+def hangul_outside(produced: str, source: str) -> float:
+    """만든 글의 한글 중 PDF 글자에 없는 것의 비율."""
+    missing, total = hangul_missing(produced, source)
+    return missing / total if total else 0.0

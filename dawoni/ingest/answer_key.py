@@ -24,7 +24,7 @@ import pymupdf
 
 from dawoni.context import ContextEngine, TaskDef, TaskInput
 from dawoni.grading.render import blocks_text
-from dawoni.ingest.grounding import hangul_outside
+from dawoni.ingest.grounding import hangul_missing
 from dawoni.ingest.layout import render_page
 from dawoni.models.answer_key import AnswerKey, KeyExtraction, KeyPart, KeyQuestion
 from dawoni.models.grading import Exam, ExamQuestion
@@ -38,12 +38,16 @@ EXTRACT_KEY: TaskDef[KeyExtraction] = TaskDef(
 )
 
 PAGES_PER_CALL = 3
+MIN_MISSING = 6
+"""해설에 PDF에 없는 한글이 이만큼은 있어야 지어낸 것으로 본다 (비율과 함께)."""
 
 
 @dataclass
 class KeyIngest:
     keys: list[AnswerKey] = field(default_factory=lambda: list[AnswerKey]())
     warnings: list[str] = field(default_factory=lambda: list[str]())
+    failed_pages: list[int] = field(default_factory=lambda: list[int]())
+    """`partial`일 때 읽지 못한 해설 쪽."""
 
 
 def _labels(q: ExamQuestion) -> list[str]:
@@ -96,8 +100,10 @@ def check_key(out: KeyExtraction, exam: Exam, source_text: str) -> list[str]:
             " ".join(x for x in (p.answer or "", p.solution, p.credit_text or "", *p.zero_if) if x)
             for p in kq.parts
         )
-        outside = hangul_outside(written, source_text)
-        if outside > 0.15:
+        missing, total = hangul_missing(written, source_text)
+        outside = missing / total if total else 0.0
+        # 짧은 답("15m/s 서쪽")에 몇 글자 붙은 것까지 비율로 막지 않게 글자 수도 본다
+        if outside > 0.15 and missing >= MIN_MISSING:
             problems.append(
                 f"문항 {kq.number}: 해설에 PDF 글자에 없는 한글이 {outside:.0%} 들어갔다. "
                 "해설지에 적힌 문장을 그대로 옮길 것 (요약·보충 금지)"
@@ -167,6 +173,7 @@ def extract_answer_key(
     ignore_other_numbers: bool = False,
     workers: int = 1,
     partial: bool = False,
+    pages_per_call: int = PAGES_PER_CALL,
 ) -> KeyIngest:
     """`cross`: 새 세션에서 한 번 더 읽어 숫자를 비교한다 (읽기 1번 더).
 
@@ -182,7 +189,9 @@ def extract_answer_key(
     doubtful: dict[str, list[str]] = {}
     images_all: list[Path] = []
     numbers = {q.number for q in exam.questions}
-    groups = [pages[i : i + PAGES_PER_CALL] for i in range(0, len(pages), PAGES_PER_CALL)]
+    step = max(1, pages_per_call)
+    groups = [pages[i : i + step] for i in range(0, len(pages), step)]
+    cache_dir = work_dir / "reads"
 
     def read(group: list[int]) -> tuple[list[Path], list[KeyQuestion], dict[str, list[str]]]:
         images = tuple(render_page(pdf, p, work_dir / f"key_p{p}.png", dpi=170) for p in group)
@@ -207,7 +216,18 @@ def extract_answer_key(
             "(수식은 글꼴 문자라 깨져 있을 수 있음 — 수식은 이미지로 읽을 것):\n" + text,
             attachments=images,
         )
-        first = [q for q in engine.run(task, inp).value.questions if q.number in numbers]
+        cached = cache_dir / f"p{group[0]}-{group[-1]}.json"
+        raw: KeyExtraction | None = None
+        if not cross and cached.is_file():  # 다시 할 때: 읽은 쪽은 AI 없이
+            try:
+                raw = KeyExtraction.model_validate_json(cached.read_text(encoding="utf-8"))
+            except ValueError:
+                raw = None
+        if raw is None:
+            raw = engine.run(task, inp).value
+            cached.parent.mkdir(parents=True, exist_ok=True)
+            cached.write_text(raw.model_dump_json(), encoding="utf-8")
+        first = [q for q in raw.questions if q.number in numbers]
         doubts: dict[str, list[str]] = {}
         if cross:
             second = {kq.number: kq for kq in engine.run(task, inp).value.questions}
@@ -242,6 +262,7 @@ def extract_answer_key(
     out.warnings += [
         f"해설지 {g[0]}~{g[-1]}쪽을 읽지 못함 — 다시 하면 다시 읽습니다" for g in failed
     ]
+    out.failed_pages = sorted(p for g in failed for p in g)
     for q in exam.questions:
         kq = found.get(q.number)
         if kq is None:

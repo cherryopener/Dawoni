@@ -355,6 +355,8 @@ class ChunkResult:
     skipped: list[str] = field(default_factory=lambda: list[str]())
     """이미 있는 문항 (이어 하기 — 강사가 고친 것을 덮어쓰지 않는다)."""
     warnings: list[str] = field(default_factory=lambda: list[str]())
+    originals_added: list[str] = field(default_factory=lambda: list[str]())
+    """이미 있던 문항 중 이번에 원본 정답·해설을 붙인 것."""
 
 
 def item_id_for(src: Source, chunk: SourceChunk, number: str) -> str:
@@ -424,6 +426,7 @@ def ingest_chunk(
         res = ChunkResult(chunk, warnings=list(extracted.warnings))
 
         keys: dict[str, list[KeyPart]] = {}
+        key_failed_pages: list[int] = []
         if chunk.key_pages:
             progress(1, steps, f"정답·해설 {len(chunk.key_pages)}쪽 읽기")
             try:
@@ -436,8 +439,10 @@ def ingest_chunk(
             key = extract_answer_key(
                 svc.engine, pdf, chunk.key_pages, exam, work / "key", level=scope.level,
                 cross=False, ignore_other_numbers=True, workers=workers, partial=True,
+                pages_per_call=1,  # 실측: 수식 많은 3쪽을 한 번에 → 900초 초과
             )  # fmt: skip
             keys = {k.question_number: k.parts for k in key.keys}
+            key_failed_pages = key.failed_pages
             res.warnings += key.warnings
 
         ref_kind = src.kind if src.kind != "handwriting" else "other"
@@ -448,6 +453,15 @@ def ingest_chunk(
             _set_chunk(svc, source_id, chunk)
             if bank.exists(item_id):
                 res.skipped.append(item_id)
+                old = bank.get(item_id)
+                parts = keys.get(q.number, [])
+                if parts and (old.original is None or old.original.level == "none"):
+                    # 전에 해설 쪽을 못 읽었던 문항: 원본 정답·해설만 붙인다 (AI 없음)
+                    orig = OriginalSolution(level=original_level(parts), parts=parts,
+                                            pages=chunk.key_pages)  # fmt: skip
+                    bank.save(old.model_copy(update={"original": orig}), by=by,
+                              base_revision=old.revision)  # fmt: skip
+                    res.originals_added.append(item_id)
                 continue
             parts = keys.get(q.number, [])
             level = original_level(parts)
@@ -477,16 +491,22 @@ def ingest_chunk(
             res.items.append(it)
             chunk = chunk.model_copy(update={"item_ids": [*chunk.item_ids, item_id]})
         missing = [n for nums in extracted.failed_pages.values() for n in nums]
+        key_failed = key_failed_pages
         message = f"{len(res.items)}문항 추가" + (
             f", {len(res.skipped)}문항은 이미 있음" if res.skipped else ""
         )
+        if res.originals_added:
+            message += f", 원본 정답·해설 {len(res.originals_added)}문항 붙임"
+        if key_failed:
+            message += (f" · 해설 {', '.join(map(str, key_failed))}쪽 못 읽음 — 다시 DB화하면 "
+                        "그 쪽만 읽어 원본 정답·해설을 붙입니다")  # fmt: skip
         if missing:
             pages = ", ".join(f"{p}쪽" for p in sorted(extracted.failed_pages))
             message += (
                 f" · {pages}(문항 {', '.join(missing)}) 실패 — 다시 DB화하면 그 쪽만 읽습니다"
             )
         chunk = chunk.model_copy(
-            update={"status": "failed" if missing else "ingested", "machine": None,
+            update={"status": "failed" if missing or key_failed else "ingested", "machine": None,
                     "updated_at": utcnow(), "item_ids": sorted({*chunk.item_ids, *res.skipped}),
                     "message": message}
         )  # fmt: skip

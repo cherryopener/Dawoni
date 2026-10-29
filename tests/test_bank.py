@@ -658,3 +658,32 @@ def test_variant_base_is_solved_first_when_unsolved(setup: Setup) -> None:
         "푼 결과는 문제은행에 저장"
     )
     assert saved.answer_check.verdict == "same"
+
+
+def test_key_failure_then_retry_attaches_originals(
+    setup: Setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실측: 해설 쪽 읽기가 실패해 27문항이 원본 없이 저장됨 → 구간은 '실패'로 두고,
+    다시 하면 있는 문항에 원본 정답·해설만 붙인다 (AI 풀이 없음)."""
+    svc, sid, exe = setup([])
+
+    def no_key(*_: Any, **__: Any) -> KeyIngest:
+        return KeyIngest(keys=[], warnings=["해설지 2~2쪽을 읽지 못함"], failed_pages=[2])
+
+    monkeypatch.setattr("dawoni.ingest.answer_key.extract_answer_key", no_key)
+    first = bi.ingest_chunk(svc, sid, 1, machine="pc-a")
+    assert all(it.original and it.original.level == "none" for it in first.items)
+    c = bi.get_source(svc.workspace, sid).chunks[0]
+    assert c.status == "failed" and "해설 2쪽 못 읽음" in (c.message or "")
+
+    def good_key(*_: Any, **__: Any) -> KeyIngest:
+        return KeyIngest(keys=[AnswerKey(question_number="1", source="t", parts=[_kp("③")])])
+
+    monkeypatch.setattr("dawoni.ingest.answer_key.extract_answer_key", good_key)
+    again = bi.ingest_chunk(svc, sid, 1, machine="pc-a")
+    assert again.items == [] and len(again.originals_added) == 1
+    one = BankStore(svc.workspace).get(first.items[0].id)
+    assert one.original and one.original.parts[0].answer == "③" and one.solution is None
+    c = bi.get_source(svc.workspace, sid).chunks[0]
+    assert c.status == "ingested" and "원본 정답·해설 1문항 붙임" in (c.message or "")
+    assert fake_prompts(exe) == []
