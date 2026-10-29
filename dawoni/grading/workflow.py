@@ -6,10 +6,15 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dawoni import sharing
 from dawoni.agents import AgentError, AgentErrorCode
 from dawoni.context import TaskFailed
 from dawoni.grading import calibration
@@ -23,6 +28,7 @@ from dawoni.grading.pipeline import (
     suggest_rubric,
 )
 from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.models.base import utcnow
 from dawoni.models.calibration import CalibrationEval, EvalCase, RubricSuggestion
 from dawoni.models.grading import (
     CandidateMatches,
@@ -51,7 +57,76 @@ def select_questions(exam: Exam, only: list[str] | None) -> list[ExamQuestion]:
     return [exam.question(n) for n in only]
 
 
+# ---------------------------------------------------------------- 문항 병렬
+
+
+def each_in_parallel[T, R](
+    items: list[T],
+    fn: Callable[[T], R],
+    *,
+    name: Callable[[T], str],
+    what: str,
+    workers: int,
+    progress: Progress = _noop,
+) -> list[R]:
+    """항목마다 `fn`을 최대 `workers`개씩 동시에 (AI 호출은 각자 새 세션).
+
+    결과는 입력 순서대로. 하나가 실패해도 나머지는 끝까지 하고(저장은 `fn` 안에서), 실패는
+    모아서 마지막에 알린다. 작업의 취소·진행 알림(ContextVar)은 스레드마다 복사해 넘긴다.
+    """
+    total = len(items)
+    if total == 0:
+        return []
+    lock = threading.Lock()
+    running: list[str] = []
+    done = 0
+
+    def report() -> None:
+        now = "·".join(running)
+        progress(done, total, f"{what} {now} 진행 중 ({done}/{total} 완료)" if now else f"{what}")
+
+    def one(x: T) -> R:
+        nonlocal done
+        with lock:
+            running.append(name(x))
+            report()
+        try:
+            return fn(x)
+        finally:
+            with lock:
+                running.remove(name(x))
+                done += 1
+                report()
+
+    results: dict[int, R] = {}
+    failed: list[tuple[str, BaseException]] = []
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, total))) as pool:
+        futures = {
+            pool.submit(contextvars.copy_context().run, one, x): i for i, x in enumerate(items)
+        }
+        for f in as_completed(futures):
+            i = futures[f]
+            try:
+                results[i] = f.result()
+            except Exception as e:
+                failed.append((name(items[i]), e))
+    if failed:
+        if len(failed) == 1 and len(items) == 1:
+            raise failed[0][1]
+        detail = "; ".join(f"{n}: {str(e).strip() or type(e).__name__}"[:200] for n, e in failed)
+        raise PipelineError(f"{len(failed)}개 실패 (나머지는 저장됨) — {detail}")
+    return [results[i] for i in range(total)]
+
+
 # ---------------------------------------------------------------- 해설·루브릭
+
+
+def _working(
+    svc: Services, store: ExamStore, task: str, q: str, by: str | None
+) -> contextlib.AbstractContextManager[None]:
+    return sharing.working_on(
+        svc.workspace, store.exam_id, task, q, sharing.machine_id(svc.paths), by
+    )
 
 
 def solve_questions(
@@ -60,23 +135,35 @@ def solve_questions(
     only: list[str] | None = None,
     *,
     verify: SecondOpinion | None = None,
+    by: str | None = None,
     progress: Progress = _noop,
 ) -> list[ScopedSolution]:
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
     qs = select_questions(exam, only)
-    out: list[ScopedSolution] = []
-    for k, q in enumerate(qs):
-        progress(k, len(qs), f"문항 {q.number} 해설")
-        sol = solve_question(svc.engine, q, scope, verify=verify)
-        store.save_solution(sol)
-        out.append(sol)
+
+    def one(q: ExamQuestion) -> ScopedSolution:
+        with _working(svc, store, "solve", q.number, by):
+            sol = solve_question(svc.engine, q, scope, verify=verify)
+            sol = sol.model_copy(update={"created_by": by, "created_at": utcnow()})
+            store.save_solution(sol)
+            return sol
+
+    out = each_in_parallel(
+        qs, one, name=lambda q: f"문항 {q.number}", what="해설",
+        workers=svc.config.parallel_questions, progress=progress,
+    )  # fmt: skip
     progress(len(qs), len(qs), "해설 완료")
     return out
 
 
 def rubric_questions(
-    svc: Services, store: ExamStore, only: list[str] | None = None, *, progress: Progress = _noop
+    svc: Services,
+    store: ExamStore,
+    only: list[str] | None = None,
+    *,
+    by: str | None = None,
+    progress: Progress = _noop,
 ) -> list[Rubric]:
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
@@ -84,17 +171,21 @@ def rubric_questions(
     missing = [q.number for q in qs if store.solution(q.number) is None]
     if missing:
         raise PipelineError(f"문항 {', '.join(missing)}: 해설이 없습니다. 먼저 해설을 만드세요.")
-    out: list[Rubric] = []
-    for k, q in enumerate(qs):
-        progress(k, len(qs), f"문항 {q.number} 루브릭")
-        sol = store.solution(q.number)
-        assert sol is not None
-        key = store.answer_key(q.number)
-        basis = " (해설지 기준)" if key else " (해설지 없음)"
-        progress(k, len(qs), f"문항 {q.number} 루브릭{basis}")
-        r = derive_rubric(svc.engine, q, sol, scope, key=key, previous=store.rubric(q.number))
-        store.save_rubric(r)
-        out.append(r)
+
+    def one(q: ExamQuestion) -> Rubric:
+        with _working(svc, store, "rubric", q.number, by):
+            sol = store.solution(q.number)
+            assert sol is not None
+            key = store.answer_key(q.number)
+            r = derive_rubric(svc.engine, q, sol, scope, key=key, previous=store.rubric(q.number))
+            r = r.model_copy(update={"created_by": by, "created_at": utcnow()})
+            store.save_rubric(r)
+            return r
+
+    out = each_in_parallel(
+        qs, one, name=lambda q: f"문항 {q.number}", what="루브릭",
+        workers=svc.config.parallel_questions, progress=progress,
+    )  # fmt: skip
     progress(len(qs), len(qs), "루브릭 초안 완료 — 검토 후 승인하세요")
     return out
 

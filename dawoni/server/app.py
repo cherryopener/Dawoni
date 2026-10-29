@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from dawoni.export.docx.builder import ExportError
 from dawoni.export.fill import FillError
 from dawoni.grading.pipeline import PipelineError
-from dawoni.ingest.workflow import IngestRefused
+from dawoni.ingest.workflow import AlreadyIngested, IngestRefused
 from dawoni.lecture.youtube import LectureError
 from dawoni.ocr.pages import PageError
 from dawoni.paths import AppPaths
@@ -66,6 +66,11 @@ def create_app(paths: AppPaths, token: str, *, web_dir: Path | None = None) -> F
     @app.exception_handler(NeedsSetup)
     async def _needs_setup(_: Request, e: NeedsSetup) -> Response:  # pyright: ignore[reportUnusedFunction]
         return err(409, "needs_setup", e)
+
+    @app.exception_handler(AlreadyIngested)
+    async def _already(_: Request, e: AlreadyIngested) -> Response:  # pyright: ignore[reportUnusedFunction]
+        body = {"detail": str(e), "code": "already_ingested", "exam_id": e.exam_id}
+        return JSONResponse(body, status_code=409)
 
     @app.exception_handler(KeyError)
     async def _not_found(_: Request, e: KeyError) -> Response:  # pyright: ignore[reportUnusedFunction]

@@ -124,6 +124,8 @@ class AppConfig(_Settings):
     subjects: list[str] = Field(default_factory=lambda: list(DEFAULT_SUBJECTS))
     max_parallel_jobs: int = Field(default=1, ge=1, le=4)
     """동시에 돌리는 AI 호출 수. 구독 한도 소모 속도를 조절한다."""
+    parallel_questions: int = Field(default=3, ge=1, le=6)
+    """한 작업 안에서 동시에 처리하는 문항 수 (해설·루브릭·문제은행 풀이). 1이면 차례로."""
 
     def agent(self, name: AgentName) -> AgentSettings:
         return self.agents.get(name) or AgentSettings()

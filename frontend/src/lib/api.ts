@@ -4,10 +4,13 @@ import type { Job } from "./types";
 export class ApiError extends Error {
   status: number;
   code: string | undefined;
-  constructor(status: number, message: string, code?: string) {
+  /** 오류 응답의 나머지 필드 (예: 이미 등록된 시험의 exam_id). */
+  extra: Record<string, unknown>;
+  constructor(status: number, message: string, code?: string, extra: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
     this.code = code;
+    this.extra = extra;
   }
 }
 
@@ -15,15 +18,17 @@ async function handle<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
     let code: string | undefined;
+    let extra: Record<string, unknown> = {};
     try {
-      const body = (await res.json()) as { detail?: unknown; code?: string };
+      const body = (await res.json()) as { detail?: unknown; code?: string } & Record<string, unknown>;
       if (typeof body.detail === "string") detail = body.detail;
       else if (Array.isArray(body.detail)) detail = JSON.stringify(body.detail);
       code = body.code;
+      extra = body;
     } catch {
       /* JSON이 아닌 오류 */
     }
-    throw new ApiError(res.status, detail, code);
+    throw new ApiError(res.status, detail, code, extra);
   }
   return (await res.json()) as T;
 }

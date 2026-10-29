@@ -59,6 +59,13 @@ function Steps({ steps, scope }: { steps: SolutionStep[]; scope: Scope | null })
 
 const KIND: Record<string, string> = { essay: "서술형", short_answer: "단답형" };
 
+/** 누가·언제 만들었는지 — 공유 작업공간에서 다른 강사가 이미 만든 것인지 보이게. */
+function Made({ by, at }: { by?: string | null; at?: string | null }) {
+  if (!by && !at) return null;
+  const when = at ? new Date(at).toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+  return <Badge title="만든 사람 · 때">{[by, when].filter(Boolean).join(" · ")}</Badge>;
+}
+
 function creditText(p: KeyPart): string {
   switch (p.credit_policy) {
     case "listed":
@@ -375,6 +382,7 @@ export function SolutionView({ sol, scope, withKey = false }: { sol: Solution; s
     <Stack gap={8}>
       <Row>
         <b>{withKey ? "AI 독립 풀이 (해설지를 보지 않고)" : "범위 해설"}</b>
+        <Made by={sol.created_by} at={sol.created_at} />
         {sol.verified ? <Badge tone="ok">독립 재풀이와 답 일치</Badge> : <Badge>재풀이 안 함</Badge>}
       </Row>
       {sol.out_of_scope_note && <Notice>범위 안에서 풀기 어렵다는 AI 판단: {sol.out_of_scope_note}</Notice>}
@@ -456,6 +464,7 @@ function RubricEditor({ examId, q, rubric, onChanged }: {
     <Stack gap={10}>
       <Row>
         <b>루브릭 v{rubric.version}</b>
+        <Made by={rubric.created_by} at={rubric.created_at} />
         {rubric.status === "approved" && !dirty ? (
           <Badge tone="ok">승인됨{rubric.approved_by ? ` · ${rubric.approved_by}` : ""}</Badge>
         ) : (
@@ -735,7 +744,7 @@ export function RubricsTab({ detail, scope, reload }: TabProps) {
             <Button
               variant="primary"
               disabled={solve.running}
-              onClick={() => void solve.run(() => api.post(`/exams/${id}/solve`, { questions: unsolved.length ? unsolved : null, verify }))}
+              onClick={() => void solve.run(() => api.post(`/exams/${id}/solve`, { questions: unsolved.length ? unsolved : null, verify, by: teacherName() || null }))}
             >
               {unsolved.length ? `해설 만들기 (${unsolved.length}문항)` : "해설 다시 만들기 (전체)"}
             </Button>
@@ -745,7 +754,7 @@ export function RubricsTab({ detail, scope, reload }: TabProps) {
             <span style={{ width: 16 }} />
             <Button
               disabled={rubric.running || detail.summary.solved === 0}
-              onClick={() => void rubric.run(() => api.post(`/exams/${id}/rubrics`, { questions: noRubric.length ? noRubric : null }))}
+              onClick={() => void rubric.run(() => api.post(`/exams/${id}/rubrics`, { questions: noRubric.length ? noRubric : null, by: teacherName() || null }))}
             >
               {noRubric.length ? `루브릭 초안 만들기 (${noRubric.length}문항)` : "루브릭 다시 만들기 (전체)"}
             </Button>

@@ -140,6 +140,8 @@ class ScopedSolution(SolutionDraft):
     verified: bool = False
     """독립 재풀이와 최종 답이 일치함."""
     check_notes: list[str] = Field(default_factory=lambda: list[str]())
+    created_by: str | None = None
+    created_at: datetime | None = None
 
 
 # ---------------------------------------------------------------- 루브릭
@@ -366,6 +368,10 @@ class Rubric(RubricDraft):
     status: Literal["draft", "approved"] = "draft"
     approved_by: str | None = None
     approved_at: datetime | None = None
+    created_by: str | None = None
+    created_at: datetime | None = Field(
+        default=None, description="AI 초안을 만든 때 (강사 편집은 판만 올림)"
+    )
 
 
 # ---------------------------------------------------------------- 학생

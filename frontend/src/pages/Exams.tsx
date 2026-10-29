@@ -16,9 +16,9 @@ import {
   TextArea,
   TextInput,
 } from "../components/ui";
-import { api, errorText, useJob, useLoad } from "../lib/api";
+import { ApiError, api, errorText, useJob, useLoad } from "../lib/api";
 import { go } from "../lib/router";
-import type { Exam, ExamSummary, ScopeSummary } from "../lib/types";
+import type { Exam, ExamSummary, Job, ScopeSummary } from "../lib/types";
 
 type ExamRow = { id: string; title: string; scope_id: string; created_at: string; summary: ExamSummary };
 
@@ -44,6 +44,7 @@ function NewExam({ scopes, onCreated }: { scopes: ScopeSummary[]; onCreated: (id
   const [keyPages, setKeyPages] = useState("");
   const [json, setJson] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [existing, setExisting] = useState<string | null>(null);
   const job = useJob((j) => onCreated((j.result as { exam_id: string }).exam_id));
   if (!scopes.length) {
     return <Notice>시험을 만들려면 먼저 범위 프로필이 있어야 합니다 (왼쪽 “범위 프로필”).</Notice>;
@@ -55,7 +56,15 @@ function NewExam({ scopes, onCreated }: { scopes: ScopeSummary[]; onCreated: (id
     f.append("scope_id", scopeId);
     f.append("force", String(force));
     f.append("key_pages", keyPages);
-    void job.run(() => api.upload("/exams/from-pdf", f));
+    setExisting(null);
+    void job.run(() =>
+      api.upload<Job>("/exams/from-pdf", f).catch((e: unknown) => {
+        if (e instanceof ApiError && e.code === "already_ingested" && typeof e.extra.exam_id === "string") {
+          setExisting(e.extra.exam_id);
+        }
+        throw e;
+      }),
+    );
   };
   const fromJson = () => {
     setErr(null);
@@ -121,6 +130,13 @@ function NewExam({ scopes, onCreated }: { scopes: ScopeSummary[]; onCreated: (id
               </Button>
             </Row>
             <JobProgress job={job.job} />
+            {existing && (
+              <Row>
+                <Button variant="primary" onClick={() => onCreated(existing)}>
+                  등록된 시험 열기
+                </Button>
+              </Row>
+            )}
           </>
         ) : (
           <>

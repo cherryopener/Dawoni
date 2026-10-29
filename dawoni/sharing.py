@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 import socket
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -94,6 +96,51 @@ def others_using(
     return sorted(out, key=lambda x: x.at, reverse=True)
 
 
+# ---------------------------------------------------------------- 만드는 중 표식
+
+WORK_FRESH = timedelta(minutes=30)
+"""AI 작업(해설·루브릭 등) 하나가 이보다 오래 표식을 남기면 멈춘 것으로 본다."""
+
+
+class WorkInProgress(ValueError):
+    """다른 PC가 같은 것을 만들고 있다 — AI 호출이 겹치지 않게 막는다."""
+
+
+class WorkMark(DawoniModel):
+    machine: str
+    teacher: str | None = None
+    task: str
+    host: str = Field(default_factory=socket.gethostname)
+    at: datetime = Field(default_factory=utcnow)
+
+
+@contextmanager
+def working_on(
+    ws: WorkspacePaths, exam_id: str, task: str, label: str, machine: str, teacher: str | None
+) -> Generator[None]:
+    """`exams/<id>/.locks/<task>-<label>.json` 표식을 두고 작업한다.
+
+    다른 PC의 새 표식이 있으면 막는다 (같은 문항의 AI 호출이 겹치지 않게)."""
+    path = ws.exams / exam_id / ".locks" / f"{task}-{_safe(label)}.json"
+    if path.is_file():
+        try:
+            x = WorkMark.model_validate(read_json(path))
+        except ValueError:
+            x = None  # 동기화 중 반쯤 받은 파일
+        if x is not None and x.machine != machine and utcnow() - x.at <= WORK_FRESH:
+            who = f"{x.teacher} 선생님" if x.teacher else f"다른 PC({x.host})"
+            raise WorkInProgress(f"{who}이 지금 만들고 있습니다 — 끝나면 결과가 여기에도 보입니다")
+    write_model_atomic(path, WorkMark(machine=machine, teacher=teacher, task=task))
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _safe(s: str) -> str:
+    return re.sub(r'[\\/:*?"<>|\s]+', "_", s) or "_"
+
+
 # ---------------------------------------------------------------- 충돌 사본
 
 _COPY = re.compile(
@@ -105,7 +152,7 @@ _COPY = re.compile(
     r")$",
     re.I,
 )
-_SKIP_DIRS = {".inuse", "_render", ".git"}
+_SKIP_DIRS = {".inuse", ".locks", "_render", ".git"}
 
 
 class ConflictCopy(DawoniModel):

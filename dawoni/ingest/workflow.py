@@ -28,6 +28,30 @@ class IngestRefused(ValueError):
     """이미 DB화한 자료, 스캔 PDF 등 — 강사에게 이유를 보여 준다."""
 
 
+class AlreadyIngested(IngestRefused):
+    """같은 PDF(해시)로 이미 만든 시험이 있다 — 팀의 기존 시험(해설·루브릭 포함)을 연다."""
+
+    def __init__(self, message: str, exam_id: str | None) -> None:
+        super().__init__(message)
+        self.exam_id = exam_id
+
+
+def existing_exam(svc: Services, path: Path) -> AlreadyIngested | None:
+    """같은 PDF로 이미 시험을 만들었으면 그 안내 (시험 폴더가 지워졌으면 None)."""
+    src = find_source(svc.workspace, path)
+    if src is None or src.ingest.status != "ingested":
+        return None
+    exam_id = src.ingest.message
+    if not exam_id or not (svc.workspace.exams / exam_id).is_dir():
+        return None
+    title = ExamStore(svc.workspace, exam_id).exam().title
+    return AlreadyIngested(
+        f"이미 등록된 시험지입니다 — '{title}' ({src.ingest.item_count}문항, {exam_id}). "
+        "해설·루브릭이 있으면 그대로 볼 수 있습니다. 새로 만들려면 '다시 DB화'를 선택하세요.",
+        exam_id,
+    )
+
+
 @dataclass
 class ExamIngest:
     exam: Exam
@@ -89,12 +113,8 @@ def ingest_exam_pdf(
     from dawoni.ingest.exam import extract_exam
 
     scope = ScopeStore(svc.workspace).get(scope_id)
-    existing = find_source(svc.workspace, path)
-    if existing and existing.ingest.status == "ingested" and not force:
-        raise IngestRefused(
-            f"이미 DB화한 자료입니다 ({existing.ingest.item_count}문항, "
-            f"{existing.ingest.message}). 다시 하려면 '다시 DB화'를 선택하세요."
-        )
+    if not force and (refused := existing_exam(svc, path)) is not None:
+        raise refused
     if key_pages is None:
         key_pages = find_key_pages(path)
     steps = 3 if key_pages else 2

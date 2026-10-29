@@ -374,7 +374,8 @@ def test_cli_ingest_textbook_then_exam(
     assert (ws.sources / "exam.pdf").exists()
 
     assert main([*w, "exam", str(exam_pdf), "--title", "모의", "--scope", scope.id]) == 1
-    assert "이미 DB화한 자료" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "이미 등록된 시험지" in err and exam.id in err, "기존 시험으로 안내"
 
 
 def test_cli_layout_overlay(

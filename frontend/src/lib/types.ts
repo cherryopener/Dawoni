@@ -123,6 +123,8 @@ export type Solution = {
   question_number: string;
   verified: boolean;
   check_notes: string[];
+  created_by?: string | null;
+  created_at?: string | null;
 };
 
 export type RubricItem = {
@@ -191,6 +193,8 @@ export type Rubric = RubricDraft & {
   status: "draft" | "approved";
   approved_by?: string | null;
   approved_at?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
 };
 
 // ---------------------------------------------------------------- 답안·채점

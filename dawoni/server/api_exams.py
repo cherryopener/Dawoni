@@ -181,11 +181,13 @@ def exam_from_pdf(
 ) -> Job:
     """`key_pages`: 해설지 쪽 ("6", "5-6"). 비우면 자동으로 찾고, "none"이면 해설지 없음."""
     from dawoni.cli_ingest import parse_key_pages
-    from dawoni.ingest.workflow import ingest_exam_pdf
+    from dawoni.ingest.workflow import existing_exam, ingest_exam_pdf
 
     svc = st.services()
     ScopeStore(svc.workspace).get(scope_id)
     path = save_upload(file, upload_dir(st))
+    if not force and (refused := existing_exam(svc, path)) is not None:
+        raise refused  # 작업을 띄우기 전에 알려 기존 시험을 바로 열 수 있게
     pages = parse_key_pages(key_pages if key_pages and key_pages.strip() else None)
 
     def run(ctx: JobContext) -> dict[str, Any]:
@@ -255,6 +257,7 @@ class QuestionsBody(BaseModel):
     questions: list[str] | None = None
     verify: bool = False
     verify_model: str | None = None
+    by: str | None = None
 
 
 @router.post("/{exam_id}/solve")
@@ -264,7 +267,7 @@ def solve(exam_id: str, body: QuestionsBody, st: AppState = State) -> Job:
 
     def run(ctx: JobContext) -> dict[str, Any]:
         sols = workflow.solve_questions(
-            svc, store, body.questions, verify=verify, progress=ctx.progress
+            svc, store, body.questions, verify=verify, by=body.by, progress=ctx.progress
         )
         return {"solved": [s.question_number for s in sols]}
 
@@ -276,7 +279,9 @@ def make_rubrics(exam_id: str, body: QuestionsBody, st: AppState = State) -> Job
     svc, store = _store(st, exam_id)
 
     def run(ctx: JobContext) -> dict[str, Any]:
-        rs = workflow.rubric_questions(svc, store, body.questions, progress=ctx.progress)
+        rs = workflow.rubric_questions(
+            svc, store, body.questions, by=body.by, progress=ctx.progress
+        )
         return {"rubrics": [r.question_number for r in rs]}
 
     return st.jobs.submit("rubric", run, {"exam": exam_id})

@@ -17,12 +17,15 @@ from dawoni.models.grading import Exam, ExamQuestion
 from dawoni.paths import AppPaths
 from dawoni.sharing import (
     FRESH,
+    WORK_FRESH,
+    WorkInProgress,
     cloud_provider,
     conflict_copies,
     machine_id,
     mark_in_use,
     others_using,
     release,
+    working_on,
 )
 from dawoni.workspace import create_workspace, open_workspace, set_mode
 
@@ -80,6 +83,76 @@ def test_presence(tmp_path: Path, app_paths: AppPaths) -> None:
     assert others_using(ws, "exam-1", me, now=utcnow() + FRESH + timedelta(seconds=5)) == []
     release(ws, "exam-1", "other-pc")
     assert others_using(ws, "exam-1", me) == []
+
+
+def test_working_on_blocks_other_pc(tmp_path: Path) -> None:
+    import json
+
+    ws = create_workspace(tmp_path / "ws", mode="team")
+    with working_on(ws, "exam-1", "rubric", "2", "pc-a", "김선생"):
+        mark = ws.exams / "exam-1" / ".locks" / "rubric-2.json"
+        assert mark.is_file()
+        with (
+            pytest.raises(WorkInProgress, match="김선생 선생님이 지금 만들고"),
+            working_on(ws, "exam-1", "rubric", "2", "pc-b", "이선생"),
+        ):
+            pass
+        with working_on(ws, "exam-1", "rubric", "3", "pc-b", "이선생"):
+            pass  # 다른 문항은 된다
+        with working_on(ws, "exam-1", "solve", "2", "pc-b", None):
+            pass  # 다른 작업도 된다
+    assert not mark.exists(), "끝나면 지운다"
+
+    # 멈춘 PC의 오래된 표식은 무시
+    mark.parent.mkdir(parents=True, exist_ok=True)
+    old = (utcnow() - WORK_FRESH - timedelta(minutes=1)).isoformat()
+    mark.write_text(json.dumps({"machine": "pc-a", "task": "rubric", "at": old}))
+    with working_on(ws, "exam-1", "rubric", "2", "pc-b", None):
+        pass
+    # 실패해도 지운다
+    with pytest.raises(RuntimeError), working_on(ws, "exam-1", "rubric", "2", "pc-b", None):
+        raise RuntimeError("AI 오류")
+    assert not mark.exists()
+
+
+def test_each_in_parallel() -> None:
+    import contextvars
+    import time
+
+    from dawoni.grading.pipeline import PipelineError
+    from dawoni.grading.workflow import each_in_parallel
+
+    var: contextvars.ContextVar[str] = contextvars.ContextVar("v", default="없음")
+    var.set("작업")
+    seen: list[str] = []
+    msgs: list[str] = []
+
+    def slow(n: int) -> int:
+        seen.append(var.get())
+        time.sleep(0.3 if n == 1 else 0.1)
+        return n * 10
+
+    t0 = time.monotonic()
+    out = each_in_parallel([1, 2, 3], slow, name=lambda n: f"문항 {n}", what="해설", workers=3,
+                           progress=lambda d, t, m: msgs.append(m))  # fmt: skip
+    assert out == [10, 20, 30], "입력 순서대로"
+    assert time.monotonic() - t0 < 0.55, "동시에 돈다"
+    assert seen == ["작업"] * 3, "작업의 ContextVar(취소·진행)가 스레드로 넘어간다"
+    assert any("진행 중" in m for m in msgs)
+
+    done: list[int] = []
+
+    def flaky(n: int) -> int:
+        if n == 2:
+            raise ValueError("AI 응답 오류")
+        done.append(n)
+        return n
+
+    with pytest.raises(PipelineError, match=r"1개 실패 \(나머지는 저장됨\) — 문항 2: AI 응답 오류"):
+        each_in_parallel([1, 2, 3], flaky, name=lambda n: f"문항 {n}", what="해설", workers=2)
+    assert sorted(done) == [1, 3], "실패한 문항이 있어도 나머지는 끝까지"
+    with pytest.raises(ValueError, match="AI 응답 오류"):
+        each_in_parallel([2], flaky, name=str, what="해설", workers=3)
 
 
 def test_mode_and_presence_api(app_paths: AppPaths, tmp_path: Path) -> None:

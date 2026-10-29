@@ -101,10 +101,18 @@ def test_exam_end_to_end(
     eid = exam["id"]
     base = f"/api/exams/{eid}"
 
-    job = _wait(c, c.post(f"{base}/solve", json={}).json())
+    job = _wait(c, c.post(f"{base}/solve", json={"by": "김선생"}).json())
     assert job["status"] == "succeeded", job
     assert job["progress"]["done"] == job["progress"]["total"] == 1
-    assert _wait(c, c.post(f"{base}/rubrics", json={}).json())["status"] == "succeeded"
+    assert (
+        _wait(c, c.post(f"{base}/rubrics", json={"by": "이선생"}).json())["status"] == "succeeded"
+    )
+    made = c.get(f"{base}/questions/1").json()
+    assert made["solution"]["created_by"] == "김선생" and made["solution"]["created_at"]
+    assert made["rubric"]["created_by"] == "이선생", "팀원이 누가 만들었는지 본다"
+    assert not (tmp_path / "ws" / "exams" / eid / ".locks").exists() or not any(
+        (tmp_path / "ws" / "exams" / eid / ".locks").iterdir()
+    ), "끝나면 만드는 중 표식을 지운다"
 
     detail = c.get(base).json()
     assert detail["questions"][0]["rubric"]["status"] == "draft"
@@ -458,3 +466,44 @@ def test_candidate_match_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path:
     (p,) = m["parts"]
     assert p["sides"][0]["student"] == "홍길동" and p["blank"] == ["빈칸"]
     assert m["unconfirmed"] == ["빈칸", "홍길동"]
+
+
+def test_same_pdf_opens_existing_exam(app_paths: AppPaths, tmp_path: Path) -> None:
+    from pdfgen import make_exam_pdf
+
+    from dawoni.ingest.sources import register_source, update_source
+    from dawoni.models.source import SourceIngestState
+    from dawoni.paths import WorkspacePaths
+
+    c = _client(app_paths)
+    ws_root = tmp_path / "ws"
+    c.post("/api/workspace", json={"path": str(ws_root), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q1 = read_json(FIX / "questions.json")[:1]
+    eid = c.post(
+        "/api/exams", json={"title": "중간고사", "scope_id": scope["id"], "questions": q1}
+    ).json()["id"]
+    pdf = make_exam_pdf(tmp_path / "exam.pdf")
+    src = register_source(WorkspacePaths(ws_root), pdf, "exam", title="중간고사")
+    src.ingest = SourceIngestState(status="ingested", item_count=1, message=eid)
+    update_source(WorkspacePaths(ws_root), src)
+
+    def upload() -> Any:
+        with pdf.open("rb") as f:
+            return c.post("/api/exams/from-pdf", files={"file": ("exam.pdf", f)},
+                          data={"title": "다시", "scope_id": scope["id"]})  # fmt: skip
+
+    r = upload()
+    assert r.status_code == 409, r.text
+    body = r.json()
+    assert body["code"] == "already_ingested" and body["exam_id"] == eid
+    assert "중간고사" in body["detail"]
+    import shutil
+
+    from dawoni.ingest.workflow import existing_exam
+    from dawoni.services import open_services
+
+    svc = open_services(ws_root, paths=app_paths)
+    assert existing_exam(svc, pdf) is not None
+    shutil.rmtree(ws_root / "exams" / eid)
+    assert existing_exam(svc, pdf) is None, "시험 폴더가 지워졌으면 다시 만들 수 있다"

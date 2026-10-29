@@ -132,7 +132,9 @@ def _cmd_solve(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
     verify = SecondOpinion(model=args.verify_model) if args.verify else None
-    for sol in workflow.solve_questions(svc, store, args.q, verify=verify, progress=_cli_progress):
+    for sol in workflow.solve_questions(
+        svc, store, args.q, verify=verify, by=args.by, progress=_cli_progress
+    ):
         mark = (
             "재풀이 일치" if sol.verified else ("확인 필요" if sol.check_notes else "재풀이 안 함")
         )
@@ -213,7 +215,7 @@ def _rubric_review(r: Rubric, matches: CandidateMatches | None = None) -> list[s
 def _cmd_rubric(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
-    for r in workflow.rubric_questions(svc, store, args.q, progress=_cli_progress):
+    for r in workflow.rubric_questions(svc, store, args.q, by=args.by, progress=_cli_progress):
         _out(
             f"문항 {r.question_number}: 루브릭 초안 v{r.version} — "
             f"항목 {len(r.items)}개, 합계 {r.total:g}점"
@@ -619,8 +621,11 @@ def register(sub: Any) -> None:
     s = with_q(es.add_parser("solve", help="범위 해설"))
     s.add_argument("--verify", action="store_true", help="독립 재풀이로 답 확인")
     s.add_argument("--verify-model", help="재풀이에 쓸 모델 (예: claude-sonnet-5-5-low)")
+    s.add_argument("--by", help="만든 사람 (팀원에게 보임)")
     s.set_defaults(func=_wrap(_cmd_solve))
-    with_q(es.add_parser("rubric", help="루브릭 초안")).set_defaults(func=_wrap(_cmd_rubric))
+    rb = with_q(es.add_parser("rubric", help="루브릭 초안"))
+    rb.add_argument("--by", help="만든 사람 (팀원에게 보임)")
+    rb.set_defaults(func=_wrap(_cmd_rubric))
     with_q(es.add_parser("show", help="해설·루브릭 보기")).set_defaults(func=_wrap(_cmd_show))
     a = with_q(es.add_parser("approve", help="루브릭 승인"))
     a.add_argument("--by")
