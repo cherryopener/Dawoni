@@ -360,6 +360,17 @@ class ChunkResult:
     """이미 있던 문항 중 이번에 원본 정답·해설을 붙인 것."""
 
 
+def work_dir(svc: Services, source_id: str, index: int) -> Path:
+    """구간 DB화의 중간 결과(쪽 그림·쪽별 읽기 캐시).
+
+    공유 폴더가 아니라 이 PC의 앱 데이터 폴더에 둔다 — 팀원에게 동기화할 필요가 없고 크다
+    (실측: 교재 한 권 70MB). 문항 그림은 문항 폴더로 복사되므로 이 폴더를 지워도 된다."""
+    import hashlib
+
+    ws_key = hashlib.sha256(str(svc.workspace.root.resolve()).encode()).hexdigest()[:12]
+    return svc.paths.cache / "bank-work" / ws_key / f"{source_id[:10]}-c{index}"
+
+
 def item_id_for(src: Source, chunk: SourceChunk, number: str) -> str:
     """문항 번호로 정한다 (순번이면 한 쪽이 빠졌다 다시 할 때 뒤 문항 ID가 밀려 겹쳐 들어감)."""
     import hashlib
@@ -412,7 +423,7 @@ def ingest_chunk(
             raise BankError("글자 정보가 없는 스캔 PDF입니다. 아직 디지털 PDF만 지원합니다.")
         if not layout.regions:
             raise BankError(f"구간 {index}의 쪽에서 문항을 찾지 못했습니다")
-        work = ws.bank / ".work" / f"{source_id[:10]}-c{index}"
+        work = work_dir(svc, source_id, index)
         steps = 2 + len(layout.regions)
         progress(0, steps, f"문항 {len(layout.regions)}개 구조화")
         subject = " · ".join(t.subject for t in trees)
