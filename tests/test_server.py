@@ -412,3 +412,49 @@ def test_answer_key_fix_and_confirm(app_paths: AppPaths, tmp_path: Path) -> None
     ).json()
     assert fixed["confirmed"] and fixed["confirmed_by"] == "김선생" and fixed["doubtful"] == []
     assert store.answer_key("1").parts[0].answer == "1/2"  # pyright: ignore[reportOptionalMemberAccess]
+
+
+def test_candidate_match_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path) -> None:
+    from test_grading import approved_rubric
+
+    from dawoni.grading.store import ExamStore
+    from dawoni.models.grading import AnswerCandidate, PartCheck, Transcript, TranscriptLine
+    from dawoni.paths import WorkspacePaths
+
+    sides = {"students": [
+        {"student": "학생1", "side": "candidate", "candidate_id": "A1", "quote": "최솟값은 11"},
+    ]}  # fmt: skip
+    exe = make_fake("script", script=[{"response": json.dumps(sides, ensure_ascii=False)}])
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    save_config(app_paths, cfg)
+    c = _client(app_paths)
+    ws_root = tmp_path / "ws"
+    c.post("/api/workspace", json={"path": str(ws_root), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q1 = read_json(FIX / "questions.json")[:1]
+    eid = c.post(
+        "/api/exams", json={"title": "후보", "scope_id": scope["id"], "questions": q1}
+    ).json()["id"]
+    store = ExamStore(WorkspacePaths(ws_root), eid)
+    base = f"/api/exams/{eid}/questions/1"
+    store.save_rubric(approved_rubric())
+    no_cands = _wait(c, c.post(f"{base}/rubric/candidates/match").json())
+    assert no_cands["status"] == "failed"
+
+    r = approved_rubric()
+    r = r.model_copy(update={
+        "checks": [PartCheck(part="", key_answer="3", ai_answer="11", verdict="other_valid")],
+        "candidates": [AnswerCandidate(id="A1", part="", answer="11", argument="다르게 읽으면")],
+    })  # fmt: skip
+    store.save_rubric(r)
+    store.save_transcript(Transcript(student_id="홍길동", question_number="1",
+                                     lines=[TranscriptLine(text="최솟값은 11")]))  # fmt: skip
+    store.save_transcript(Transcript(student_id="빈칸", question_number="1"))
+    assert c.get(base).json()["candidate_matches"] is None
+    j = _wait(c, c.post(f"{base}/rubric/candidates/match").json())
+    assert j["status"] == "succeeded", j
+    m = c.get(base).json()["candidate_matches"]
+    (p,) = m["parts"]
+    assert p["sides"][0]["student"] == "홍길동" and p["blank"] == ["빈칸"]
+    assert m["unconfirmed"] == ["빈칸", "홍길동"]

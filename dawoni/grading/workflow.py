@@ -16,6 +16,7 @@ from dawoni.grading import calibration
 from dawoni.grading.pipeline import (
     PipelineError,
     SecondOpinion,
+    answer_sides,
     derive_rubric,
     grade_answer,
     solve_question,
@@ -24,6 +25,7 @@ from dawoni.grading.pipeline import (
 from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.calibration import CalibrationEval, EvalCase, RubricSuggestion
 from dawoni.models.grading import (
+    CandidateMatches,
     Exam,
     ExamQuestion,
     GradeResult,
@@ -95,6 +97,27 @@ def rubric_questions(
         out.append(r)
     progress(len(qs), len(qs), "루브릭 초안 완료 — 검토 후 승인하세요")
     return out
+
+
+def match_candidates(
+    svc: Services, store: ExamStore, q_number: str, *, progress: Progress = _noop
+) -> CandidateMatches:
+    """정답 후보를 정하기 전에: 판독한 학생 답이 해설지 답·후보 중 어느 쪽인지 (AI, 저장)."""
+    exam = store.exam()
+    q = exam.question(q_number)
+    rubric = store.rubric(q_number)
+    if rubric is None:
+        raise PipelineError(f"문항 {q_number}: 루브릭이 없습니다.")
+    ts = [t for s in store.students() if (t := store.transcript(s, q_number)) is not None]
+    if not ts:
+        raise PipelineError(f"문항 {q_number}: 판독한 답안이 없습니다. 먼저 답안을 판독하세요.")
+    progress(0, 1, f"문항 {q_number}: 학생 {len(ts)}명 답을 정답 후보와 비교")
+    scope = ScopeStore(svc.workspace).get(exam.scope_id)
+    m = answer_sides(svc.engine, q, rubric, ts, scope)
+    m = m.model_copy(update={"unconfirmed": sorted(t.student_id for t in ts if not t.confirmed)})
+    store.save_candidate_matches(m)
+    progress(1, 1, "비교 완료")
+    return m
 
 
 # ---------------------------------------------------------------- 손글씨 판독

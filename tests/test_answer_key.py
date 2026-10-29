@@ -27,6 +27,7 @@ from dawoni.fsio import read_json
 from dawoni.grading import checks
 from dawoni.grading.pipeline import (
     PipelineError,
+    answer_sides,
     approve_rubric,
     decide_candidates,
     derive_rubric,
@@ -408,6 +409,76 @@ def test_grade_flags_unconfirmed_candidate(
     assert g.status == "needs_review"
     assert any("강사 미확인 정답 후보 A1" in f for f in g.flags)
     assert "matched_candidates" in fake_prompts(exe)[0]
+
+
+def _t(student: str, *lines: tuple[str, str]) -> Transcript:
+    return Transcript(
+        student_id=student,
+        question_number="3",
+        lines=[TranscriptLine(part=p, math=m) for p, m in lines],
+    )
+
+
+def test_answer_sides_before_deciding_candidate(
+    engine_with: EngineWith, q3: ExamQuestion, scope: ScopeProfile
+) -> None:
+    """정답 후보를 정하기 전에: 학생 답이 해설지 답·후보 중 어느 쪽인지 (실측: '검산 실패'만 보고
+    후보를 제외했는데, 강사는 그 답을 쓴 학생 3명에게 점수를 줬다)."""
+    ts = [
+        _t("김하나", ("(2)", "\\sin\\theta=\\frac{1}{2}")),
+        _t("이둘", ("(2)", "\\theta=90^\\circ"), ("(2)", "\\sin 90=1")),
+        _t("박셋", ("(1)", "v_0=nR\\cos\\alpha")),  # (2)는 빈 답
+        _t("최넷", ("(2)", "\\sin\\theta=\\frac{\\sqrt3}{2}")),
+    ]
+    rewritten = {
+        "students": [
+            {"student": "학생1", "side": "key", "quote": "\\sin\\theta=\\frac{1}{2}"},
+            # 해설지 쪽으로 고쳐 읽은 인용 → 판독문에 없으므로 거부
+            {"student": "학생2", "side": "key", "quote": "\\sin\\theta=\\frac{1}{2}"},
+        ]
+    }
+    good = {
+        "students": [
+            {"student": "학생1", "side": "key", "quote": "\\sin\\theta=\\frac{1}{2}"},
+            {"student": "학생2", "side": "candidate", "candidate_id": "A1",
+             "quote": "\\theta=90^\\circ … \\sin 90=1"},
+            {"student": "학생3", "side": "other", "quote": "\\sin\\theta=\\frac{\\sqrt3}{2}"},
+        ]
+    }  # fmt: skip
+    engine, exe = engine_with([rewritten, good])
+    m = answer_sides(engine, q3, _rubric(), ts, scope)
+
+    (p,) = m.parts
+    assert p.part == "(2)" and p.key_answer == "1/2" and p.blank == ["박셋"]
+    assert [s.student for s in p.of("key")] == ["김하나"]
+    assert [s.student for s in p.of("candidate", "A1")] == ["이둘"]
+    assert [s.student for s in p.of("other")] == ["최넷"]
+    (cand,) = _rubric().candidates
+    assert m.for_candidate(cand) == p
+    changed = cand.model_copy(update={"answer": "\\sin\\theta=0"})
+    assert m.for_candidate(changed) is None, "후보 답이 바뀌면 예전 분류는 쓰지 않는다"
+
+    first, repair = fake_prompts(exe)
+    assert "학생1" in first and "학생3" in first and "학생4" not in first
+    assert not any(n in first for n in ("김하나", "이둘", "박셋", "최넷")), "이름은 보내지 않는다"
+    assert "A1: \\(\\sin\\theta=1\\)" in first and "[해설지 답] (소문항 (2)) 1/2" in first
+    assert "v_0=nR" not in first, "다른 소문항 줄은 보내지 않는다"
+    assert "학생3이 빠졌다" in repair and "학생2: 인용" in repair and "그대로 없다" in repair
+
+    from dawoni.cli_exam import sides_lines
+
+    text = "\n".join(sides_lines(p, ["이둘"]))
+    assert "후보 A1 (\\(\\sin\\theta=1\\)): 1명" in text and "빈 답: 1명" in text
+    assert "판독 확인 전: 이둘" in text
+
+
+def test_answer_sides_needs_candidates(
+    engine_with: EngineWith, q3: ExamQuestion, scope: ScopeProfile
+) -> None:
+    engine, _ = engine_with([])
+    r = _rubric().model_copy(update={"candidates": []})
+    with pytest.raises(PipelineError, match="정답 후보가 없습니다"):
+        answer_sides(engine, q3, r, [_t("김하나", ("(2)", "x"))], scope)
 
 
 def test_edit_keeps_review_notes(q3: ExamQuestion) -> None:

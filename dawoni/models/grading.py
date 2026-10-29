@@ -223,6 +223,60 @@ class AnswerCandidate(DawoniModel):
     check_note: str | None = None
 
 
+AnswerSide = Literal["key", "candidate", "other"]
+
+
+class StudentAnswerSide(DawoniModel):
+    """학생 한 명의 결론이 해설지 답·정답 후보 중 어느 쪽인지. 정오 판정이 아니다."""
+
+    student: str = Field(description="[대상]의 학생 표시 그대로 (학생1, 학생2 …)")
+    side: AnswerSide = Field(
+        description="key: 해설지 답과 같은 결론 · candidate: 정답 후보와 같은 결론 · "
+        "other: 둘 다 아님"
+    )
+    candidate_id: str | None = Field(default=None, description="side가 candidate일 때 후보 ID")
+    quote: str = Field(description="결론을 담은 부분을 답안에 적힌 그대로 인용 (줄 번호 없이)")
+
+
+class AnswerSideOutput(DawoniModel):
+    """AI 출력: 학생마다 어느 답 쪽인지."""
+
+    students: list[StudentAnswerSide]
+
+
+class PartAnswerSides(DawoniModel):
+    part: str
+    key_answer: str
+    candidates: dict[str, str] = Field(description="후보 ID → 분류할 때의 후보 답")
+    sides: list[StudentAnswerSide] = Field(
+        default_factory=lambda: list[StudentAnswerSide](), description="student는 실제 학생 ID"
+    )
+    blank: list[str] = Field(default_factory=lambda: list[str](), description="이 소문항이 빈 학생")
+
+    def of(self, side: AnswerSide, candidate_id: str | None = None) -> list[StudentAnswerSide]:
+        return [s for s in self.sides if s.side == side and s.candidate_id == candidate_id]
+
+
+class CandidateMatches(DawoniModel):
+    """정답 후보를 정하기 전에: 학생들 답이 해설지 답·후보 중 어느 쪽인지 (판독문 기준)."""
+
+    question_number: str
+    parts: list[PartAnswerSides]
+    unconfirmed: list[str] = Field(
+        default_factory=lambda: list[str](), description="판독문을 아직 확인하지 않은 학생"
+    )
+    agent: str | None = None
+    model: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+    def for_candidate(self, c: AnswerCandidate) -> PartAnswerSides | None:
+        """그 후보를 같은 답으로 분류한 결과 (후보 답이 바뀌었으면 None)."""
+        return next(
+            (p for p in self.parts if p.part == c.part and p.candidates.get(c.id) == c.answer),
+            None,
+        )
+
+
 class AcceptedAlternative(DawoniModel):
     description: str
     item_ids: list[str] = Field(min_length=1, description="이 풀이로도 점수를 받는 항목")

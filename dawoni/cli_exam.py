@@ -7,6 +7,7 @@
     dawoni exam show <시험ID> -q 3                 # 해설·루브릭 보기
     dawoni exam key <시험ID> 해설지.pdf [--pages 6]  # 강사 해설지(모범 답안·부분 점수) 붙이기
     dawoni exam key-confirm <시험ID> [-q 3] --by 김선생  # 해설지 판독을 원본과 비교해 확인
+    dawoni exam candidates <시험ID> -q 3   # 정답 후보 정하기 전에: 학생 답이 어느 쪽인지 (판독 후)
     dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1] [--reject A2]  # 루브릭 승인
     dawoni exam answer <시험ID> --student 홍길동 -q 3 answer.txt   # 입력한 답안(확인된 판독문)
     dawoni exam scan <시험ID> --student 홍길동 사진1.jpg 사진2.jpg [--cross]  # 손글씨 판독(미확인)
@@ -42,9 +43,11 @@ from dawoni.grading.pipeline import (
 from dawoni.grading.render import key_text, rubric_text, solution_text
 from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.grading import (
+    CandidateMatches,
     Exam,
     ExamQuestion,
     GradeResult,
+    PartAnswerSides,
     Rubric,
     Transcript,
     TranscriptLine,
@@ -157,7 +160,32 @@ CHECK_TEXT = {
 STATUS_TEXT = {"proposed": "강사 미확인", "accepted": "인정", "rejected": "제외"}
 
 
-def _rubric_review(r: Rubric) -> list[str]:
+def _quote(q: str, n: int = 60) -> str:
+    q = " ".join(q.split())
+    return f"“{q[:n]}…”" if len(q) > n else f"“{q}”"
+
+
+def sides_lines(p: PartAnswerSides, unconfirmed: list[str] | None = None) -> list[str]:
+    """정답 후보를 정할 때 볼 것: 학생 답이 어느 쪽인지 (몇 명, 예시 답안)."""
+    groups = [(f"해설지 답 ({p.key_answer or '없음'})", p.of("key"))]
+    groups += [(f"후보 {cid} ({ans})", p.of("candidate", cid)) for cid, ans in p.candidates.items()]
+    groups.append(("그 외", p.of("other")))
+    total = len(p.sides) + len(p.blank)
+    out = [f"  학생 답 ({p.part or '전체'}, {total}명 중)"]
+    for name, xs in groups:
+        out.append(f"    {name}: {len(xs)}명")
+        out += [f"      {x.student} {_quote(x.quote)}" for x in xs[:3]]
+        if len(xs) > 3:
+            out.append(f"      … 외 {len(xs) - 3}명")
+    if p.blank:
+        out.append(f"    빈 답: {len(p.blank)}명")
+    pending = sorted(set(unconfirmed or []) & {x.student for x in p.sides})
+    if pending:
+        out.append(f"    (판독 확인 전: {', '.join(pending)})")
+    return out
+
+
+def _rubric_review(r: Rubric, matches: CandidateMatches | None = None) -> list[str]:
     out = [f"  {'해설지 기준' if r.based_on_key else '해설지 없음 (AI 풀이 기준)'}"]
     for c in r.checks:
         mark = "" if c.verdict == "same" else " ⚠"
@@ -171,6 +199,13 @@ def _rubric_review(r: Rubric) -> list[str]:
             f"  정답 후보 {a.id} ({a.part or '전체'}): {a.answer} — {CHECK_TEXT[a.check]}, "
             f"{STATUS_TEXT[a.status]}"
         )
+    if matches is not None:
+        shown: set[str] = set()
+        for a in r.candidates:
+            p = matches.for_candidate(a)
+            if p is not None and p.part not in shown:
+                shown.add(p.part)
+                out += sides_lines(p, matches.unconfirmed)
     out += [f"  ! {n}" for n in r.review_notes]
     return out
 
@@ -186,6 +221,29 @@ def _cmd_rubric(args: argparse.Namespace) -> int:
         for line in _rubric_review(r):
             _out(line)
     _out("검토 후 `exam approve`로 승인해야 채점할 수 있습니다 (정답 후보는 --accept/--reject).")
+    return 0
+
+
+def _cmd_candidates(args: argparse.Namespace) -> int:
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    qs = [
+        q
+        for q in _questions(store.exam(), args.q)
+        if (r := store.rubric(q.number)) and r.candidates
+    ]
+    if not qs:
+        return _err("정답 후보가 있는 문항이 없습니다.")
+    for q in qs:
+        m = workflow.match_candidates(svc, store, q.number, progress=_cli_progress)
+        r = store.rubric(q.number)
+        assert r is not None
+        _out(f"문항 {q.number}")
+        for line in _rubric_review(r, m)[1:]:
+            if not line.startswith("  ! "):
+                _out(line)
+        _out()
+    _out("후보를 정하려면 `exam approve -q <문항> --accept <ID>` 또는 `--reject <ID>`.")
     return 0
 
 
@@ -235,7 +293,7 @@ def _cmd_show(args: argparse.Namespace) -> int:
         r = store.rubric(q.number)
         if r:
             _out(f"\n{rubric_text(r, q.parts)}\n상태: {r.status} v{r.version}")
-            for line in _rubric_review(r):
+            for line in _rubric_review(r, store.candidate_matches(q.number)):
                 _out(line)
         _out()
     return 0
@@ -569,6 +627,10 @@ def register(sub: Any) -> None:
     a.add_argument("--accept", action="append", default=[], help="인정할 정답 후보 ID (예: A1)")
     a.add_argument("--reject", action="append", default=[], help="제외할 정답 후보 ID")
     a.set_defaults(func=_wrap(_cmd_approve))
+    c = with_q(
+        es.add_parser("candidates", help="정답 후보 정하기 전에: 학생 답이 어느 쪽인지 (AI)")
+    )
+    c.set_defaults(func=_wrap(_cmd_candidates))
     k = es.add_parser("key", help="강사 해설지(모범 답안·부분 점수) 붙이기")
     k.add_argument("exam")
     k.add_argument("file", help="해설지 PDF (시험지 PDF의 해설 쪽이어도 됨)")

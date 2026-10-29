@@ -23,14 +23,17 @@ import { api, errorText, examFileUrl, useJob, useLoad } from "../../lib/api";
 import type {
   AnswerCandidate,
   AnswerKey,
+  CandidateMatches,
   ExamQuestion,
   KeyPart,
+  PartAnswerSides,
   PartCheck,
   Rubric,
   RubricDraft,
   Scope,
   Solution,
   SolutionStep,
+  StudentAnswerSide,
 } from "../../lib/types";
 import type { TabProps } from "../Exam";
 
@@ -208,17 +211,75 @@ const CHECK: Record<"valid" | "invalid" | "unsure", [string, "ok" | "bad" | "war
   unsure: ["해석에 따라 다름", "warn"],
 };
 
-function KeyReview({ examId, q, rubric, onChanged }: {
+const sidesOf = (m: CandidateMatches | null, c: AnswerCandidate): PartAnswerSides | null =>
+  m?.parts.find((p) => p.part === c.part && p.candidates[c.id] === c.answer) ?? null;
+
+function StudentSides({ p, c, unconfirmed }: { p: PartAnswerSides; c: AnswerCandidate; unconfirmed: string[] }) {
+  const [open, setOpen] = useState(false);
+  const pick = (side: StudentAnswerSide["side"], id: string | null = null) =>
+    p.sides.filter((x) => x.side === side && (x.candidate_id ?? null) === id);
+  const groups: [string, StudentAnswerSide[]][] = [
+    [`이 후보 ${c.id}`, pick("candidate", c.id)],
+    ["해설지 답", pick("key")],
+    ...Object.keys(p.candidates)
+      .filter((id) => id !== c.id)
+      .map((id): [string, StudentAnswerSide[]] => [`후보 ${id}`, pick("candidate", id)]),
+    ["그 외", pick("other")],
+  ];
+  const pending = new Set(unconfirmed);
+  return (
+    <div style={{ fontSize: 13 }}>
+      <Row>
+        <b>학생 답</b>
+        {groups.map(([name, xs]) => (
+          <Badge key={name} tone={name.startsWith("이 후보") && xs.length ? "accent" : undefined}>
+            {name} {xs.length}명
+          </Badge>
+        ))}
+        {p.blank.length > 0 && <Badge>빈 답 {p.blank.length}명</Badge>}
+        <Button small variant="ghost" onClick={() => setOpen(!open)}>
+          {open ? "예시 닫기" : "예시 답안 보기"}
+        </Button>
+      </Row>
+      {open && (
+        <Stack gap={6}>
+          {groups
+            .filter(([, xs]) => xs.length)
+            .map(([name, xs]) => (
+              <div key={name}>
+                <b>{name}</b>
+                <ul style={{ margin: "2px 0 0", paddingLeft: 20 }}>
+                  {xs.slice(0, 5).map((x) => (
+                    <li key={x.student}>
+                      {x.student}
+                      {pending.has(x.student) && <Badge tone="warn">판독 확인 전</Badge>} “<Loose text={x.quote} />”
+                    </li>
+                  ))}
+                  {xs.length > 5 && <li>… 외 {xs.length - 5}명</li>}
+                </ul>
+              </div>
+            ))}
+        </Stack>
+      )}
+    </div>
+  );
+}
+
+function KeyReview({ examId, q, rubric, matches, onChanged }: {
   examId: string;
   q: ExamQuestion;
   rubric: Rubric;
+  matches: CandidateMatches | null;
   onChanged: () => void;
 }) {
   const [err, setErr] = useState<string | null>(null);
+  const match = useJob(onChanged);
   const checks = rubric.checks ?? [];
   const cands = rubric.candidates ?? [];
   const notes = rubric.review_notes ?? [];
   if (!checks.length && !cands.length && !notes.length) return null;
+  const runMatch = () =>
+    void match.run(() => api.post(`/exams/${examId}/questions/${encodeURIComponent(q.number)}/rubric/candidates/match`, {}));
   const decide = (c: AnswerCandidate, to: "accept" | "reject") => {
     setErr(null);
     api
@@ -248,6 +309,22 @@ function KeyReview({ examId, q, rubric, onChanged }: {
           )}
         </div>
       ))}
+      {cands.length > 0 && (
+        <Stack gap={4}>
+          <Row>
+            <span style={{ fontSize: 13, color: "var(--text-2)" }}>
+              정하기 전에 판독한 학생 답이 해설지 답·후보 중 어느 쪽인지 볼 수 있습니다
+              {matches && ` (${new Date(matches.created_at).toLocaleString()} 비교)`}.
+            </span>
+            <span style={{ flex: 1 }} />
+            <Button small disabled={match.running} onClick={runMatch}>
+              {matches ? "학생 답과 다시 비교" : "학생 답과 비교 (AI)"}
+            </Button>
+          </Row>
+          <JobProgress job={match.job} />
+          <ErrorBox error={match.error} />
+        </Stack>
+      )}
       {cands.map((c) => (
         <Notice key={c.id}>
           <Stack gap={6}>
@@ -276,6 +353,10 @@ function KeyReview({ examId, q, rubric, onChanged }: {
                 독립 검산: <Loose text={c.check_note} />
               </span>
             )}
+            {(() => {
+              const p = sidesOf(matches, c);
+              return p && <StudentSides p={p} c={c} unconfirmed={matches?.unconfirmed ?? []} />;
+            })()}
           </Stack>
         </Notice>
       ))}
@@ -529,7 +610,13 @@ function RubricEditor({ examId, q, rubric, onChanged }: {
   );
 }
 
-type QDetail = { question: ExamQuestion; key: AnswerKey | null; solution: Solution | null; rubric: Rubric | null };
+type QDetail = {
+  question: ExamQuestion;
+  key: AnswerKey | null;
+  solution: Solution | null;
+  rubric: Rubric | null;
+  candidate_matches: CandidateMatches | null;
+};
 
 function QuestionCard({ examId, number, scope, onChanged, version }: {
   examId: string;
@@ -574,6 +661,7 @@ function QuestionCard({ examId, number, scope, onChanged, version }: {
             examId={examId}
             q={q}
             rubric={data.rubric}
+            matches={data.candidate_matches}
             onChanged={() => {
               reload();
               onChanged();

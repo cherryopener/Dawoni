@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from dawoni.fsio import read_json, write_model_atomic
 from dawoni.models.answer_key import AnswerKey
 from dawoni.models.grading import (
+    CandidateMatches,
     Exam,
     GradeResult,
     Rubric,
@@ -117,6 +118,12 @@ class ExamStore:
 
     def rubric(self, q: str) -> Rubric | None:
         return _load(self._q("rubrics", q), Rubric)
+
+    def save_candidate_matches(self, m: CandidateMatches) -> None:
+        write_model_atomic(self._q("candidate_matches", m.question_number), m)
+
+    def candidate_matches(self, q: str) -> CandidateMatches | None:
+        return _load(self._q("candidate_matches", q), CandidateMatches)
 
     def save_student(self, r: StudentRecord) -> None:
         write_model_atomic(self.root / "students" / f"{safe_name(r.student_id)}.json", r)

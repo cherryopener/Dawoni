@@ -38,6 +38,7 @@ uv run dawoni exam key <시험ID> 해설지.pdf [--pages 6]                   # 
 uv run dawoni exam key-confirm <시험ID> --by 김선생                        # 해설지 판독을 원본과 비교한 뒤
 uv run dawoni exam solve <시험ID> && uv run dawoni exam rubric <시험ID>
 uv run dawoni exam show <시험ID> -q 3                                    # 해설지·AI 풀이·비교·정답 후보
+uv run dawoni exam candidates <시험ID> -q 3                              # 후보를 정하기 전에: 학생 답이 어느 쪽인지 (판독 후)
 uv run dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1] [--reject A2]
 ```
 
@@ -55,6 +56,10 @@ uv run dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1] [--rejec
 - 해설지와 **다른 답**은 '정답 후보'로만 둔다 (문제에 대입해 독립 검산). 강사가 인정하기 전에는
   점수를 주지 않고, 학생 답이 후보와 같으면 그 채점을 '검토 필요'로 둔다. 같은 답에 이르는 다른
   풀이·설명은 'AI 제안'으로 표시해 인정한다.
+- 후보를 정하기 전에, 판독한 학생 답이 **해설지 답 / 후보 / 그 외** 중 어느 쪽인지 몇 명씩, 예시 답안과
+  함께 본다 (`exam candidates`, 화면의 "학생 답과 비교"). AI에는 이름 대신 학생1, 학생2 …만 보내고,
+  결론 문장은 판독문에서 그대로 인용해야 한다 — 인용이 판독문에 없으면 다시 시킨다
+  (실측: 그냥 "채점해"라고 맡기면 학생의 "㉢이 밝다"를 해설지에 맞춰 "㉠이 밝다"로 고쳐 읽었다).
 
 ## 여러 학생 답안지 한 번에 (스캔 PDF)
 

@@ -294,6 +294,9 @@ def get_question(exam_id: str, number: str, st: AppState = State) -> dict[str, A
         "key": key.model_dump(mode="json") if key else None,
         "solution": sol.model_dump(mode="json") if sol else None,
         "rubric": r.model_dump(mode="json") if r else None,
+        "candidate_matches": m.model_dump(mode="json")
+        if (m := store.candidate_matches(number))
+        else None,
     }
 
 
@@ -352,6 +355,18 @@ def candidates(exam_id: str, number: str, body: CandidatesBody, st: AppState = S
     r = decide_candidates(r, body.accept, body.reject)
     store.save_rubric(r)
     return r
+
+
+@router.post("/{exam_id}/questions/{number}/rubric/candidates/match")
+def match_candidates(exam_id: str, number: str, st: AppState = State) -> Job:
+    """판독한 학생 답이 해설지 답·정답 후보 중 어느 쪽인지 (AI). 후보를 정하기 전에 본다."""
+    svc, store = _store(st, exam_id)
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        m = workflow.match_candidates(svc, store, number, progress=ctx.progress)
+        return {"parts": [p.part for p in m.parts]}
+
+    return st.jobs.submit("match_candidates", run, {"exam": exam_id})
 
 
 @router.post("/{exam_id}/questions/{number}/rubric/approve")

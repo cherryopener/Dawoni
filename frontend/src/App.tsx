@@ -23,6 +23,7 @@ const JOB_NAMES: Record<string, string> = {
   scan_batch: "여러 학생 답안지 판독",
   solve: "해설 만들기",
   rubric: "루브릭 초안",
+  match_candidates: "학생 답 ↔ 정답 후보 비교",
   scan: "손글씨 판독",
   grade: "채점",
   lecture_summary: "강의 요약",

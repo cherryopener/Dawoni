@@ -155,6 +155,25 @@ export type AnswerCandidate = {
   check?: "valid" | "invalid" | "unsure" | null;
   check_note?: string | null;
 };
+export type StudentAnswerSide = {
+  student: string;
+  side: "key" | "candidate" | "other";
+  candidate_id?: string | null;
+  quote: string;
+};
+export type PartAnswerSides = {
+  part: string;
+  key_answer: string;
+  candidates: Record<string, string>;
+  sides: StudentAnswerSide[];
+  blank: string[];
+};
+export type CandidateMatches = {
+  question_number: string;
+  parts: PartAnswerSides[];
+  unconfirmed: string[];
+  created_at: string;
+};
 export type RubricDraft = {
   items: RubricItem[];
   partial: { item_id: string; condition: string; points: number; from_key?: boolean }[];

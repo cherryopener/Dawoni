@@ -38,17 +38,22 @@ from dawoni.models.grading import (
     DEFAULT_NEVER_DEDUCT,
     AnswerCandidate,
     AnswerCheck,
+    AnswerSideOutput,
+    CandidateMatches,
     ExamQuestion,
     GradeOutput,
     GradeResult,
     ItemJudgement,
+    PartAnswerSides,
     PartCheck,
     Rubric,
     RubricAudit,
     RubricDraft,
     ScopedSolution,
     SolutionDraft,
+    StudentAnswerSide,
     Transcript,
+    TranscriptLine,
 )
 from dawoni.models.scope import ScopeProfile
 
@@ -91,6 +96,14 @@ CHECK_ANSWER: TaskDef[AnswerCheck] = TaskDef(
     template="check_answer.md.j2",
     output=AnswerCheck,
     rule_target="solve",
+    timeout_s=600,
+)
+
+MATCH: TaskDef[AnswerSideOutput] = TaskDef(
+    name="match_candidates",
+    template="match_candidates.md.j2",
+    output=AnswerSideOutput,
+    rule_target="grade",
     timeout_s=600,
 )
 
@@ -394,6 +407,123 @@ def decide_candidates(rubric: Rubric, accept: list[str], reject: list[str]) -> R
     return rubric.model_copy(
         update={"candidates": cands, "status": "draft", "version": rubric.version + bump}
     )
+
+
+def part_lines(t: Transcript, part: str) -> list[TranscriptLine]:
+    """판독문에서 그 소문항 줄 (지운 줄 제외). 소문항 표시가 하나도 없으면 전부."""
+    lines = [x for x in t.lines if not x.struck]
+    if not part or not any(x.part for x in lines):
+        return lines
+    return [x for x in lines if (x.part or "") == part]
+
+
+def check_sides(
+    out: AnswerSideOutput, labels: dict[str, Transcript], candidate_ids: set[str]
+) -> list[str]:
+    problems: list[str] = []
+    seen = [s.student for s in out.students]
+    missing = [k for k in labels if k not in seen]
+    unknown = sorted({k for k in seen if k not in labels})
+    dups = sorted({k for k in seen if seen.count(k) > 1})
+    if missing:
+        problems.append(f"{', '.join(missing)}이 빠졌다. 학생마다 한 번씩 적을 것")
+    if unknown:
+        problems.append(f"[대상]에 없는 학생 {unknown}")
+    if dups:
+        problems.append(f"{dups}를 두 번 이상 적었다")
+    for s in out.students:
+        if s.side == "candidate" and s.candidate_id not in candidate_ids:
+            problems.append(f"{s.student}: candidate_id는 {sorted(candidate_ids)} 중 하나")
+        if s.side != "candidate" and s.candidate_id is not None:
+            problems.append(f"{s.student}: side가 candidate가 아니면 candidate_id는 null")
+        t = labels.get(s.student)
+        if t is None:
+            continue
+        if s.side != "other" and not s.quote.strip():
+            problems.append(f"{s.student}: 결론을 담은 부분을 quote에 인용할 것")
+        elif s.quote.strip() and not checks.quote_in_transcript(s.quote, t):
+            problems.append(
+                f"{s.student}: 인용 '{s.quote[:40]}'이 답안에 그대로 없다 — "
+                "고쳐 읽지 말고 적힌 그대로"
+            )
+    return problems
+
+
+def answer_sides(
+    engine: ContextEngine,
+    q: ExamQuestion,
+    rubric: Rubric,
+    transcripts: list[Transcript],
+    scope: ScopeProfile,
+) -> CandidateMatches:
+    """정답 후보가 있는 소문항마다, 학생 답이 해설지 답·후보 중 어느 쪽인지 나눈다.
+
+    AI에는 학생 이름 대신 학생1, 학생2 …만 보낸다. 빈 답은 AI에 보내지 않는다.
+    결론 인용이 판독문에 그대로 없으면 다시 시킨다 (해설지에 맞춰 고쳐 읽기 방지).
+    """
+    if not rubric.candidates:
+        raise PipelineError(f"문항 {q.number}: 정답 후보가 없습니다.")
+    key_answers = {c.part: c.key_answer for c in rubric.checks}
+    parts: list[PartAnswerSides] = []
+    agent: str | None = None
+    model: str | None = None
+    for part in dict.fromkeys(c.part for c in rubric.candidates):
+        cands = [c for c in rubric.candidates if c.part == part]
+        subs = {
+            t.student_id: Transcript(
+                student_id=t.student_id, question_number=t.question_number,
+                lines=part_lines(t, part),
+            )
+            for t in transcripts
+        }  # fmt: skip
+        blank = sorted(s for s, t in subs.items() if t.is_blank)
+        filled = [t for t in subs.values() if not t.is_blank]
+        labels = {f"학생{n}": t for n, t in enumerate(filled, 1)}
+        key_answer = key_answers.get(part, "")
+        result = PartAnswerSides(
+            part=part,
+            key_answer=key_answer,
+            candidates={c.id: c.answer for c in cands},
+            blank=blank,
+        )
+        if labels:
+            ids = {c.id for c in cands}
+
+            def check(o: AnswerSideOutput, labels: dict[str, Transcript] = labels,
+                      ids: set[str] = ids) -> list[str]:  # fmt: skip
+                return check_sides(o, labels, ids)
+
+            material = "\n".join(
+                [
+                    exam_question_text(q),
+                    "",
+                    f"[해설지 답] (소문항 {part or '전체'}) {key_answer or '(해설지에 따로 없음)'}",
+                    "[정답 후보]",
+                    *[f"- {c.id}: {c.answer}" for c in cands],
+                ]
+            )
+            target = "\n\n".join(
+                f"[{k}]\n" + transcript_text(t).split("\n", 1)[-1] for k, t in labels.items()
+            )
+            res = engine.run(
+                dataclasses.replace(MATCH, validator=check),
+                TaskInput(
+                    variables={"level": scope.level, "part_label": part or "(전체)"},
+                    scope=scope_layer(scope),
+                    material=material,
+                    target=target,
+                ),
+            )
+            agent, model = res.agent, res.model
+            result.sides = [
+                StudentAnswerSide(
+                    student=labels[s.student].student_id, side=s.side,
+                    candidate_id=s.candidate_id, quote=s.quote,
+                )
+                for s in res.value.students
+            ]  # fmt: skip
+        parts.append(result)
+    return CandidateMatches(question_number=q.number, parts=parts, agent=agent, model=model)
 
 
 # ---------------------------------------------------------------- 채점
