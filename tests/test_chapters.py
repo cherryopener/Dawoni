@@ -104,7 +104,7 @@ def test_suggest_chapters(tmp_path: Path, toc: bool) -> None:
         assert c1.label == "Ⅰ. 힘과 운동" and "목차" in s.notes[0]
         assert len(s.chapters) == 2, "해설만 있는 목차 항목은 챕터가 아님"
     else:
-        assert c1.label == CH1 and "목차가 없어" in s.notes[0]
+        assert c1.label == CH1 and "찾지 못해" in s.notes[0]
 
 
 # ---------------------------------------------------------------- 챕터 DB화

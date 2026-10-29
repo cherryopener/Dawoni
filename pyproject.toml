@@ -66,6 +66,7 @@ ignore = [
 "tests/test_server.py" = ["E501"]
 "tests/test_generate.py" = ["E501"]
 "tests/test_chapters.py" = ["E501"]  # 합성 교재 픽스처 문장
+"tests/test_real_layouts.py" = ["E501"]  # 실제 자료 기대값 표
 "tests/test_figures.py" = ["E501"]
 "tests/test_grading.py" = ["E501"]
 "tests/test_new_problem.py" = ["E501"]  # 새 문제 응답 픽스처

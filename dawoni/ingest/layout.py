@@ -203,13 +203,24 @@ def _columns(
     body = [ln for ln in lines if top <= ln.rect.cy <= bottom]
     if len(body) < 4:
         return [(0.0, width)]
-    best_x, best_cross = width / 2, len(body) + 1
+    xs: list[tuple[float, int]] = []
     x = width * 0.35
     while x <= width * 0.65:
-        cross = sum(1 for ln in body if ln.rect.x0 < x < ln.rect.x1)
-        if cross < best_cross:
-            best_x, best_cross = x, cross
+        xs.append((x, sum(1 for ln in body if ln.rect.x0 < x < ln.rect.x1)))
         x += 2
+    best_cross = min(c for _, c in xs)
+    # 걸치는 줄이 가장 적은 x들의 이어진 띠 중 쪽 가운데에 가장 가까운 띠의 가운데.
+    # 띠의 왼쪽 끝을 쓰면 왼쪽 단이 짧은 쪽에서 오른쪽 단 문항 번호가 들여쓴 줄로 빠진다
+    # (실측: 띠 236~300, 번호 306)
+    bands: list[list[float]] = []
+    for xv, c in xs:
+        if c == best_cross:
+            if bands and xv - bands[-1][-1] <= 2.5:
+                bands[-1].append(xv)
+            else:
+                bands.append([xv])
+    band = min(bands, key=lambda b: abs((b[0] + b[-1]) / 2 - width / 2))
+    best_x = (band[0] + band[-1]) / 2
     left = sum(1 for ln in body if ln.rect.x1 <= best_x)
     right = sum(1 for ln in body if ln.rect.x0 >= best_x)
     # 한쪽 단이 짧아도(그림이 큰 문항 하나) 가운데 빈 띠가 있으면 2단 — 실측: 왼쪽 4줄·오른쪽 20줄
