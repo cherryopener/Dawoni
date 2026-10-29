@@ -256,6 +256,12 @@ def _key_by_numbers(
                        if r and any(r[0] <= n <= r[1] for n in kp.numbers)]  # fmt: skip
         for i in current:
             out[i].append(kp.number)
+    # 챕터 끝 문항의 해설이 다음 쪽 첫머리에 이어지는 일이 있어 한 쪽을 더 붙인다
+    # (실측: 47·48번 해설이 다음 챕터로 나뉜 164쪽 첫머리에 있었음)
+    order = [kp.number for kp in key_pages]
+    for pages in out:
+        if pages and (k := order.index(pages[-1]) + 1) < len(order):
+            pages.append(order[k])
     return out
 
 

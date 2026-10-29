@@ -37,7 +37,7 @@ from dawoni.grading.pipeline import (
 from dawoni.grading.render import rubric_text
 from dawoni.ingest.answer_key import check_key
 from dawoni.ingest.layout import analyze, find_key_pages
-from dawoni.models.answer_key import AnswerKey, KeyExtraction, KeyPart
+from dawoni.models.answer_key import AnswerKey, KeyExtraction, KeyPart, KeyQuestion
 from dawoni.models.grading import (
     ExamQuestion,
     Rubric,
@@ -222,6 +222,31 @@ def test_check_key(q3: ExamQuestion) -> None:
     repeated[1]["answer"] = "세 번 반사하여 P로 되돌아오려면"
     repeated[1]["solution"] = "세 번 반사하여 P로 되돌아오려면 두 번째 반사점은 A이다."
     assert check_key(_extraction(repeated), exam, source + " 두 번째 반사점은 A이다.") == []
+
+
+def test_numbered_answer_must_not_be_skipped(q3: ExamQuestion) -> None:
+    """실측: 해설 166쪽에 63~67번 번호 줄이 있는데 AI가 62번만 옮김 → 번호 줄로 잡아 다시 시킨다."""
+    from dawoni.ingest.answer_key import numbered_on_page
+    from dawoni.models.grading import Exam
+
+    text = "62\n해설\n63 \n힘의 평형\n2\n64\n토크\n65\n끝"
+    numbers = {str(n) for n in range(60, 70)}
+    assert numbered_on_page(text, numbers) == {"62", "63", "64", "65"}, "식 조각 '2'는 빼고"
+    qs = [q3.model_copy(update={"number": n}) for n in ("62", "63", "64", "65")]
+    exam = Exam(title="t", scope_id="s", questions=qs)
+    got = KeyExtraction(
+        questions=[
+            KeyQuestion(
+                number="62",
+                parts=[
+                    KeyPart(label="(1)", credit_policy="none"),
+                    KeyPart(label="(2)", credit_policy="none"),
+                ],
+            )
+        ]
+    )
+    problems = check_key(got, exam, text, expected=numbered_on_page(text, numbers))
+    assert any("문항 63, 64, 65의 해설이 이 쪽에 있는데 빠졌다" in p for p in problems)
 
 
 # ---------------------------------------------------------------- 루브릭 검사

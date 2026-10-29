@@ -299,7 +299,8 @@ def set_chunks(svc: Services, src: Source, chunks: list[SourceChunk]) -> Source:
         if prev is None:
             out.append(c.model_copy(update={"index": n, **_FRESH}))
             continue
-        if prev.status != "new" and (prev.pages, prev.key_pages) != (c.pages, c.key_pages):
+        # 문제 쪽만 잠근다 (문항 ID가 걸림). 해설 쪽은 고쳐서 다시 DB화하면 원본만 붙는다
+        if prev.status != "new" and prev.pages != c.pages:
             raise BankError(f"구간 {prev.index}의 문제는 이미 DB화해 쪽을 바꿀 수 없습니다")
         if prev.concept_status != "new" and prev.concept_pages != c.concept_pages:
             raise BankError(f"구간 {prev.index}의 개념은 이미 DB화해 쪽을 바꿀 수 없습니다")

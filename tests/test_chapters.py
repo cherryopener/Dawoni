@@ -93,7 +93,9 @@ def test_classify_pages(tmp_path: Path) -> None:
 def test_suggest_chapters(tmp_path: Path, toc: bool) -> None:
     s = suggest_chapters(textbook(tmp_path / "b.pdf", toc=toc), TREES)
     c1, c2 = s.chapters
-    assert (c1.concept_pages, c1.pages, c1.key_pages) == ([2], [3], [6])
+    assert (c1.concept_pages, c1.pages, c1.key_pages) == ([2], [3], [6]), (
+        "제목으로 나눔 (여유 쪽 없음)"
+    )
     assert (c2.concept_pages, c2.pages, c2.key_pages) == ([4], [5], [7]), (
         "권말 해설을 챕터 제목으로 나눔"
     )
@@ -251,5 +253,7 @@ def test_text_toc_and_key_by_numbers(tmp_path: Path) -> None:
     c1, c2 = s.chapters
     assert (c1.label, c1.concept_pages, c1.pages) == ("1. 힘과 운동", [2], [3])
     assert (c2.concept_pages, c2.pages) == ([4], [5, 6]), "한 문항뿐인 쪽부터 문제"
-    assert c1.key_pages == [7] and c2.key_pages == [7, 8], "머리말 없는 해설 쪽도 해설, 번호로 나눔"
+    assert c1.key_pages == [7, 8] and c2.key_pages == [7, 8], (
+        "머리말 없는 해설 쪽도 해설, 번호로 나눔"
+    )
     assert s.pages[0].kind == "other", "목차 쪽의 '1. … 2.'는 문항이 아님"

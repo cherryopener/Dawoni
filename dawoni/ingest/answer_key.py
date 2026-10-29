@@ -72,9 +72,34 @@ def page_text(pdf: Path, pages: list[int]) -> str:
         return "\n".join(str(doc.load_page(p - 1).get_text()) for p in pages)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
 
-def check_key(out: KeyExtraction, exam: Exam, source_text: str) -> list[str]:
+_LONE_NUMBER = re.compile(r"(?m)^\s*0?(\d{2,3})\s*\.?\s*$")
+
+
+def numbered_on_page(text: str, numbers: set[str]) -> set[str]:
+    """해설 쪽 글에서 문항 번호만 한 줄에 있는 줄 ("63") 중 이어지는 줄기에 든 번호.
+
+    권말 해설은 번호 한 줄 뒤에 해설이 온다 — 이 번호는 그 쪽에 해설이 있다는 뜻이다.
+    두 자리 이상만 본다 (분수·식 조각 "2", "3"이 한 줄로 떨어져 나오는 일이 흔함)."""
+    from dawoni.ingest.layout import number_chain
+
+    cands = [(i, int(m.group(1))) for i, m in enumerate(_LONE_NUMBER.finditer(text))]
+    keep = number_chain(cands)
+    found = {str(n) for i, n in cands if i in keep}
+    return found & numbers if len(keep) >= 2 else set()
+
+
+def check_key(
+    out: KeyExtraction, exam: Exam, source_text: str, *, expected: set[str] | None = None
+) -> list[str]:
+    """`expected`: 이 쪽에 해설이 있는 것이 분명한 문항 번호 (빠뜨리면 다시)."""
     problems: list[str] = []
     numbers = {q.number for q in exam.questions}
+    skipped = sorted((expected or set()) - {q.number for q in out.questions}, key=int)
+    if skipped:
+        problems.append(
+            f"문항 {', '.join(skipped)}의 해설이 이 쪽에 있는데 빠졌다 (번호 줄이 있음) — "
+            "모두 옮길 것"
+        )
     for kq in out.questions:
         if kq.number not in numbers:
             problems.append(f"시험에 없는 문항 번호 {kq.number!r} — [자료]의 문항 번호만 쓸 것")
@@ -200,12 +225,14 @@ def extract_answer_key(
         images = tuple(render_page(pdf, p, work_dir / f"key_p{p}.png", dpi=170) for p in group)
         text = page_text(pdf, group)
 
+        on_page = numbered_on_page(text, numbers)
+
         def check(out: KeyExtraction, text: str = text) -> list[str]:
             if ignore_other_numbers:
                 out = out.model_copy(
                     update={"questions": [q for q in out.questions if q.number in numbers]}
                 )
-            return check_key(out, exam, text)
+            return check_key(out, exam, text, expected=on_page)
 
         task = dataclasses.replace(
             EXTRACT_KEY, name=f"extract_answer_key_p{group[0]}", validator=check
@@ -226,6 +253,8 @@ def extract_answer_key(
                 raw = KeyExtraction.model_validate_json(cached.read_text(encoding="utf-8"))
             except ValueError:
                 raw = None
+            if raw is not None and check(raw):
+                raw = None  # 검사가 강해졌으면 다시 읽는다 (예: 빠뜨린 문항)
         if raw is None:
             raw = engine.run(task, inp).value
             cached.parent.mkdir(parents=True, exist_ok=True)
