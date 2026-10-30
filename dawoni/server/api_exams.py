@@ -83,7 +83,8 @@ def question_state(store: ExamStore, q: ExamQuestion) -> dict[str, Any]:
             "items": len(r.items),
             "based_on_key": r.based_on_key,
             "attention": sum(c.verdict != "same" for c in r.checks)
-            + sum(c.status == "proposed" for c in r.candidates),
+            + sum(c.status == "proposed" for c in r.candidates)
+            + sum(a.status == "proposed" for a in r.accepted_alternatives),
         },
     }
 
