@@ -22,7 +22,7 @@ from tests_support import fake_prompts
 
 from dawoni.agents import AgentClient
 from dawoni.config import AppConfig
-from dawoni.context import ContextEngine
+from dawoni.context import ContextEngine, TaskFailed
 from dawoni.fsio import read_json
 from dawoni.grading import checks
 from dawoni.grading.pipeline import (
@@ -32,6 +32,7 @@ from dawoni.grading.pipeline import (
     decide_candidates,
     derive_rubric,
     edit_rubric,
+    expand_key_rubric,
     grade_answer,
 )
 from dawoni.grading.render import rubric_text
@@ -571,3 +572,51 @@ def test_extract_answer_key_from_pdf(
     assert key.pages == ["work/key_p1.png"]
     prompt = fake_prompts(exe)[0]
     assert "소문항 (1): 4점, 단답형" in prompt and "해설지 PDF 글자" in prompt
+
+
+# ---------------------------------------------------------------- 해설지 넓히기 (기본 경로)
+
+EXPANDED: dict[str, Any] = {
+    "items": [i for i in GOOD["items"]],
+    "expansions": [
+        {"part": "(2)", "description": "두 번째로 반사되는 곳이 점 A이므로 sinθ=1/2이다",
+         "item_ids": ["R2", "R4"]},
+    ],
+    "key_conflicts": [],
+}  # fmt: skip
+
+
+def test_expand_key_is_one_call_without_solution(
+    engine_with: EngineWith, q3: ExamQuestion, scope: ScopeProfile
+) -> None:
+    wrong_part = copy.deepcopy(EXPANDED)
+    wrong_part["expansions"][0]["item_ids"] = ["R1"]  # (1)의 항목을 (2) 표현에 — 수리
+    engine, exe = engine_with([wrong_part, EXPANDED])
+    key = AnswerKey.model_validate(KEY)
+    r = expand_key_rubric(engine, q3, key, scope)
+    assert r.based_on_key and r.total == 10 and r.checks == [] and r.candidates == []
+    (e1,) = r.accepted_alternatives
+    assert (e1.id, e1.part, e1.status) == ("E1", "(2)", "proposed")
+    assert any("넓힌 표현 1개" in n for n in r.review_notes)
+    prompts = fake_prompts(exe)
+    assert len(prompts) == 2, "검토·검산 호출 없음 (수리 1번만)"
+    first = prompts[0]
+    assert "[강사 해설지]" in first and "[AI 독립 풀이]" not in first
+    assert "Role: rubric builder." in first
+    assert "expansions E1의 item_ids" in prompts[1]
+    # 강사가 인정하기 전에는 채점 기준에 들어가지 않는다
+    assert "두 번째로 반사되는 곳" not in rubric_text(r, q3.parts)
+    ok = decide_candidates(r, ["E1"], [])
+    assert ok.accepted_alternatives[0].status == "accepted"
+    assert "두 번째로 반사되는 곳" in rubric_text(ok, q3.parts)
+
+
+def test_expand_key_gives_up_after_one_repair(
+    engine_with: EngineWith, q3: ExamQuestion, scope: ScopeProfile
+) -> None:
+    bad = copy.deepcopy(EXPANDED)
+    bad["items"][0]["points"] = 3
+    engine, exe = engine_with([bad, bad, bad])
+    with pytest.raises(TaskFailed):
+        expand_key_rubric(engine, q3, AnswerKey.model_validate(KEY), scope)
+    assert len(fake_prompts(exe)) == 2

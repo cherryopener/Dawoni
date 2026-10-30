@@ -208,12 +208,11 @@ def rubric_text(
             f"- {p.item_id}: {p.condition} → {p.points:g}점" + ("" if p.from_key else " (AI 제안)")
             for p in rubric.partial
         ]
-    if rubric.accepted_alternatives:
-        lines.append("인정하는 다른 풀이:")
-        lines += [
-            f"- {a.description} → {', '.join(a.item_ids)} 점수 인정"
-            for a in rubric.accepted_alternatives
-        ]
+    # 해설지 넓히기 제안(proposed)은 강사가 인정해야 채점 기준이 된다 — 제외한 것은 보내지 않음
+    alts = [a for a in rubric.accepted_alternatives if a.status == "accepted"]
+    if alts:
+        lines.append("인정하는 다른 풀이·표현:")
+        lines += [f"- {a.description} → {', '.join(a.item_ids)} 점수 인정" for a in alts]
     accepted = [c for c in rubric.candidates if c.status == "accepted"]
     proposed = [c for c in rubric.candidates if c.status == "proposed"]
     rejected = [c for c in rubric.candidates if c.status == "rejected"]

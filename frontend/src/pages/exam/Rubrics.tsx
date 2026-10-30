@@ -285,10 +285,11 @@ function KeyReview({ examId, q, rubric, matches, onChanged }: {
   const checks = rubric.checks ?? [];
   const cands = rubric.candidates ?? [];
   const notes = rubric.review_notes ?? [];
-  if (!checks.length && !cands.length && !notes.length) return null;
+  const exps = rubric.accepted_alternatives.filter((a) => a.id);
+  if (!checks.length && !cands.length && !notes.length && !exps.length) return null;
   const runMatch = () =>
     void match.run(() => api.post(`/exams/${examId}/questions/${encodeURIComponent(q.number)}/rubric/candidates/match`, {}));
-  const decide = (c: AnswerCandidate, to: "accept" | "reject") => {
+  const decide = (c: { id?: string | null }, to: "accept" | "reject") => {
     setErr(null);
     api
       .post(`/exams/${examId}/questions/${encodeURIComponent(q.number)}/rubric/candidates`, { [to]: [c.id] })
@@ -297,7 +298,7 @@ function KeyReview({ examId, q, rubric, matches, onChanged }: {
   };
   return (
     <Stack gap={8}>
-      <b>해설지와 AI 풀이 비교</b>
+      {checks.length > 0 && <b>해설지와 AI 풀이 비교</b>}
       {checks.map((c) => (
         <div key={c.part}>
           <Row>
@@ -366,6 +367,28 @@ function KeyReview({ examId, q, rubric, matches, onChanged }: {
               return p && <StudentSides p={p} c={c} unconfirmed={matches?.unconfirmed ?? []} />;
             })()}
           </Stack>
+        </Notice>
+      ))}
+      {exps.length > 0 && <b>AI가 넓힌 표현 (해설지와 같은 뜻 — 인정한 것만 채점에 씁니다)</b>}
+      {exps.map((a) => (
+        <Notice key={a.id}>
+          <Row>
+            <b>
+              {a.id} ({a.part || "전체"})
+            </b>
+            <Loose text={a.description} />
+            <Badge>{a.item_ids.join(", ")}</Badge>
+            <Badge tone={a.status === "accepted" ? "ok" : a.status === "rejected" ? "bad" : "warn"}>
+              {a.status === "accepted" ? "인정" : a.status === "rejected" ? "제외" : "강사 미확인 — 채점에 안 씀"}
+            </Badge>
+            <span style={{ flex: 1 }} />
+            <Button small disabled={a.status === "accepted"} onClick={() => decide(a, "accept")}>
+              인정
+            </Button>
+            <Button small variant="ghost" disabled={a.status === "rejected"} onClick={() => decide(a, "reject")}>
+              제외
+            </Button>
+          </Row>
         </Notice>
       ))}
       {notes.map((n, i) => (
@@ -667,7 +690,11 @@ function QuestionCard({ examId, number, scope, onChanged, version }: {
             }}
           />
         ) : <Info>해설지가 없습니다 — 루브릭이 AI 풀이만으로 만들어집니다. 위에서 해설지를 붙일 수 있습니다.</Info>}
-        {data.solution ? <SolutionView sol={data.solution} scope={scope} withKey={!!data.key} /> : <Info>아직 해설이 없습니다.</Info>}
+        {data.solution ? (
+          <SolutionView sol={data.solution} scope={scope} withKey={!!data.key} />
+        ) : (
+          !data.key && <Info>아직 해설이 없습니다.</Info>
+        )}
         {data.rubric && (
           <KeyReview
             examId={examId}
@@ -691,7 +718,9 @@ function QuestionCard({ examId, number, scope, onChanged, version }: {
             }}
           />
         ) : (
-          data.solution && <Info>해설이 있습니다. 위에서 “루브릭 초안 만들기”를 누르세요.</Info>
+          (data.solution || data.key) && (
+            <Info>{data.key ? "해설지가 있습니다" : "해설이 있습니다"}. 위에서 “루브릭 초안 만들기”를 누르세요.</Info>
+          )
         )}
       </Stack>
     </Card>
@@ -737,8 +766,12 @@ export function RubricsTab({ detail, scope, reload }: TabProps) {
   const solve = useJob(refresh);
   const rubric = useJob(refresh);
   const id = detail.exam.id;
-  const unsolved = detail.questions.filter((q) => !q.solution).map((q) => q.number);
-  const noRubric = detail.questions.filter((q) => q.solution && !q.rubric).map((q) => q.number);
+  const unsolved = detail.questions.filter((q) => !q.solution && !q.has_key).map((q) => q.number);
+  const ready = detail.questions.filter((q) => q.solution || q.has_key);
+  const noRubric = ready.filter((q) => !q.rubric).map((q) => q.number);
+  const keyed = detail.questions.filter((q) => q.has_key).map((q) => q.number);
+  const makeRubrics = (aiSolve: boolean, questions: string[] | null) =>
+    void rubric.run(() => api.post(`/exams/${id}/rubrics`, { questions, ai_solve: aiSolve, by: teacherName() || null }));
   return (
     <Stack>
       <Card>
@@ -749,22 +782,31 @@ export function RubricsTab({ detail, scope, reload }: TabProps) {
               disabled={solve.running}
               onClick={() => void solve.run(() => api.post(`/exams/${id}/solve`, { questions: unsolved.length ? unsolved : null, verify, by: teacherName() || null }))}
             >
-              {unsolved.length ? `해설 만들기 (${unsolved.length}문항)` : "해설 다시 만들기 (전체)"}
+              {unsolved.length ? `해설 만들기 (해설지 없는 ${unsolved.length}문항)` : "해설 다시 만들기 (전체)"}
             </Button>
             <Check checked={verify} onChange={setVerify}>
               독립 재풀이로 답 확인
             </Check>
             <span style={{ width: 16 }} />
             <Button
-              disabled={rubric.running || detail.summary.solved === 0}
-              onClick={() => void rubric.run(() => api.post(`/exams/${id}/rubrics`, { questions: noRubric.length ? noRubric : null, by: teacherName() || null }))}
+              disabled={rubric.running || ready.length === 0}
+              onClick={() => makeRubrics(false, noRubric.length ? noRubric : ready.map((q) => q.number))}
             >
               {noRubric.length ? `루브릭 초안 만들기 (${noRubric.length}문항)` : "루브릭 다시 만들기 (전체)"}
             </Button>
+            <Button
+              variant="ghost"
+              disabled={rubric.running || keyed.length === 0}
+              title="AI가 해설지를 보지 않고 먼저 풀어 해설지와 비교·검토·검산합니다 (호출이 여러 번 — 해설지 오타가 걱정될 때)"
+              onClick={() => makeRubrics(true, keyed)}
+            >
+              AI 풀기 (해설지 검산)
+            </Button>
           </Row>
           <span style={{ color: "var(--text-2)", fontSize: 13 }}>
-            해설은 AI가 해설지를 보지 않고 범위 안에서 먼저 풉니다. 루브릭은 강사 해설지(정답·배점·부분 점수)를 기준으로 만들고, AI 풀이와
-            소문항마다 비교해 AI 오답·다른 정답 후보·해설지 의문을 표시합니다. 다른 정답 후보는 강사가 인정해야 점수가 나갑니다.
+            해설지가 있는 문항은 해설지(정답·배점·부분 점수)를 그대로 펼쳐 루브릭을 만들고, 서술형은 같은 뜻의 다른 표현을 넓혀 제안합니다(AI 호출 1번 —
+            인정한 표현만 채점에 씀). 해설지 오타가 걱정되면 “AI 풀기”: AI가 해설지를 보지 않고 풀어 소문항마다 비교해 AI 오답·다른 정답 후보·해설지 의문을
+            표시합니다. 해설지가 없는 문항은 먼저 해설을 만듭니다. 다른 정답 후보는 강사가 인정해야 점수가 나갑니다.
           </span>
           <KeyUpload examId={id} onDone={refresh} missing={detail.questions.filter((q) => !q.has_key).length} />
           <JobProgress job={solve.job} />

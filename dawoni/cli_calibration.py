@@ -114,7 +114,7 @@ def _cmd_suggest(args: argparse.Namespace, svc: Any) -> int:
     if args.apply:
         old = store.rubric(q)
         sol = store.solution(q)
-        assert old is not None and sol is not None
+        assert old is not None and (sol is not None or old.based_on_key)
         r = edit_rubric(old, s.revised, store.exam().question(q), sol)
         store.save_rubric(r)
         _out(

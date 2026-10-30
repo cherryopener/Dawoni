@@ -3,12 +3,13 @@
     dawoni scope import scope.json                 # 범위 프로필 등록
     dawoni exam create --title 1학기 중간 --scope <범위ID> --questions questions.json
     dawoni exam solve <시험ID> [-q 3] [--verify]    # 범위 해설 (+ 독립 재풀이)
-    dawoni exam rubric <시험ID> [-q 3]             # 해설 → 루브릭 초안
+    dawoni exam rubric <시험ID> [-q 3] [--ai-solve]  # 해설지 넓히기 → 루브릭 초안
+                                                   # (--ai-solve: AI가 풀어 해설지 검산)
     dawoni exam show <시험ID> -q 3                 # 해설·루브릭 보기
     dawoni exam key <시험ID> 해설지.pdf [--pages 6]  # 강사 해설지(모범 답안·부분 점수) 붙이기
     dawoni exam key-confirm <시험ID> [-q 3] --by 김선생  # 해설지 판독을 원본과 비교해 확인
     dawoni exam candidates <시험ID> -q 3   # 정답 후보 정하기 전에: 학생 답이 어느 쪽인지 (판독 후)
-    dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1] [--reject A2]  # 루브릭 승인
+    dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1 E1] [--reject A2]  # 루브릭 승인
     dawoni exam answer <시험ID> --student 홍길동 -q 3 answer.txt   # 입력한 답안(확인된 판독문)
     dawoni exam scan <시험ID> --student 홍길동 사진1.jpg 사진2.jpg [--cross]  # 손글씨 판독(미확인)
     dawoni exam scan-batch <시험ID> 답안지.pdf --per-student 3 [--classes TSS1,MSS1-J]  # 여러 학생
@@ -201,6 +202,10 @@ def _rubric_review(r: Rubric, matches: CandidateMatches | None = None) -> list[s
             f"  정답 후보 {a.id} ({a.part or '전체'}): {a.answer} — {CHECK_TEXT[a.check]}, "
             f"{STATUS_TEXT[a.status]}"
         )
+    for e in r.accepted_alternatives:
+        if e.id:
+            where = e.part or "전체"
+            out.append(f"  넓힌 표현 {e.id} ({where}): {e.description} — {STATUS_TEXT[e.status]}")
     if matches is not None:
         shown: set[str] = set()
         for a in r.candidates:
@@ -215,14 +220,20 @@ def _rubric_review(r: Rubric, matches: CandidateMatches | None = None) -> list[s
 def _cmd_rubric(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
-    for r in workflow.rubric_questions(svc, store, args.q, by=args.by, progress=_cli_progress):
+    rubrics = workflow.rubric_questions(
+        svc, store, args.q, ai_solve=args.ai_solve, by=args.by, progress=_cli_progress
+    )
+    for r in rubrics:
         _out(
             f"문항 {r.question_number}: 루브릭 초안 v{r.version} — "
             f"항목 {len(r.items)}개, 합계 {r.total:g}점"
         )
         for line in _rubric_review(r):
             _out(line)
-    _out("검토 후 `exam approve`로 승인해야 채점할 수 있습니다 (정답 후보는 --accept/--reject).")
+    _out(
+        "검토 후 `exam approve`로 승인해야 채점할 수 있습니다"
+        " (정답 후보 A…·넓힌 표현 E…는 --accept/--reject)."
+    )
     return 0
 
 
@@ -308,7 +319,7 @@ def _cmd_approve(args: argparse.Namespace) -> int:
         r = store.rubric(q.number)
         if r is None:
             return _err(f"문항 {q.number}: 루브릭이 없습니다.")
-        mine = {c.id for c in r.candidates}
+        mine = {c.id for c in r.candidates} | {a.id for a in r.accepted_alternatives if a.id}
         r = decide_candidates(
             r, [a for a in args.accept if a in mine], [x for x in args.reject if x in mine]
         )
@@ -318,6 +329,9 @@ def _cmd_approve(args: argparse.Namespace) -> int:
         left = ""
         if pending:
             left = f" (미확인 정답 후보 {', '.join(pending)} — 학생 답이 같으면 검토 필요)"
+        unused = [a.id for a in r.accepted_alternatives if a.id and a.status == "proposed"]
+        if unused:
+            left += f" (미확인 넓힌 표현 {', '.join(unused)} — 인정 전에는 채점에 안 씀)"
         _out(f"문항 {q.number}: 루브릭 v{r.version} 승인{left}")
     return 0
 
@@ -623,7 +637,12 @@ def register(sub: Any) -> None:
     s.add_argument("--verify-model", help="재풀이에 쓸 모델 (예: claude-sonnet-5-5-low)")
     s.add_argument("--by", help="만든 사람 (팀원에게 보임)")
     s.set_defaults(func=_wrap(_cmd_solve))
-    rb = with_q(es.add_parser("rubric", help="루브릭 초안"))
+    rb = with_q(es.add_parser("rubric", help="루브릭 초안 (해설지가 있으면 해설지 넓히기)"))
+    rb.add_argument(
+        "--ai-solve",
+        action="store_true",
+        help="AI 풀기 (해설지 검산): AI가 해설지를 보지 않고 풀어 비교·검토·검산 (호출 여러 번)",
+    )
     rb.add_argument("--by", help="만든 사람 (팀원에게 보임)")
     rb.set_defaults(func=_wrap(_cmd_rubric))
     with_q(es.add_parser("show", help="해설·루브릭 보기")).set_defaults(func=_wrap(_cmd_show))

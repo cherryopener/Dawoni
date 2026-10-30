@@ -284,6 +284,56 @@ class CandidateMatches(DawoniModel):
 class AcceptedAlternative(DawoniModel):
     description: str
     item_ids: list[str] = Field(min_length=1, description="이 풀이로도 점수를 받는 항목")
+    id: str | None = Field(
+        default=None, pattern=r"^E[1-9][0-9]*$", description="해설지 넓히기 제안 ID (앱이 채움)"
+    )
+    part: str | None = Field(default=None, description="소문항 표시 (앱이 채움)")
+    status: CandidateStatus = Field(
+        default="accepted",
+        description="AI가 해설지를 넓혀 제안한 것은 proposed — 강사가 인정해야 채점에 쓴다",
+    )
+
+
+class KeyExpansion(DawoniModel):
+    """해설지 답과 **같은 뜻**의 다른 표현·다른 풀이 (서술형). 강사가 인정해야 쓴다."""
+
+    part: str = Field(description="소문항 표시 (소문항이 없으면 빈 문자열)")
+    description: str = Field(
+        description="해설지와 같은 근거·결론을 다르게 쓴 답 — 학생 답안에 나올 법한 문장으로"
+    )
+    item_ids: list[str] = Field(min_length=1, description="이렇게 써도 점수를 받는 항목")
+
+
+class KeyRubricDraft(DawoniModel):
+    """AI 출력: 강사 해설지를 넓혀 만든 루브릭 (AI 풀이 없이)."""
+
+    items: list[RubricItem] = Field(min_length=1)
+    partial: list[PartialCredit] = Field(default_factory=lambda: list[PartialCredit]())
+    never_deduct: list[str] = Field(default_factory=lambda: list[str]())
+    expansions: list[KeyExpansion] = Field(
+        default_factory=lambda: list[KeyExpansion](),
+        description="서술형 소문항에서 해설지와 같은 뜻으로 인정할 다른 표현 (강사 확인 전)",
+    )
+    key_conflicts: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="해설지의 기준이 문제의 요구와 맞지 않는 곳 — 무엇을 어떻게 기준으로 삼았는지",
+    )
+
+    def to_rubric_draft(self) -> RubricDraft:
+        """넓힌 표현은 `accepted_alternatives`에 제안(proposed)으로 (E1, E2 …)."""
+        return RubricDraft(
+            items=[i.model_copy(update={"solution_steps": []}) for i in self.items],
+            partial=self.partial,
+            never_deduct=self.never_deduct,
+            key_conflicts=self.key_conflicts,
+            accepted_alternatives=[
+                AcceptedAlternative(
+                    id=f"E{i}", part=e.part, description=e.description,
+                    item_ids=e.item_ids, status="proposed",
+                )
+                for i, e in enumerate(self.expansions, start=1)
+            ],
+        )  # fmt: skip
 
 
 class RubricDraft(DawoniModel):

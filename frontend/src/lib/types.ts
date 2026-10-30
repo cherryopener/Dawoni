@@ -181,7 +181,14 @@ export type CandidateMatches = {
 export type RubricDraft = {
   items: RubricItem[];
   partial: { item_id: string; condition: string; points: number; from_key?: boolean }[];
-  accepted_alternatives: { description: string; item_ids: string[] }[];
+  accepted_alternatives: {
+    description: string;
+    item_ids: string[];
+    /** 해설지 넓히기 제안 (E1…): 강사가 인정해야 채점에 쓴다. */
+    id?: string | null;
+    part?: string | null;
+    status?: "proposed" | "accepted" | "rejected";
+  }[];
   never_deduct: string[];
   checks?: PartCheck[];
   candidates?: AnswerCandidate[];

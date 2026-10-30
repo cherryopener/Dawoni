@@ -72,7 +72,7 @@ ROLES: dict[RoleName, Role] = {
         Role("concept_extractor", "개념 추출", "standard", 2, 900, 50_000,
              ("extract_concepts",)),
         Role("rubric_builder", "루브릭", "standard", 2, 600, 20_000,
-             ("derive_rubric", "audit_rubric", "suggest_rubric")),
+             ("expand_key_rubric", "derive_rubric", "audit_rubric", "suggest_rubric")),
         Role("grader", "채점", "standard", 2, 600, 24_000,
              ("grade_answer",)),
         Role("solver_verifier", "풀이·검산", "strong", 2, 600, 16_000,

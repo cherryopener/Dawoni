@@ -257,6 +257,8 @@ class QuestionsBody(BaseModel):
     questions: list[str] | None = None
     verify: bool = False
     verify_model: str | None = None
+    ai_solve: bool = False
+    """루브릭: 해설지가 있어도 AI가 먼저 풀어 해설지를 검산 ("AI 풀기 (해설지 검산)")."""
     by: str | None = None
 
 
@@ -280,11 +282,11 @@ def make_rubrics(exam_id: str, body: QuestionsBody, st: AppState = State) -> Job
 
     def run(ctx: JobContext) -> dict[str, Any]:
         rs = workflow.rubric_questions(
-            svc, store, body.questions, by=body.by, progress=ctx.progress
+            svc, store, body.questions, ai_solve=body.ai_solve, by=body.by, progress=ctx.progress
         )
         return {"rubrics": [r.question_number for r in rs]}
 
-    return st.jobs.submit("rubric", run, {"exam": exam_id})
+    return st.jobs.submit("rubric", run, {"exam": exam_id, "ai_solve": body.ai_solve})
 
 
 @router.get("/{exam_id}/questions/{number}")
@@ -311,7 +313,7 @@ def put_rubric(exam_id: str, number: str, draft: RubricDraft, st: AppState = Sta
     q = store.exam().question(number)
     old = store.rubric(number)
     sol = store.solution(number)
-    if old is None or sol is None:
+    if old is None or (sol is None and not old.based_on_key):
         raise PipelineError(f"문항 {number}: 해설·루브릭 초안을 먼저 만드세요.")
     r = edit_rubric(old, draft, q, sol)
     store.save_rubric(r)

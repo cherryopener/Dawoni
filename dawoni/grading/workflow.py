@@ -20,6 +20,7 @@ from dawoni.grading.pipeline import (
     SecondOpinion,
     answer_sides,
     derive_rubric,
+    expand_key_rubric,
     grade_answer,
     solve_question,
     suggest_rubric,
@@ -99,22 +100,40 @@ def rubric_questions(
     store: ExamStore,
     only: list[str] | None = None,
     *,
+    ai_solve: bool = False,
     by: str | None = None,
     progress: Progress = _noop,
 ) -> list[Rubric]:
+    """해설지가 있는 문항은 해설지 넓히기(호출 1번). 해설지가 없거나 `ai_solve`("AI 풀기
+    (해설지 검산)")면 AI 풀이 → 루브릭 → 검토 → 검산 — 해설이 없으면 먼저 푼다(`ai_solve`).
+    해설지도 해설도 없는 문항은 거절한다."""
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
     qs = select_questions(exam, only)
-    missing = [q.number for q in qs if store.solution(q.number) is None]
-    if missing:
-        raise PipelineError(f"문항 {', '.join(missing)}: 해설이 없습니다. 먼저 해설을 만드세요.")
+    keyed = {q.number for q in qs if store.answer_key(q.number) is not None and not ai_solve}
+    missing = [q.number for q in qs if q.number not in keyed and store.solution(q.number) is None]
+    if missing and not ai_solve:
+        raise PipelineError(
+            f"문항 {', '.join(missing)}: 해설지도 해설도 없습니다. 해설지를 붙이거나 먼저 해설을"
+            " 만드세요."
+        )
 
     def one(q: ExamQuestion) -> Rubric:
         with _working(svc, store, "rubric", q.number, by):
-            sol = store.solution(q.number)
-            assert sol is not None
             key = store.answer_key(q.number)
-            r = derive_rubric(svc.engine, q, sol, scope, key=key, previous=store.rubric(q.number))
+            previous = store.rubric(q.number)
+            if q.number in keyed:
+                assert key is not None
+                r = expand_key_rubric(svc.engine, q, key, scope, previous=previous)
+                r = r.model_copy(update={"created_by": by, "created_at": utcnow()})
+                store.save_rubric(r)
+                return r
+            sol = store.solution(q.number)
+            if sol is None:  # AI 풀기: 해설지를 보지 않고 먼저 푼다
+                sol = solve_question(svc.engine, q, scope)
+                sol = sol.model_copy(update={"created_by": by, "created_at": utcnow()})
+                store.save_solution(sol)
+            r = derive_rubric(svc.engine, q, sol, scope, key=key, previous=previous)
             r = r.model_copy(update={"created_by": by, "created_at": utcnow()})
             store.save_rubric(r)
             return r

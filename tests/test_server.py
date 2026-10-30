@@ -508,3 +508,55 @@ def test_same_pdf_opens_existing_exam(app_paths: AppPaths, tmp_path: Path) -> No
     assert existing_exam(svc, pdf) is not None
     shutil.rmtree(ws_root / "exams" / eid)
     assert existing_exam(svc, pdf) is None, "시험 폴더가 지워졌으면 다시 만들 수 있다"
+
+
+def test_rubric_with_key_is_one_call_and_ai_solve_keeps_old_path(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path
+) -> None:
+    from tests_support import fake_prompts
+
+    from dawoni.grading.store import ExamStore
+    from dawoni.models.answer_key import AnswerKey
+    from dawoni.paths import WorkspacePaths
+
+    expanded: dict[str, Any] = {
+        "items": [{**i, "solution_steps": []} for i in RUBRIC_OK["items"]],
+        "expansions": [{"part": "", "description": "꼭짓점이 (2, 3)이라 최솟값 3",
+                        "item_ids": ["R2"]}],
+    }  # fmt: skip
+    exe = make_fake(
+        "script",
+        script=[{"response": json.dumps(r, ensure_ascii=False)}
+                for r in (expanded, SOL_OK, RUBRIC_OK)],
+    )  # fmt: skip
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    save_config(app_paths, cfg)
+    c = _client(app_paths)
+    c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q1 = read_json(FIX / "questions.json")[:1]
+    eid = c.post("/api/exams", json={"title": "해설지", "scope_id": scope["id"],
+                                     "questions": q1}).json()["id"]  # fmt: skip
+    ExamStore(WorkspacePaths(tmp_path / "ws"), eid).save_key(
+        AnswerKey(
+            question_number="1",
+            source="key.pdf 1쪽",
+            parts=[{"label": "", "answer": "3", "credit_policy": "unspecified"}],  # type: ignore[list-item]
+        )
+    )
+    base = f"/api/exams/{eid}"
+    job = _wait(c, c.post(f"{base}/rubrics", json={}).json())
+    assert job["status"] == "succeeded", job
+    made = c.get(f"{base}/questions/1").json()
+    assert made["solution"] is None, "해설지가 있으면 풀이 없이"
+    assert made["rubric"]["based_on_key"]
+    assert made["rubric"]["accepted_alternatives"][0]["status"] == "proposed"
+    assert len(fake_prompts(exe)) == 1
+
+    # AI 풀기 (해설지 검산): 먼저 풀고, 예전 경로 (루브릭 → 검토 → …). 가짜 응답이 바닥나
+    # 검토 단계에서 멈추지만 호출 순서만 본다.
+    _wait(c, c.post(f"{base}/rubrics", json={"ai_solve": True}).json())
+    prompts = fake_prompts(exe)
+    assert "[AI 독립 풀이]" in prompts[2] and "Role: solver / verifier." in prompts[1]
+    assert c.get(f"{base}/questions/1").json()["solution"] is not None

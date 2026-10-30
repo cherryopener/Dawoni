@@ -215,21 +215,22 @@ def key_answer_agrees(key_answer: str | None, key_expr: str | None, ai: FinalAns
 def check_rubric(
     draft: RubricDraft,
     q: ExamQuestion,
-    solution: SolutionDraft,
+    solution: SolutionDraft | None,
     key: AnswerKey | None = None,
     *,
     strict: bool = True,
 ) -> list[str]:
     """`strict`: AI가 만든 루브릭 — 소문항 배점·해설지 부분 점수 구조까지 지켜야 한다.
-    강사가 고친 루브릭(`strict=False`)은 합계와 소문항 표시만 본다 (강사가 기준을 정함)."""
+    강사가 고친 루브릭(`strict=False`)은 합계와 소문항 표시만 본다 (강사가 기준을 정함).
+    `solution`이 없으면(해설지 넓히기) 해설 단계·AI 답 비교 검사를 건너뛴다."""
     problems: list[str] = []
     if abs(draft.total - q.points) > 1e-9:
         problems.append(
             f"루브릭 항목 배점의 합({draft.total:g})이 문항 배점({q.points:g})과 다르다. "
             "합이 정확히 같도록 배점을 나눌 것"
         )
-    n_steps = len(solution.steps)
-    for item in draft.items:
+    n_steps = len(solution.steps) if solution else 0
+    for item in draft.items if solution else []:
         bad = [s for s in item.solution_steps if not 1 <= s <= n_steps]
         if bad:
             problems.append(
@@ -261,7 +262,7 @@ def check_rubric(
 
 
 def _check_against_key(
-    draft: RubricDraft, q: ExamQuestion, solution: SolutionDraft, key: AnswerKey
+    draft: RubricDraft, q: ExamQuestion, solution: SolutionDraft | None, key: AnswerKey
 ) -> list[str]:
     problems: list[str] = []
     by_part = {c.part: c for c in draft.checks}
@@ -271,7 +272,7 @@ def _check_against_key(
         items = draft.part_items(kp.label)
         part = q.part(kp.label)
         points = part.points if part else q.points
-        if kp.answer or kp.solution:
+        if solution is not None and (kp.answer or kp.solution):
             check = by_part.get(kp.label)
             if check is None:
                 problems.append(
@@ -320,6 +321,11 @@ def _check_against_key(
                         f"{name}: 해설지 부분 점수 {k}번 '{c.what} {c.points:g}점'에 해당하는 "
                         f"항목 배점의 합이 {got:g}점이다. {c.points:g}점이 되도록"
                     )
+    for a in draft.accepted_alternatives:
+        if a.part is not None and key.part(a.part) is None:
+            problems.append(f"expansions {a.id}의 part '{a.part}'는 해설지 소문항에 없다")
+        elif a.part is not None and not set(a.item_ids) <= {i.id for i in draft.part_items(a.part)}:
+            problems.append(f"expansions {a.id}의 item_ids는 소문항 '{a.part}'의 항목이어야 한다")
     for c in draft.candidates:
         if key.part(c.part) is None:
             problems.append(f"정답 후보 {c.id}의 part '{c.part}'는 해설지 소문항에 없다")

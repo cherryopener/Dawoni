@@ -160,7 +160,7 @@ def apply_suggestion(exam_id: str, number: str, body: ApplyBody, st: AppState = 
     q = store.exam().question(number)
     old = _rubric(store, number)
     sol = store.solution(number)
-    if sol is None:
+    if sol is None and not old.based_on_key:
         raise PipelineError(f"문항 {number}: 해설이 없습니다.")
     r = edit_rubric(old, body.revised, q, sol)
     store.save_rubric(r)

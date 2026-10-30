@@ -1,4 +1,9 @@
-"""채점 파이프라인: 범위 해설 → 루브릭 → 채점 (+ 독립 재풀이, 이중 채점).
+"""채점 파이프라인: (해설지 넓히기 | 범위 해설 → 루브릭) → 채점 (+ 독립 재풀이, 이중 채점).
+
+해설지가 있으면 기본은 **해설지 넓히기** (`expand_key_rubric`): 루브릭 역할 호출 한 번으로
+문항 + 해설지 → 루브릭(해설지의 부분 점수 논리) + 같은 뜻의 다른 표현 제안(강사 인정 전에는
+채점에 안 씀). AI 풀이·검토·검산 호출이 없다. 해설지 오타가 걱정되면 "AI 풀기 (해설지 검산)"로
+아래 예전 경로(`derive_rubric`)를 쓴다.
 
 강사의 단계를 건너뛰지 못하게 막는다:
 - 루브릭은 범위 검증을 통과한 해설에서만 만든다
@@ -36,6 +41,7 @@ from dawoni.models.base import utcnow
 from dawoni.models.calibration import RubricSuggestion
 from dawoni.models.grading import (
     DEFAULT_NEVER_DEDUCT,
+    AcceptedAlternative,
     AnswerCandidate,
     AnswerCheck,
     AnswerSideOutput,
@@ -44,6 +50,7 @@ from dawoni.models.grading import (
     GradeOutput,
     GradeResult,
     ItemJudgement,
+    KeyRubricDraft,
     PartAnswerSides,
     PartCheck,
     Rubric,
@@ -86,6 +93,17 @@ GRADE: TaskDef[GradeOutput] = TaskDef(
     rule_target=("grade", "feedback"),
     timeout_s=600,
 )
+
+EXPAND_KEY: TaskDef[KeyRubricDraft] = TaskDef(
+    role="rubric_builder",
+    name="expand_key_rubric",
+    template="expand_key_rubric.md.j2",
+    output=KeyRubricDraft,
+    rule_target="rubric",
+    timeout_s=120,
+    max_repairs=1,
+)
+"""해설지 넓히기: 한 번에 끝나는 가벼운 작업이라 2분, 수리 1번 (역할 설정)."""
 
 AUDIT: TaskDef[RubricAudit] = TaskDef(
     role="rubric_builder",
@@ -192,6 +210,65 @@ def solve_question(
 
 
 # ---------------------------------------------------------------- 루브릭
+
+
+def expand_key_rubric(
+    engine: ContextEngine,
+    q: ExamQuestion,
+    key: AnswerKey,
+    scope: ScopeProfile,
+    *,
+    agent: AgentName | None = None,
+    model: str | None = None,
+    previous: Rubric | None = None,
+) -> Rubric:
+    """강사 해설지를 넓혀 루브릭을 만든다 — AI 호출 한 번 (풀이·검토·검산 없음).
+
+    보내는 것: 이 문항과 이 문항의 해설지만, 범위는 짧은 판본(이름만)."""
+
+    def check(d: KeyRubricDraft) -> list[str]:
+        return checks.check_rubric(d.to_rubric_draft(), q, None, key)
+
+    variables = {
+        "level": scope.level,
+        "points": q.points,
+        "parts": bool(q.parts),
+        "never_deduct": DEFAULT_NEVER_DEDUCT,
+    }
+    res = engine.run(
+        dataclasses.replace(EXPAND_KEY, validator=check),
+        TaskInput(
+            variables=variables,
+            scope=scope_layer(scope).variants[-1],
+            material="\n\n".join([exam_question_text(q), key_text(key, q)]),
+        ),
+        agent=agent,
+        model=model,
+    )
+    draft = res.value.to_rubric_draft()
+    notes = list(key.warnings)
+    if not key.confirmed:
+        notes.append(
+            "해설지 판독을 강사가 아직 확인하지 않았습니다 — 원본과 비교한 뒤 확인하세요"
+            " (AI가 수식의 숫자를 바꿔 읽은 사례가 있음)"
+        )
+    notes += [f"해설지 기준 확인: {x}" for x in draft.key_conflicts]
+    if draft.accepted_alternatives:
+        notes.append(
+            f"AI가 넓힌 표현 {len(draft.accepted_alternatives)}개 — 인정한 것만 채점에 씁니다"
+        )
+    notes.append("해설지를 넓혀 만든 루브릭 (AI 풀이 없음) — 해설지 오타가 걱정되면 'AI 풀기'")
+    data = draft.model_dump()
+    data["never_deduct"] = checks.merge_never_deduct(draft, DEFAULT_NEVER_DEDUCT)
+    return Rubric(
+        **data,
+        question_number=q.number,
+        based_on_key=True,
+        review_notes=notes,
+        version=(previous.version + 1) if previous else 1,
+        agent=res.agent,
+        model=res.model,
+    )
 
 
 def derive_rubric(
@@ -385,7 +462,7 @@ def approve_rubric(rubric: Rubric, by: str | None) -> Rubric:
 
 
 def edit_rubric(
-    previous: Rubric, draft: RubricDraft, q: ExamQuestion, solution: SolutionDraft
+    previous: Rubric, draft: RubricDraft, q: ExamQuestion, solution: SolutionDraft | None
 ) -> Rubric:
     """강사가 고친 루브릭 (정답 후보 인정·제외 포함). 합계·해설 단계 검사를 통과해야 하고,
     다시 승인해야 채점에 쓴다. 해설지 구조 검사는 하지 않는다 — 기준은 강사가 정한다."""
@@ -408,8 +485,9 @@ def edit_rubric(
 
 
 def decide_candidates(rubric: Rubric, accept: list[str], reject: list[str]) -> Rubric:
-    """강사가 다른 정답 후보를 인정·제외 (승인 전에). 결정이 바뀌면 다시 승인해야 한다."""
-    ids = {c.id for c in rubric.candidates}
+    """강사가 다른 정답 후보(A…)·해설지 넓히기 제안(E…)을 인정·제외 (승인 전에).
+    결정이 바뀌면 다시 승인해야 한다."""
+    ids = {c.id for c in rubric.candidates} | {a.id for a in rubric.accepted_alternatives if a.id}
     unknown = sorted((set(accept) | set(reject)) - ids)
     if unknown:
         raise PipelineError(f"정답 후보에 없는 ID: {unknown}")
@@ -417,15 +495,21 @@ def decide_candidates(rubric: Rubric, accept: list[str], reject: list[str]) -> R
     if both:
         raise PipelineError(f"인정과 제외에 같은 후보: {both}")
 
-    def status(c: AnswerCandidate) -> str:
+    def status(c: AnswerCandidate | AcceptedAlternative) -> str:
         return "accepted" if c.id in accept else "rejected" if c.id in reject else c.status
 
     cands = [c.model_copy(update={"status": status(c)}) for c in rubric.candidates]
-    if cands == rubric.candidates:
+    alts = [a.model_copy(update={"status": status(a)}) for a in rubric.accepted_alternatives]
+    if cands == rubric.candidates and alts == rubric.accepted_alternatives:
         return rubric
     bump = 1 if rubric.status == "approved" else 0
     return rubric.model_copy(
-        update={"candidates": cands, "status": "draft", "version": rubric.version + bump}
+        update={
+            "candidates": cands,
+            "accepted_alternatives": alts,
+            "status": "draft",
+            "version": rubric.version + bump,
+        }
     )
 
 
