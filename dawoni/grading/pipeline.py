@@ -25,6 +25,8 @@ import dataclasses
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from rapidfuzz import fuzz
+
 from dawoni.config import AgentName
 from dawoni.context import ContextEngine, Shrinkable, TaskDef, TaskInput
 from dawoni.grading import checks
@@ -44,6 +46,7 @@ from dawoni.models.grading import (
     AcceptedAlternative,
     AnswerCandidate,
     AnswerCheck,
+    AnswerSide,
     AnswerSideOutput,
     CandidateMatches,
     ExamQuestion,
@@ -553,6 +556,59 @@ def check_sides(
     return problems
 
 
+def _lhs(latex: str) -> str:
+    plain = checks.normalize_for_compare(latex)
+    return plain.rsplit("=", 1)[0] if "=" in plain else ""
+
+
+def _has_answer(last: str, answer: str) -> bool:
+    """결론 줄에 답이 있는가.
+
+    1. 정규화한 글이 그대로 있음 — 숫자가 든 답은 앞뒤가 다른 숫자로 이어지면(1/2와 1/20) 아님
+    2. 값이 같음(1/2와 \\frac12) — 답에 좌변이 있으면 좌변도 같아야 (cosθ=1은 sinθ=1이 아님)
+    3. 숫자 없는 긴 글 답은 판독 흔들림을 조금 봐준다 (rapidfuzz 95 이상)"""
+    hay = checks.normalize_for_compare(last)
+    n = checks.normalize_for_compare(answer)
+    if not n:
+        return False
+    start = hay.find(n)
+    while start >= 0:
+        before = hay[start - 1] if start else ""
+        after = hay[start + len(n) : start + len(n) + 1]
+        if not before.isalnum() and not (after and (after.isalnum() or after in "./^_")):
+            return True
+        start = hay.find(n, start + 1)
+    mine, theirs = checks.latex_values(last), checks.latex_values(answer)
+    if mine and theirs and checks.same_values(mine, theirs):
+        lhs = _lhs(answer)
+        return not lhs or _lhs(last) in ("", lhs)
+    if len(n) < 6 or any(ch.isdigit() for ch in n):
+        return False
+    return fuzz.partial_ratio(n, hay) >= 95
+
+
+def prematch_side(
+    t: Transcript, key_answer: str, cands: list[AnswerCandidate]
+) -> StudentAnswerSide | None:
+    """결론(마지막 줄)에 해설지 답이나 후보 **하나만** 그대로 있으면 AI 없이 정한다.
+
+    둘 이상이 보이거나 아무것도 없으면 None — AI(가벼운 도우미)에게 묻는다."""
+    lines = [x for x in t.lines if not x.struck and x.joined.strip()]
+    if not lines:
+        return None
+    last = lines[-1].joined
+    hits: list[tuple[AnswerSide, str | None]] = []
+    if key_answer and _has_answer(last, key_answer):
+        hits.append(("key", None))
+    for c in cands:
+        if _has_answer(last, c.answer):
+            hits.append(("candidate", c.id))
+    if len(hits) != 1:
+        return None
+    side, cid = hits[0]
+    return StudentAnswerSide(student=t.student_id, side=side, candidate_id=cid, quote=last)
+
+
 def answer_sides(
     engine: ContextEngine,
     q: ExamQuestion,
@@ -562,7 +618,8 @@ def answer_sides(
 ) -> CandidateMatches:
     """정답 후보가 있는 소문항마다, 학생 답이 해설지 답·후보 중 어느 쪽인지 나눈다.
 
-    AI에는 학생 이름 대신 학생1, 학생2 …만 보낸다. 빈 답은 AI에 보내지 않는다.
+    AI에는 학생 이름 대신 학생1, 학생2 …만 보낸다. 빈 답, 결론 줄에 답 하나가 그대로 있는
+    답(`prematch_side`)은 AI에 보내지 않는다 — 모두 정해지면 호출하지 않는다.
     결론 인용이 판독문에 그대로 없으면 다시 시킨다 (해설지에 맞춰 고쳐 읽기 방지).
     """
     if not rubric.candidates:
@@ -590,6 +647,9 @@ def answer_sides(
             candidates={c.id: c.answer for c in cands},
             blank=blank,
         )
+        decided = {k: s for k, t in labels.items() if (s := prematch_side(t, key_answer, cands))}
+        result.sides = list(decided.values())
+        labels = {k: t for k, t in labels.items() if k not in decided}
         if labels:
             ids = {c.id for c in cands}
 
@@ -619,7 +679,7 @@ def answer_sides(
                 ),
             )
             agent, model = res.agent, res.model
-            result.sides = [
+            result.sides += [
                 StudentAnswerSide(
                     student=labels[s.student].student_id, side=s.side,
                     candidate_id=s.candidate_id, quote=s.quote,

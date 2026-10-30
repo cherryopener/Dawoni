@@ -152,7 +152,7 @@ def _run_in_sandbox(
     on_progress: ProgressCallback | None,
     cancel: threading.Event | None,
 ) -> AgentResult:
-    rels = sb.add_attachments(req.attachments)
+    rels = sb.add_attachments(req.attachments, max_image_px=req.max_image_px)
     prompt = req.prompt + attachment_note([p.as_posix() for p in rels])
     schema_path = sb.write_schema(req.json_schema) if req.json_schema is not None else None
     inv = adapter.build(

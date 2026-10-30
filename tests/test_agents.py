@@ -430,3 +430,27 @@ def test_find_executable_override(tmp_path: Path) -> None:
     assert find_executable("agy", str(exe)) == exe
     assert find_executable("agy", str(tmp_path / "missing")) is None
     assert Path.home() / ".local" / "bin" in extra_bin_dirs()
+
+
+def test_shrink_image_caps_long_edge_and_picks_smaller_format(tmp_path: Path) -> None:
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    from dawoni.agents.sandbox import shrink_image
+
+    rng = np.random.default_rng(0)
+    scan = tmp_path / "scan.png"  # 스캔 사진처럼 잡음이 많은 쪽 → JPEG가 훨씬 작다
+    Image.fromarray(rng.integers(90, 200, (2000, 3000, 3), dtype=np.uint8)).save(scan)
+    out = shrink_image(scan, tmp_path / "a", 1568)
+    with Image.open(out) as im:
+        assert im.size == (1568, 1045)
+    assert out.suffix == ".jpg"
+
+    printed = tmp_path / "printed.png"  # 흰 바탕 인쇄 글자 → PNG 유지, 작으면 크기 그대로
+    im = Image.new("L", (800, 1000), 255)
+    ImageDraw.Draw(im).text((50, 50), "v0 = (n+1) R cos a", fill=0)
+    im.save(printed)
+    out = shrink_image(printed, tmp_path / "b", 1568)
+    assert out.suffix == ".png"
+    with Image.open(out) as im2:
+        assert im2.size == (800, 1000)

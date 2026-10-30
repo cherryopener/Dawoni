@@ -106,6 +106,8 @@ class AgentRequest:
     timeout_s: float | None = None
     idle_timeout_s: float | None = None
     """None이면 설정값 사용."""
+    max_image_px: int | None = None
+    """첨부 그림의 긴 변 상한 (역할별). None이면 그대로."""
 
 
 @dataclass

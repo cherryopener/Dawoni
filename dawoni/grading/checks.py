@@ -121,7 +121,7 @@ def answers_agree(a: FinalAnswer, b: FinalAnswer) -> bool | None:
         return True
     # 여러 값으로 된 답: "q=\\frac{A}{2B}일 때 최댓값 \\frac{A^2}{4B}" ↔ "q=\\frac{A}{2B}, R=…"
     va, vb = latex_values(a.latex), latex_values(b.latex)
-    if va and vb and _same_values(va, vb):
+    if va and vb and same_values(va, vb):
         return True
     return None
 
@@ -167,7 +167,7 @@ def latex_values(latex: str) -> list[str]:
     return out
 
 
-def _same_values(a: list[str], b: list[str]) -> bool:
+def same_values(a: list[str], b: list[str]) -> bool:
     if len(a) != len(b):
         return False
     rest = list(b)

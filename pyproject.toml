@@ -21,6 +21,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "pywebview>=6.2.1 ; sys_platform == 'darwin'",
     "qrcode>=8.2",
+    "rapidfuzz>=3.9",
     "schemdraw>=0.23",
     "sympy>=1.14",
     "uvicorn>=0.54.0",
@@ -29,6 +30,12 @@ dependencies = [
 
 [project.scripts]
 dawoni = "dawoni.cli:main"
+
+[project.optional-dependencies]
+local-ocr = [
+    "onnxruntime>=1.20",
+    "rapidocr>=3",
+]
 
 [dependency-groups]
 dev = [

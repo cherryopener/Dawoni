@@ -34,6 +34,7 @@ from dawoni.grading.pipeline import (
     edit_rubric,
     expand_key_rubric,
     grade_answer,
+    prematch_side,
 )
 from dawoni.grading.render import rubric_text
 from dawoni.ingest.answer_key import check_key
@@ -480,16 +481,15 @@ def test_answer_sides_before_deciding_candidate(
         _t("박셋", ("(1)", "v_0=nR\\cos\\alpha")),  # (2)는 빈 답
         _t("최넷", ("(2)", "\\sin\\theta=\\frac{\\sqrt3}{2}")),
     ]
+    # 김하나(학생1)는 결론 줄 값이 해설지 답과 같아 AI 없이 정해진다 (prematch_side)
     rewritten = {
         "students": [
-            {"student": "학생1", "side": "key", "quote": "\\sin\\theta=\\frac{1}{2}"},
             # 해설지 쪽으로 고쳐 읽은 인용 → 판독문에 없으므로 거부
             {"student": "학생2", "side": "key", "quote": "\\sin\\theta=\\frac{1}{2}"},
         ]
     }
     good = {
         "students": [
-            {"student": "학생1", "side": "key", "quote": "\\sin\\theta=\\frac{1}{2}"},
             {"student": "학생2", "side": "candidate", "candidate_id": "A1",
              "quote": "\\theta=90^\\circ … \\sin 90=1"},
             {"student": "학생3", "side": "other", "quote": "\\sin\\theta=\\frac{\\sqrt3}{2}"},
@@ -509,7 +509,8 @@ def test_answer_sides_before_deciding_candidate(
     assert m.for_candidate(changed) is None, "후보 답이 바뀌면 예전 분류는 쓰지 않는다"
 
     first, repair = fake_prompts(exe)
-    assert "학생1" in first and "학생3" in first and "학생4" not in first
+    assert "[학생1]" not in first and "[학생2]" in first and "[학생3]" in first
+    assert "학생4" not in first
     assert not any(n in first for n in ("김하나", "이둘", "박셋", "최넷")), "이름은 보내지 않는다"
     assert "A1: \\(\\sin\\theta=1\\)" in first and "[해설지 답] (소문항 (2)) 1/2" in first
     assert "v_0=nR" not in first, "다른 소문항 줄은 보내지 않는다"
@@ -620,3 +621,27 @@ def test_expand_key_gives_up_after_one_repair(
     with pytest.raises(TaskFailed):
         expand_key_rubric(engine, q3, AnswerKey.model_validate(KEY), scope)
     assert len(fake_prompts(exe)) == 2
+
+
+def test_prematch_side_is_conservative() -> None:
+    (cand,) = _rubric().candidates  # (2) sinθ=1
+
+    def side(*lines: str) -> str | None:
+        s = prematch_side(_t("x", *[("(2)", m) for m in lines]), "1/2", [cand])
+        return s.side if s else None
+
+    assert side("l=\\frac{\\sqrt3}{2}R", "\\sin\\theta=\\frac{1}{2}") == "key"
+    assert side("\\sin\\theta = 1") == "candidate"
+    assert side("x=\\frac{1}{20}") is None, "1/2와 1/20은 다르다"
+    assert side("\\cos\\theta=1") is None, "좌변이 다르면 후보가 아니다"
+    assert side("\\sin\\theta=\\frac12", "\\sin 90=1") is None, "결론 줄만 본다 — AI에게"
+
+
+def test_answer_sides_skips_ai_when_all_prematched(
+    engine_with: EngineWith, q3: ExamQuestion, scope: ScopeProfile
+) -> None:
+    engine, exe = engine_with([])
+    ts = [_t("김하나", ("(2)", "\\sin\\theta=\\frac{1}{2}")), _t("이둘", ("(2)", "\\sin\\theta=1"))]
+    (p,) = answer_sides(engine, q3, _rubric(), ts, scope).parts
+    assert [s.side for s in p.sides] == ["key", "candidate"]
+    assert fake_prompts(exe) == []

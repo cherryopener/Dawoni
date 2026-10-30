@@ -270,6 +270,7 @@ class ContextEngine:
                 json_schema=schema,
                 task=task.name,
                 timeout_s=task.timeout_s or role.timeout_s,
+                max_image_px=role.image_max_px,
             )
             res: AgentResult
             try:

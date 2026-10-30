@@ -449,9 +449,15 @@ def ingest_chunk(
     try:
         total = page_count(pdf)
         keep = set(chunk.pages)
-        layout = analyze(pdf, exclude=[p for p in range(1, total + 1) if p not in keep])
+        skip = [p for p in range(1, total + 1) if p not in keep]
+        layout = analyze(pdf, exclude=skip)
         if layout.scanned:
-            raise BankError("글자 정보가 없는 스캔 PDF입니다. 아직 디지털 PDF만 지원합니다.")
+            from dawoni.ocr.local import INSTALL_HINT, analyze_scanned
+
+            ocr = analyze_scanned(pdf, layout, work_dir(svc, source_id, index), exclude=skip)
+            if ocr is None:
+                raise BankError(f"글자 정보가 없는 스캔 PDF입니다. {INSTALL_HINT}")
+            layout = ocr
         if not layout.regions:
             raise BankError(f"구간 {index}의 쪽에서 문항을 찾지 못했습니다")
         work = work_dir(svc, source_id, index)

@@ -16,6 +16,39 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
+_SHRINKABLE = {".png", ".jpg", ".jpeg", ".webp"}
+JPEG_IF_BELOW = 0.7
+"""JPEG가 PNG의 이만큼보다 작을 때만 JPEG로 (스캔 사진). 인쇄 글자 쪽은 PNG가 더 작다."""
+
+
+def shrink_image(src: Path, dst_stem: Path, max_px: int) -> Path:
+    """긴 변을 `max_px`로 줄이고, 더 작으면 JPEG(품질 90)로 저장한다. 결과 경로.
+
+    토큰은 픽셀 수로 정해진다(파일 형식이 아님): claude는 긴 변 1568px로 줄여 보므로 그
+    이하로 줄이는 것만 토큰이 줄고, gemini는 768px 타일 수로 센다. JPEG는 파일만 작아진다."""
+    with Image.open(src) as im:
+        im.load()
+        if max(im.size) <= max_px and src.suffix.lower() in {".jpg", ".jpeg"}:
+            dst = dst_stem.with_suffix(src.suffix.lower())
+            shutil.copy2(src, dst)
+            return dst
+        x = im.convert("RGB") if im.mode not in ("RGB", "L") else im
+        if max(x.size) > max_px:
+            s = max_px / max(x.size)
+            x = x.resize((round(x.width * s), round(x.height * s)), Image.Resampling.LANCZOS)
+        png = dst_stem.with_suffix(".png")
+        x.save(png, "PNG", optimize=True)
+        jpg = dst_stem.with_suffix(".jpg")
+        x.save(jpg, "JPEG", quality=90)
+        if jpg.stat().st_size < JPEG_IF_BELOW * png.stat().st_size:
+            png.unlink()
+            return jpg
+        jpg.unlink()
+        return png
+
+
 _SAFE = "abcdefghijklmnopqrstuvwxyz0123456789-_"
 
 
@@ -50,8 +83,12 @@ class Sandbox:
         sb.log_dir.mkdir()
         return sb
 
-    def add_attachments(self, paths: tuple[Path, ...] | list[Path]) -> list[Path]:
-        """첨부 파일을 복사하고 작업 폴더 기준 상대 경로 목록을 돌려준다."""
+    def add_attachments(
+        self, paths: tuple[Path, ...] | list[Path], *, max_image_px: int | None = None
+    ) -> list[Path]:
+        """첨부 파일을 복사하고 작업 폴더 기준 상대 경로 목록을 돌려준다.
+
+        `max_image_px`: 그림은 긴 변을 이만큼으로 줄여(필요하면 JPEG로) 넣는다 (역할별)."""
         if not paths:
             return []
         self.inputs.mkdir(exist_ok=True)
@@ -59,7 +96,12 @@ class Sandbox:
         for i, src in enumerate(paths, start=1):
             if not src.is_file():
                 raise FileNotFoundError(f"첨부 파일이 없습니다: {src}")
-            name = f"input_{i:02d}{src.suffix.lower()}"
+            stem = f"input_{i:02d}"
+            if max_image_px and src.suffix.lower() in _SHRINKABLE:
+                dst = shrink_image(src, self.inputs / stem, max_image_px)
+                rels.append(Path("inputs") / dst.name)
+                continue
+            name = stem + src.suffix.lower()
             shutil.copy2(src, self.inputs / name)
             rels.append(Path("inputs") / name)
         return rels

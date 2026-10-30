@@ -120,11 +120,16 @@ def ingest_exam_pdf(
     steps = 3 if key_pages else 2
     progress(0, steps, "레이아웃 분석 (문항 영역·그림)")
     layout = analyze(path, exclude=key_pages)
-    if layout.scanned:
-        raise IngestRefused("글자 정보가 없는 스캔 PDF입니다. 아직 디지털 PDF만 지원합니다.")
-    src = register_source(svc.workspace, path, "exam", title=title)
     exam_id = new_id("exam")
     exam_dir = svc.workspace.exams / exam_id
+    if layout.scanned:
+        from dawoni.ocr.local import INSTALL_HINT, analyze_scanned
+
+        ocr = analyze_scanned(path, layout, exam_dir / "ingest", exclude=key_pages)
+        if ocr is None:
+            raise IngestRefused(f"글자 정보가 없는 스캔 PDF입니다. {INSTALL_HINT}")
+        layout = ocr
+    src = register_source(svc.workspace, path, "exam", title=title)
     progress(1, steps, f"문항 {len(layout.regions)}개 구조화")
     result = extract_exam(
         svc.engine, layout, exam_dir / "ingest", subject=subject or scope.subject,
