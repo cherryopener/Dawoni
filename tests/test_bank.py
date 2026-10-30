@@ -696,3 +696,32 @@ def test_key_failure_then_retry_attaches_originals(
     c = bi.get_source(svc.workspace, sid).chunks[0]
     assert c.status == "ingested" and "원본 정답·해설 1문항 붙임" in (c.message or "")
     assert fake_prompts(exe) == []
+
+
+def test_review_notes_from_ingest_go_on_the_item(
+    setup: Setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PDF 글자로 확인하지 못한 본문·해설은 문항 메모에 남아 강사가 원본과 비교한다."""
+    svc, sid, _ = setup([])
+
+    def with_note(*_: Any, **__: Any) -> IngestResult:
+        return IngestResult(questions=[_mc("1"), _short("2")], figure_files={},
+                            notes={"1": "본문: 원본과 비교하세요"})  # fmt: skip
+
+    def no_key(*_: Any, **__: Any) -> KeyIngest:
+        return KeyIngest(keys=[], failed_pages=[2])
+
+    monkeypatch.setattr("dawoni.ingest.exam.extract_exam", with_note)
+    monkeypatch.setattr("dawoni.ingest.answer_key.extract_answer_key", no_key)
+    first = bi.ingest_chunk(svc, sid, 1, machine="pc-a")
+    by_num = {it.question.number: it for it in first.items}
+    assert by_num["1"].note == "본문: 원본과 비교하세요" and by_num["2"].note is None
+
+    def key_note(*_: Any, **__: Any) -> KeyIngest:
+        return KeyIngest(keys=[AnswerKey(question_number="1", source="t", parts=[_kp("③")])],
+                         notes={"1": "해설: 원본과 비교하세요"})  # fmt: skip
+
+    monkeypatch.setattr("dawoni.ingest.answer_key.extract_answer_key", key_note)
+    bi.ingest_chunk(svc, sid, 1, machine="pc-a")
+    one = BankStore(svc.workspace).get(by_num["1"].id)
+    assert one.note == "본문: 원본과 비교하세요\n해설: 원본과 비교하세요"

@@ -402,6 +402,16 @@ def work_dir(svc: Services, source_id: str, index: int) -> Path:
     return svc.paths.cache / "bank-work" / ws_key / f"{source_id[:10]}-c{index}"
 
 
+def _join_notes(*notes: str | None) -> str | None:
+    """문항 메모에 'DB화: 원본과 확인할 것'을 덧붙인다 (이미 있는 문장은 다시 넣지 않음)."""
+    out: list[str] = []
+    for n in notes:
+        for line in (n or "").splitlines():
+            if line.strip() and line not in out:
+                out.append(line)
+    return "\n".join(out) or None
+
+
 def item_id_for(src: Source, chunk: SourceChunk, number: str) -> str:
     """문항 번호로 정한다 (순번이면 한 쪽이 빠졌다 다시 할 때 뒤 문항 ID가 밀려 겹쳐 들어감)."""
     import hashlib
@@ -475,6 +485,7 @@ def ingest_chunk(
         res = ChunkResult(chunk, warnings=list(extracted.warnings))
 
         keys: dict[str, list[KeyPart]] = {}
+        key_notes: dict[str, str] = {}
         key_failed_pages: list[int] = []
         if chunk.key_pages:
             progress(1, steps, f"정답·해설 {len(chunk.key_pages)}쪽 읽기")
@@ -491,6 +502,7 @@ def ingest_chunk(
                 pages_per_call=1,  # 실측: 수식 많은 3쪽을 한 번에 → 900초 초과
             )  # fmt: skip
             keys = {k.question_number: k.parts for k in key.keys}
+            key_notes = key.notes
             key_failed_pages = key.failed_pages
             res.warnings += key.warnings
 
@@ -508,7 +520,8 @@ def ingest_chunk(
                     # 전에 해설 쪽을 못 읽었던 문항: 원본 정답·해설만 붙인다 (AI 없음)
                     orig = OriginalSolution(level=original_level(parts), parts=parts,
                                             pages=chunk.key_pages)  # fmt: skip
-                    bank.save(old.model_copy(update={"original": orig}), by=by,
+                    note = _join_notes(old.note, key_notes.get(q.number))
+                    bank.save(old.model_copy(update={"original": orig, "note": note}), by=by,
                               base_revision=old.revision)  # fmt: skip
                     res.originals_added.append(item_id)
                 continue
@@ -533,6 +546,7 @@ def ingest_chunk(
                 ),
                 original=OriginalSolution(level=level, parts=parts, pages=chunk.key_pages)
                 if parts else OriginalSolution(level="none"),
+                note=_join_notes(extracted.notes.get(q.number), key_notes.get(q.number)),
             )  # fmt: skip
             if solve:
                 it = with_solution(it, *solve_bank_question(svc, q, scope, parts), mapping)

@@ -575,6 +575,105 @@ def test_extract_answer_key_from_pdf(
     assert "소문항 (1): 4점, 단답형" in prompt and "해설지 PDF 글자" in prompt
 
 
+def _key_pdf(path: Path, lines: list[str], *, image: bool = False) -> Path:
+    doc = pymupdf.open()
+    p = doc.new_page()
+    for k, line in enumerate(lines):
+        p.insert_text((40, 100 + 30 * k), line, fontname="korea", fontsize=9)  # pyright: ignore[reportUnknownMemberType]
+    if image:  # 그림 이미지 속 글 (PDF 글자 층에 없음)
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pymupdf.IRect(0, 0, 20, 20), False)
+        pix.clear_with(200)  # pyright: ignore[reportUnknownMemberType]
+        p.insert_image(pymupdf.Rect(40, 400, 240, 500), pixmap=pix)  # pyright: ignore[reportUnknownMemberType]
+    doc.save(str(path))  # pyright: ignore[reportUnknownMemberType]
+    return path
+
+
+def _mc(q3: ExamQuestion, number: str) -> ExamQuestion:
+    item = q3.item.model_copy(update={"item_type": "multiple_choice"})
+    return q3.model_copy(update={"number": number, "points": 3, "parts": [], "item": item})
+
+
+def _kq(number: str, answer: str, solution: str = "") -> dict[str, Any]:
+    part = {"label": "", "answer": answer, "solution": solution, "credit_policy": "unspecified"}
+    return {"number": number, "parts": [part]}
+
+
+SUNEUNG = [
+    "10.",
+    "따라서 a와 같은 방향으로 전류가 흐르는 경우는 b와 c 이다.",
+    "12.",
+    "B의 저항 이므로 이다.",
+]
+
+
+def test_lone_choice_answer_without_number_is_kept(
+    engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path
+) -> None:
+    """수능 해설은 객관식 답을 선지 번호 없이 끝낸다 — 같은 번호의 다른 답이 없으면 버리지 않는다
+    (실측: 버린 뒤 '10, 12번이 빠졌다'고 수리 요청을 되풀이해 쪽을 잃음)."""
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
+
+    pdf = _key_pdf(tmp_path / "key.pdf", SUNEUNG)
+    out = {"questions": [_kq("10", "b와 c"), _kq("12", "\\(\\rho_B=\\rho\\)", "B의 저항")]}
+    engine, exe = engine_with([out])
+    exam = Exam(title="t", scope_id="s", questions=[_mc(q3, "10"), _mc(q3, "12")])
+    res = extract_answer_key(engine, pdf, [1], exam, tmp_path / "work", cross=False,
+                             ignore_other_numbers=True)  # fmt: skip
+    assert len(fake_prompts(exe)) == 1, "수리 요청 없음"
+    assert [k.question_number for k in res.keys] == ["10", "12"]
+    assert set(res.notes) == {"10", "12"} and "모양이 다름" in res.notes["10"]
+
+
+def test_odd_answer_dropped_when_fitting_one_exists(
+    engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path
+) -> None:
+    """같은 쪽에 다른 묶음의 같은 번호 해설: 모양이 맞는 답이 있으면 그것만 쓴다."""
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
+
+    pdf = _key_pdf(tmp_path / "key.pdf", SUNEUNG)
+    out = {"questions": [_kq("10", "③"), _kq("10", "b와 c"), _kq("12", "②")]}
+    engine, _ = engine_with([out])
+    exam = Exam(title="t", scope_id="s", questions=[_mc(q3, "10"), _mc(q3, "12")])
+    res = extract_answer_key(engine, pdf, [1], exam, tmp_path / "work", cross=False,
+                             ignore_other_numbers=True)  # fmt: skip
+    assert [p.answer for k in res.keys for p in k.parts] == ["③", "②"]
+    assert res.notes == {} and any("문항 10: 문항 유형과 맞지 않는 답" in w for w in res.warnings)
+
+
+INVENTED = "학생은 반드시 운동량 보존 법칙을 써서 정리해야만 만점이다 그렇지 않으면 영점"
+
+
+@pytest.mark.parametrize("image", [True, False])
+def test_ungrounded_key_kept_only_where_text_may_be_outside_pdf(
+    engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path, image: bool
+) -> None:
+    """수리해도 'PDF 글자에 없는 한글'만 남을 때: 쪽에 그림 이미지(또는 깨진 글자)가 있으면
+    받아들이고 강사 확인 메모, PDF 글자가 멀쩡한 쪽이면 여전히 실패 (지어낸 해설 차단)."""
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
+
+    pdf = _key_pdf(tmp_path / "key.pdf", ["3) (1) 수평 이동 시간"], image=image)
+    q = q3.model_copy(update={"parts": []})
+    out = {"questions": [_kq("3", "", INVENTED)]}
+    engine, exe = engine_with([out, out, out])
+    exam = Exam(title="t", scope_id="s", questions=[q])
+
+    def run() -> Any:
+        return extract_answer_key(engine, pdf, [1], exam, tmp_path / "work", cross=False)
+
+    if not image:
+        with pytest.raises(TaskFailed):
+            run()
+        return
+    res = run()
+    assert len(fake_prompts(exe)) == 3
+    assert [k.question_number for k in res.keys] == ["3"]
+    assert "원본과 비교" in res.notes["3"]
+    assert any("문항 3: 해설: PDF 글자에 없는 한글" in w for w in res.warnings)
+
+
 # ---------------------------------------------------------------- 해설지 넓히기 (기본 경로)
 
 EXPANDED: dict[str, Any] = {

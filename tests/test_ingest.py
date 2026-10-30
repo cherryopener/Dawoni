@@ -336,8 +336,29 @@ def test_extract_exam_partial_drops_only_failing_question(
     )
     r = extract_exam(_engine(app_paths, exe), analyze(exam_pdf), tmp_path / "work", partial=True)
     assert [q.number for q in r.questions] == ["1", "2", "4", "5", "서술형 1"]
-    assert r.failed_pages == {1: ["3"]}
+    assert r.failed_pages == {1: ["3"]}, "PDF 글자가 멀쩡한 문항에 지어낸 문장은 여전히 거부"
     assert any("1쪽(문항 3) 구조화 실패" in w for w in r.warnings)
+    assert r.notes == {}
+
+
+def test_extract_exam_accepts_ungrounded_text_beside_image(
+    app_paths: AppPaths, make_fake: MakeFake, exam_pdf: Path, tmp_path: Path
+) -> None:
+    """그림 이미지가 있는 문항: 수리해도 'PDF 글자에 없는 한글'만 남으면 받아들이고 강사 확인
+    메모 (실측: 파동 62쪽 '실험 A, B' 상자가 이미지 — Gemini·Claude 모두 3번씩 실패)."""
+    boxed = copy.deepcopy(PAGE2)
+    boxed["questions"][0]["stem"].insert(
+        1, _p(_t("실험 가: 공기 중에서 크라운 유리로 된 프리즘에 백색광을 비춘다."))
+    )
+    script = [PAGE1, boxed, boxed, boxed]
+    exe = make_fake(
+        "script", script=[{"response": json.dumps(d, ensure_ascii=False)} for d in script]
+    )
+    r = extract_exam(_engine(app_paths, exe), analyze(exam_pdf), tmp_path / "work", partial=True)
+    assert r.failed_pages == {}
+    assert [q.number for q in r.questions][-1] == "서술형 1"
+    assert set(r.notes) == {"서술형 1"} and "원본과 비교" in r.notes["서술형 1"]
+    assert any("문항 서술형 1: 본문: PDF 글자에 없는 한글" in w for w in r.warnings)
 
 
 # ---------------------------------------------------------------- 교재 → 범위 프로필

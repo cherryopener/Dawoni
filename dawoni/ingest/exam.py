@@ -26,7 +26,13 @@ from dawoni.context import ContextEngine, TaskDef, TaskFailed, TaskInput
 from dawoni.context.extract import describe_validation_error
 from dawoni.grading.render import blocks_text, runs_text
 from dawoni.grading.store import safe_name
-from dawoni.ingest.grounding import hangul_outside
+from dawoni.ingest.grounding import (
+    UNGROUNDED,
+    accept_ungrounded,
+    broken_glyphs,
+    hangul_outside,
+    review_note,
+)
 from dawoni.ingest.layout import DocumentLayout, Region, render_clip
 from dawoni.mathx.omml import default_converter
 from dawoni.models.base import DawoniModel
@@ -90,6 +96,8 @@ class IngestResult:
     warnings: list[str] = field(default_factory=lambda: list[str]())
     failed_pages: dict[int, list[str]] = field(default_factory=lambda: dict[int, list[str]]())
     """`partial`일 때 구조화에 실패한 쪽 → 그 쪽의 문항 번호 (다시 하면 이 쪽만 읽는다)."""
+    notes: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    """문항 번호 → 강사가 원본과 비교할 것 (PDF 글자로 확인하지 못한 본문)."""
 
 
 def prepare_regions(layout: DocumentLayout, out_dir: Path) -> list[PreparedRegion]:
@@ -184,6 +192,18 @@ def _failing_labels(e: Exception, labels: list[str]) -> set[str]:
     return found & set(labels) if found and found < set(labels) else set()
 
 
+def ungrounded_share(q: ExtractedQuestion, r: Region) -> float | None:
+    """본문·선지의 한글 중 PDF 글자에 없는 비율 — 10%를 넘을 때만."""
+    produced = blocks_text(q.stem) + " " + " ".join(runs_text(c.runs) for c in q.choices)
+    outside = hangul_outside(produced, r.text)
+    return outside if outside > 0.1 else None
+
+
+def text_beyond_pdf(r: Region) -> bool:
+    """이 문항의 글 일부가 PDF 글자 밖에 있을 수 있음 — 그림 이미지 속 글, 깨진 글자."""
+    return any(f.kind == "image" for f in r.figures) or broken_glyphs(r.text)
+
+
 def check_page(out: PageExtraction, regions: list[Region], subject: str | None) -> list[str]:
     problems: list[str] = []
     by_label = {r.label: r for r in regions}
@@ -215,11 +235,9 @@ def check_page(out: PageExtraction, regions: list[Region], subject: str | None) 
                     f"문항 {q.label}: 레이아웃상 {f.id}는 {f.near_choice}번 선지 기호 옆에 있다. "
                     f"role 'choice', choice_label {f.near_choice}로 할 것"
                 )
-        produced = blocks_text(q.stem) + " " + " ".join(runs_text(c.runs) for c in q.choices)
-        outside = hangul_outside(produced, r.text)
-        if outside > 0.1:
+        if (outside := ungrounded_share(q, r)) is not None:
             problems.append(
-                f"문항 {q.label}: 본문에 PDF 글자에 없는 한글이 {outside:.0%} 들어갔다. "
+                f"문항 {q.label}: 본문에 {UNGROUNDED} {outside:.0%} 들어갔다. "
                 "PDF 글자를 기준으로 그대로 옮길 것"
             )
         problems += _check_parts(q, r)
@@ -303,18 +321,30 @@ def extract_exam(
         def check(out: PageExtraction, regions: list[Region] = regions) -> list[str]:
             return check_page(out, regions, subject)
 
-        res = engine.run(
-            dataclasses.replace(EXTRACT, name=f"extract_questions_p{page}", validator=check),
-            TaskInput(
-                variables={},
-                material="\n\n".join(_region_material(r) for r in regions)
-                + (f"\n\n학생 수준: {level}" if level else ""),
-                attachments=tuple(img for pr in group for img in pr.images),
-            ),
-        )
+        try:
+            value = engine.run(
+                dataclasses.replace(EXTRACT, name=f"extract_questions_p{page}", validator=check),
+                TaskInput(
+                    variables={},
+                    material="\n\n".join(_region_material(r) for r in regions)
+                    + (f"\n\n학생 수준: {level}" if level else ""),
+                    attachments=tuple(img for pr in group for img in pr.images),
+                ),
+            ).value
+        except TaskFailed as e:
+            accepted = accept_ungrounded(e, PageExtraction)
+            by_label = {r.label: r for r in regions}
+            if accepted is None or not all(
+                text_beyond_pdf(r)
+                for q in accepted.questions
+                if (r := by_label.get(q.label)) is not None and ungrounded_share(q, r) is not None
+            ):
+                raise
+            log.warning("%d쪽: 근거 검사만 남아 받아들임 (강사 확인): %s", page, e.errors[:3])
+            value = accepted
         cached.parent.mkdir(parents=True, exist_ok=True)
-        cached.write_text(res.value.model_dump_json(), encoding="utf-8")
-        return {q.label: q for q in res.value.questions}
+        cached.write_text(value.model_dump_json(), encoding="utf-8")
+        return {q.label: q for q in value.questions}
 
     pages = sorted(by_page)
     reads = each_in_parallel(
@@ -323,6 +353,7 @@ def extract_exam(
     )  # fmt: skip
     questions: list[ExamQuestion] = []
     warnings: list[str] = list(layout.warnings)
+    notes: dict[str, str] = {}
     for page, by_label in zip(pages, reads, strict=True):
         if page in failed:
             nums = ", ".join(failed[page])
@@ -334,6 +365,9 @@ def extract_exam(
             q = by_label.get(pr.region.label)
             if q is None:
                 continue
+            if (share := ungrounded_share(q, pr.region)) is not None:
+                notes[pr.region.label] = f"본문: {review_note(share)}"
+                warnings.append(f"문항 {pr.region.label}: {notes[pr.region.label]}")
             item = to_item(q, pr.region, subject)
             points = item.points
             if points is None and q.parts:
@@ -358,4 +392,5 @@ def extract_exam(
         figure_files={pr.region.label: pr.figure_files for pr in prepared},
         warnings=warnings,
         failed_pages=failed,
+        notes=notes,
     )

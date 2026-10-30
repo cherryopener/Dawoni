@@ -5,7 +5,8 @@
 
 코드 검증:
 - 문항 번호는 시험에 있는 것만, 소문항은 시험의 소문항 표시 그대로 빠짐없이
-- 해설의 한글이 PDF 글자에 있어야 함 (지어낸 해설 차단)
+- 해설의 한글이 PDF 글자에 있어야 함 (지어낸 해설 차단). 수리해도 이것만 남으면 받아들이고
+  강사 확인 메모를 붙인다 (그림 속 글·깨진 PDF 글자)
 - 부분 점수 합이 배점과 다르면 **수리하지 않고** 경고 (강사가 적은 그대로 두고 알린다)
 - 두 번(새 세션) 읽어 답·해설의 **숫자**를 비교 — 다르면 그 소문항을 '원본과 확인'으로 표시.
   (실측: 한글 문장은 그대로 옮기면서 "전체 전압이, … 1/2"을 "2/3, 1/3"로 바꿔 읽었다.
@@ -15,6 +16,7 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -24,10 +26,19 @@ import pymupdf
 
 from dawoni.context import ContextEngine, TaskDef, TaskInput
 from dawoni.grading.render import blocks_text
-from dawoni.ingest.grounding import hangul_missing
+from dawoni.ingest.grounding import (
+    UNGROUNDED,
+    accept_ungrounded,
+    broken_glyphs,
+    hangul_missing,
+    only_ungrounded,
+    review_note,
+)
 from dawoni.ingest.layout import render_page
 from dawoni.models.answer_key import AnswerKey, KeyExtraction, KeyPart, KeyQuestion
 from dawoni.models.grading import Exam, ExamQuestion
+
+log = logging.getLogger(__name__)
 
 EXTRACT_KEY: TaskDef[KeyExtraction] = TaskDef(
     role="key_reader",
@@ -49,6 +60,8 @@ class KeyIngest:
     warnings: list[str] = field(default_factory=lambda: list[str]())
     failed_pages: list[int] = field(default_factory=lambda: list[int]())
     """`partial`일 때 읽지 못한 해설 쪽."""
+    notes: dict[str, str] = field(default_factory=lambda: dict[str, str]())
+    """문항 번호 → 강사가 원본과 비교할 것 (PDF 글자로 확인하지 못한 해설, 모양이 다른 답)."""
 
 
 def _labels(q: ExamQuestion) -> list[str]:
@@ -71,6 +84,14 @@ def _question_line(q: ExamQuestion) -> str:
 def page_text(pdf: Path, pages: list[int]) -> str:
     with pymupdf.open(pdf) as doc:
         return "\n".join(str(doc.load_page(p - 1).get_text()) for p in pages)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+
+def text_beyond_pdf(pdf: Path, pages: list[int], text: str) -> bool:
+    """해설 일부가 PDF 글자 밖에 있을 수 있음 — 쪽에 그림 이미지가 있거나 글자가 깨짐."""
+    if broken_glyphs(text):
+        return True
+    with pymupdf.open(pdf) as doc:
+        return any(doc.load_page(p - 1).get_images() for p in pages)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
 
 
 _LONE_NUMBER = re.compile(r"(?m)^\s*0?(\d{2,3})\s*\.?\s*$")
@@ -141,22 +162,27 @@ def check_key(
                 "solution을 비우고 credit_policy를 unspecified로 적을 것. 여러 소문항에 함께 적힌 "
                 "부분 점수 표기(예: (1) 전체 '부분 점수: 없음')는 소문항마다 적을 것"
             )
-        # 칸(답·해설·부분 점수…)마다 따로 원본과 비교한다 — 해설 끝 문장을 답 칸에도 옮겨 적는 것은
-        # 지어낸 것이 아니다 (실측: 합쳐서 세면 같은 글자가 두 번 나와 23% '없는 한글'로 잡힘)
-        fields = [x for p in kq.parts for x in (p.answer or "", p.solution, p.credit_text or "",
-                                                *p.zero_if) if x]  # fmt: skip
-        missing = total = 0
-        for f in fields:
-            m, t = hangul_missing(f, source_text)
-            missing, total = missing + m, total + t
-        outside = missing / total if total else 0.0
-        # 짧은 답("15m/s 서쪽")에 몇 글자 붙은 것까지 비율로 막지 않게 글자 수도 본다
-        if outside > 0.15 and missing >= MIN_MISSING:
+        if (outside := key_ungrounded_share(kq, source_text)) is not None:
             problems.append(
-                f"문항 {kq.number}: 해설에 PDF 글자에 없는 한글이 {outside:.0%} 들어갔다. "
+                f"문항 {kq.number}: 해설에 {UNGROUNDED} {outside:.0%} 들어갔다. "
                 "해설지에 적힌 문장을 그대로 옮길 것 (요약·보충 금지)"
             )
     return problems
+
+
+def key_ungrounded_share(kq: KeyQuestion, source_text: str) -> float | None:
+    """해설의 한글 중 PDF 글자에 없는 비율 — 15%를 넘고 MIN_MISSING자 이상일 때만."""
+    # 칸(답·해설·부분 점수…)마다 따로 원본과 비교한다 — 해설 끝 문장을 답 칸에도 옮겨 적는 것은
+    # 지어낸 것이 아니다 (실측: 합쳐서 세면 같은 글자가 두 번 나와 23% '없는 한글'로 잡힘)
+    fields = [x for p in kq.parts for x in (p.answer or "", p.solution, p.credit_text or "",
+                                            *p.zero_if) if x]  # fmt: skip
+    missing = total = 0
+    for f in fields:
+        m, t = hangul_missing(f, source_text)
+        missing, total = missing + m, total + t
+    outside = missing / total if total else 0.0
+    # 짧은 답("15m/s 서쪽")에 몇 글자 붙은 것까지 비율로 막지 않게 글자 수도 본다
+    return outside if outside > 0.15 and missing >= MIN_MISSING else None
 
 
 def _warnings(k: AnswerKey, q: ExamQuestion) -> list[str]:
@@ -209,6 +235,10 @@ def _merge(a: KeyQuestion, b: KeyQuestion) -> KeyQuestion:
     return KeyQuestion(number=a.number, parts=list(parts.values()), notes=a.notes + b.notes)
 
 
+type _Read = tuple[list[Path], list[KeyQuestion], dict[str, list[str]], dict[str, float]]
+"""쪽 묶음 하나 읽기: (쪽 이미지, 해설, 두 번 읽어 숫자가 다른 소문항, PDF에 없는 한글 비율)."""
+
+
 def extract_answer_key(
     engine: ContextEngine,
     pdf: Path,
@@ -238,14 +268,24 @@ def extract_answer_key(
     images_all: list[Path] = []
     numbers = {q.number for q in exam.questions}
     dropped: list[str] = []
+    odd_found: set[str] = set()
+    """모양이 안 맞는데 같은 번호의 다른 답이 없어 남긴 해설 (강사 확인)."""
+    ungrounded: dict[str, float] = {}
+
+    def odd_shape(kq: KeyQuestion) -> bool:
+        return type_mismatch(kq, exam.question(kq.number))
 
     def _fitting(qs: list[KeyQuestion]) -> list[KeyQuestion]:
-        """이 시험의 번호이고 유형도 맞는 해설만 (옆 챕터·다른 묶음의 같은 번호 답은 버림)."""
+        """이 시험의 번호인 해설. 유형과 모양이 안 맞는 답은 같은 번호의 맞는 답이 함께 있을 때만
+        버린다 (옆 챕터·다른 묶음의 같은 번호 답). 혼자면 남기고 강사 확인으로 넘긴다.
+
+        실측(2026-10-30): 수능 해설은 객관식 10번을 선지 번호 없이 "…경우는 b와 c 이다"로 끝낸다
+        — 버린 뒤 '10번 해설이 빠졌다'고 수리 요청을 되풀이해 쪽을 잃음."""
+        mine = [kq for kq in qs if kq.number in numbers]
+        fits = {kq.number for kq in mine if not odd_shape(kq)}
         out: list[KeyQuestion] = []
-        for kq in qs:
-            if kq.number not in numbers:
-                continue
-            if type_mismatch(kq, exam.question(kq.number)):
+        for kq in mine:
+            if kq.number in fits and odd_shape(kq):
                 dropped.append(kq.number)
                 continue
             out.append(kq)
@@ -255,7 +295,7 @@ def extract_answer_key(
     groups = [pages[i : i + step] for i in range(0, len(pages), step)]
     cache_dir = work_dir / "reads"
 
-    def read(group: list[int]) -> tuple[list[Path], list[KeyQuestion], dict[str, list[str]]]:
+    def read(group: list[int]) -> _Read:
         images = tuple(render_page(pdf, p, work_dir / f"key_p{p}.png", dpi=170) for p in group)
         text = page_text(pdf, group)
 
@@ -285,10 +325,18 @@ def extract_answer_key(
                 raw = KeyExtraction.model_validate_json(cached.read_text(encoding="utf-8"))
             except ValueError:
                 raw = None
-            if raw is not None and check(raw):
+            if raw is not None and (problems := check(raw)) and not only_ungrounded(problems):
                 raw = None  # 검사가 강해졌으면 다시 읽는다 (예: 빠뜨린 문항)
         if raw is None:
-            raw = engine.run(task, inp).value
+            try:
+                raw = engine.run(task, inp).value
+            except TaskFailed as e:
+                accepted = accept_ungrounded(e, KeyExtraction)
+                if accepted is None or not text_beyond_pdf(pdf, group, text):
+                    raise
+                log.warning("해설 %s쪽: 근거 검사만 남아 받아들임 (강사 확인): %s", group,
+                            e.errors[:3])  # fmt: skip
+                raw = accepted
             cached.parent.mkdir(parents=True, exist_ok=True)
             cached.write_text(raw.model_dump_json(), encoding="utf-8")
         first = _fitting(raw.questions) if ignore_other_numbers else (
@@ -300,28 +348,42 @@ def extract_answer_key(
             for kq in first:
                 if kq.number in second:
                     doubts.setdefault(kq.number, []).extend(compare_reads(kq, second[kq.number]))
-        return list(images), first, doubts
+        shares = {kq.number: s for kq in first if (s := key_ungrounded_share(kq, text)) is not None}
+        return list(images), first, doubts, shares
 
     failed: list[list[int]] = []
 
-    def read_safe(group: list[int]) -> tuple[list[Path], list[KeyQuestion], dict[str, list[str]]]:
+    def read_safe(group: list[int]) -> _Read:
         try:
             return read(group)
         except TaskFailed, AgentError:
             if not partial:
                 raise
             failed.append(group)
-            return [], [], {}
+            return [], [], {}, {}
 
     reads = each_in_parallel(
         groups, read_safe, name=lambda g: f"{g[0]}쪽", what="해설지 읽기", workers=workers
     )
-    for images, first, doubts in reads:
+    for images, first, doubts, shares in reads:
         images_all += images
         for n, d in doubts.items():
             doubtful.setdefault(n, []).extend(d)
+        for n, s in shares.items():
+            ungrounded[n] = max(s, ungrounded.get(n, 0.0))
         for kq in first:
-            found[kq.number] = _merge(found[kq.number], kq) if kq.number in found else kq
+            n = kq.number
+            odd = ignore_other_numbers and odd_shape(kq)
+            if n in found and odd != (n in odd_found):
+                # 쪽마다 따로 읽어 한쪽만 모양이 맞음 → 맞는 쪽을 쓴다
+                dropped.append(n)
+                if not odd:
+                    found[n] = kq
+                    odd_found.discard(n)
+                continue
+            found[n] = _merge(found[n], kq) if n in found else kq
+            if odd:
+                odd_found.add(n)
 
     source = f"{pdf.name} {', '.join(map(str, pages))}쪽"
     out = KeyIngest()
@@ -348,11 +410,25 @@ def extract_answer_key(
             notes=kq.notes,
             doubtful=sorted(set(doubtful.get(q.number, [])), key=lambda x: order.get(x, 99)),
         )
-        key.warnings = _warnings(key, q) + [
-            f"문항 {q.number}{label or ''}: 해설지를 두 번 읽은 결과의 숫자가 다름 "
-            "— 원본과 비교하세요"
-            for label in key.doubtful
-        ]
+        notes: list[str] = []
+        if q.number in odd_found:
+            notes.append(
+                "해설: 문항 유형과 답의 모양이 다름(객관식인데 선지 번호가 없는 등) — 다른 묶음의 "
+                "해설이 아닌지 원본과 확인하세요"
+            )
+        if q.number in ungrounded:
+            notes.append(f"해설: {review_note(ungrounded[q.number])}")
+        if notes:
+            out.notes[q.number] = " / ".join(notes)
+        key.warnings = (
+            _warnings(key, q)
+            + [f"문항 {q.number}: {n}" for n in notes]
+            + [
+                f"문항 {q.number}{label or ''}: 해설지를 두 번 읽은 결과의 숫자가 다름 "
+                "— 원본과 비교하세요"
+                for label in key.doubtful
+            ]
+        )
         out.warnings += key.warnings
         out.keys.append(key)
     return out
