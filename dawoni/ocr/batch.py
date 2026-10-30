@@ -61,6 +61,7 @@ class CoverRead(DawoniModel):
 
 
 COVER: TaskDef[CoverRead] = TaskDef(
+    role="cover_reader",
     name="read_cover",
     template="read_cover.md.j2",
     output=CoverRead,

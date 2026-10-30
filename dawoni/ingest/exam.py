@@ -66,6 +66,7 @@ class PageExtraction(DawoniModel):
 
 
 EXTRACT: TaskDef[PageExtraction] = TaskDef(
+    role="page_reader",
     name="extract_questions",
     template="extract_questions.md.j2",
     output=PageExtraction,

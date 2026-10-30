@@ -32,10 +32,12 @@ from dawoni.models.item import ChoiceAnswer, ItemContent, ItemType, ValueAnswer
 from dawoni.models.scope import ExtensionConcept, ScopeProfile
 
 DRAFT_EXT: TaskDef[ExtensionConcept] = TaskDef(
+    role="problem_maker",
     name="draft_extension", template="draft_extension.md.j2", output=ExtensionConcept,
     rule_target="variant", timeout_s=600,
 )  # fmt: skip
 NEW: TaskDef[NewProblemDraft] = TaskDef(
+    role="problem_maker",
     name="gen_new", template="gen_new.md.j2", output=NewProblemDraft,
     rule_target="variant", timeout_s=900,
 )  # fmt: skip

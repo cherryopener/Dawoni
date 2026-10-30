@@ -37,6 +37,10 @@ class JobError(DawoniModel):
     code: str = Field(description="예: agent_timeout, agent_quota, invalid_output")
     message: str = Field(description="강사에게 보여 줄 한국어 안내")
     detail: str | None = None
+    alternatives: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="AI를 쓸 수 없어 멈췄을 때 넘어갈 수 있는 다른 AI (강사가 고른다)",
+    )
 
 
 class Job(DawoniModel):

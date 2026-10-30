@@ -51,6 +51,7 @@ class ClaudeAdapter:
         attachments: list[Path],
         timeout_s: float,
         workdir: Path,
+        effort: str | None = None,
     ) -> Invocation:
         argv = [
             str(exe),
@@ -74,6 +75,8 @@ class ClaudeAdapter:
         ]
         if model:
             argv += ["--model", model]
+        if effort:
+            argv += ["--effort", effort]
         enforced = False
         if schema is not None:
             inline = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))

@@ -63,6 +63,7 @@ class PipelineError(Exception):
 
 
 SOLVE: TaskDef[SolutionDraft] = TaskDef(
+    role="solver_verifier",
     name="solve_question",
     template="solve_question.md.j2",
     output=SolutionDraft,
@@ -70,6 +71,7 @@ SOLVE: TaskDef[SolutionDraft] = TaskDef(
     timeout_s=600,
 )
 RUBRIC: TaskDef[RubricDraft] = TaskDef(
+    role="rubric_builder",
     name="derive_rubric",
     template="derive_rubric.md.j2",
     output=RubricDraft,
@@ -77,6 +79,7 @@ RUBRIC: TaskDef[RubricDraft] = TaskDef(
     timeout_s=600,
 )
 GRADE: TaskDef[GradeOutput] = TaskDef(
+    role="grader",
     name="grade_answer",
     template="grade_answer.md.j2",
     output=GradeOutput,
@@ -85,6 +88,7 @@ GRADE: TaskDef[GradeOutput] = TaskDef(
 )
 
 AUDIT: TaskDef[RubricAudit] = TaskDef(
+    role="rubric_builder",
     name="audit_rubric",
     template="audit_rubric.md.j2",
     output=RubricAudit,
@@ -92,6 +96,7 @@ AUDIT: TaskDef[RubricAudit] = TaskDef(
     timeout_s=600,
 )
 CHECK_ANSWER: TaskDef[AnswerCheck] = TaskDef(
+    role="solver_verifier",
     name="check_answer",
     template="check_answer.md.j2",
     output=AnswerCheck,
@@ -100,6 +105,7 @@ CHECK_ANSWER: TaskDef[AnswerCheck] = TaskDef(
 )
 
 MATCH: TaskDef[AnswerSideOutput] = TaskDef(
+    role="light_helper",
     name="match_candidates",
     template="match_candidates.md.j2",
     output=AnswerSideOutput,
@@ -108,6 +114,7 @@ MATCH: TaskDef[AnswerSideOutput] = TaskDef(
 )
 
 SUGGEST: TaskDef[RubricSuggestion] = TaskDef(
+    role="rubric_builder",
     name="suggest_rubric",
     template="suggest_rubric.md.j2",
     output=RubricSuggestion,

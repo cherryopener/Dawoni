@@ -25,6 +25,7 @@ from dawoni.models.grading import (
 from dawoni.ocr.crosscheck import cross_check
 
 TRANSCRIBE: TaskDef[TranscriptionDraft] = TaskDef(
+    role="handwriting_reader",
     name="transcribe_answer",
     template="transcribe_answer.md.j2",
     output=TranscriptionDraft,

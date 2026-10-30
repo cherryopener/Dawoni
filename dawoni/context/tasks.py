@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from dawoni.roles import RoleName
+
 RuleTarget = Literal[
     "solve",  # 해설
     "rubric",  # 루브릭
@@ -46,7 +48,12 @@ class TaskDef[T: BaseModel]:
     rule_target: RuleTarget | tuple[RuleTarget, ...] | None
     """적용할 전역 규칙의 작업 종류 (여러 개 가능: 채점은 채점+첨삭).
     None이면 전역 규칙을 넣지 않는다 (규칙 정제 같은 내부 작업)."""
+    role: RoleName
+    """맡는 AI 역할 (dawoni/roles): 역할 지시서·모델 등급·수리 횟수·시간·예산."""
     validator: Callable[[T], list[str]] | None = None
     """모델 검증을 통과한 결과에 대한 작업별 검사(범위·인용·합계 등).
     문제 목록(한국어)을 돌려준다. 빈 목록 = 통과. 문제가 있으면 수리 요청에 그대로 쓰인다."""
     timeout_s: float | None = None
+    """None이면 역할의 제한 시간."""
+    max_repairs: int | None = None
+    """None이면 역할의 수리 횟수."""

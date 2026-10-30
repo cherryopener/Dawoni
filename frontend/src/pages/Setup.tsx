@@ -10,9 +10,11 @@ import {
   JobProgress,
   Notice,
   Row,
+  Select,
   Stack,
   TextInput,
   setTeacherName,
+  tableClass,
   teacherName,
 } from "../components/ui";
 import { api, errorText, useJob, useLoad } from "../lib/api";
@@ -290,7 +292,11 @@ function AgentsCard({ status, onChanged }: { status: Status; onChanged: () => vo
   );
 }
 
+type Tier = "fast" | "standard" | "strong";
+type TierModel = { model: string | null; effort: string | null };
 type Config = {
+  auto_fallback?: boolean;
+  tiers?: Partial<Record<AgentName, Partial<Record<Tier, TierModel>>>>;
   ocr: { cross_check: boolean; clova_enabled: boolean; mathpix_enabled: boolean };
   docx: { body_font: string; body_size_pt: number };
   scanner?: { smb_url: string | null; username: string | null };
@@ -385,6 +391,96 @@ function OptionsCard() {
   );
 }
 
+type RoleInfo = { name: string; title: string; tier: Tier; default_tier: Tier; tasks: string[]; budget_tokens: number };
+const TIERS: { value: Tier; label: string }[] = [
+  { value: "fast", label: "빠름 (fast)" },
+  { value: "standard", label: "보통 (standard)" },
+  { value: "strong", label: "깊이 (strong)" },
+];
+const AGENTS: AgentName[] = ["agy", "claude", "codex"];
+
+function TierCell({ value, onSave }: { value: TierModel | undefined; onSave: (v: TierModel) => void }) {
+  const [model, setModel] = useState(value?.model ?? "");
+  const [effort, setEffort] = useState(value?.effort ?? "");
+  useEffect(() => {
+    setModel(value?.model ?? "");
+    setEffort(value?.effort ?? "");
+  }, [value]);
+  const dirty = model !== (value?.model ?? "") || effort !== (value?.effort ?? "");
+  return (
+    <Stack gap={4}>
+      <TextInput mono value={model} onChange={setModel} placeholder="AI 설정의 모델" />
+      <Row>
+        <TextInput mono value={effort} onChange={setEffort} placeholder="깊이 (low~max)" />
+        {dirty && <Button small onClick={() => onSave({ model: model.trim() || null, effort: effort.trim() || null })}>저장</Button>}
+      </Row>
+    </Stack>
+  );
+}
+
+function ModelsCard() {
+  const { data, reload } = useLoad<Config>("/config");
+  const roles = useLoad<RoleInfo[]>("/roles");
+  const [err, setErr] = useState<string | null>(null);
+  if (!data || !roles.data) return null;
+  const patch = (p: unknown) =>
+    api
+      .patch("/config", p)
+      .then(() => {
+        setErr(null);
+        reload();
+        roles.reload();
+      })
+      .catch((e: unknown) => setErr(errorText(e)));
+  return (
+    <Card title="5. AI 역할과 모델 등급">
+      <Stack>
+        <Check checked={!!data.auto_fallback} onChange={(v) => void patch({ auto_fallback: v })}>
+          AI가 한도 초과·로그인 필요일 때 다른 AI로 저절로 넘어가기 (끄면 멈추고 물어봅니다 — 다른 AI 한도를 몰래 쓰지 않음)
+        </Check>
+        <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
+          작업마다 역할이 정해져 있고, 역할마다 등급(빠름·보통·깊이)을 씁니다. 오류가 자주 나는 역할만 등급을 올리세요.
+        </span>
+        <table className={tableClass}>
+          <thead>
+            <tr><th>역할</th><th>등급</th><th>맡는 작업</th></tr>
+          </thead>
+          <tbody>
+            {roles.data.map((r) => (
+              <tr key={r.name}>
+                <td>{r.title}</td>
+                <td>
+                  <Select value={r.tier} options={TIERS} onChange={(t) => void patch({ role_tiers: { [r.name]: t } })} />
+                  {r.tier !== r.default_tier && <Badge tone="warn">기본 {r.default_tier}</Badge>}
+                </td>
+                <td style={{ fontSize: 12, color: "var(--text-3)" }}>{r.tasks.join(", ")}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <table className={tableClass}>
+          <thead>
+            <tr><th>등급</th>{AGENTS.map((a) => <th key={a}>{a}</th>)}</tr>
+          </thead>
+          <tbody>
+            {TIERS.map((t) => (
+              <tr key={t.value}>
+                <td>{t.label}</td>
+                {AGENTS.map((a) => (
+                  <td key={a}>
+                    <TierCell value={data.tiers?.[a]?.[t.value]} onSave={(v) => void patch({ tiers: { [a]: { [t.value]: v } } })} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <ErrorBox error={err} />
+      </Stack>
+    </Card>
+  );
+}
+
 export function SetupPage({ status, onChanged }: { status: Status; onChanged: () => void }) {
   return (
     <Stack gap={16}>
@@ -393,6 +489,7 @@ export function SetupPage({ status, onChanged }: { status: Status; onChanged: ()
       <AgentsCard status={status} onChanged={onChanged} />
       <OptionsCard />
       <ScannerCard />
+      <ModelsCard />
     </Stack>
   );
 }

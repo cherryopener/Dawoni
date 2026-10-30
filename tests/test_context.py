@@ -186,7 +186,9 @@ def test_rule_store(tmp_path: Path) -> None:
 # ---------------------------------------------------------------- 엔진 + 수리 루프
 
 
-SIMPLE = TaskDef(name="simple", template="refine_rule.md.j2", output=_Out, rule_target="grade")
+SIMPLE = TaskDef(
+    name="simple", template="refine_rule.md.j2", output=_Out, rule_target="grade", role="grader"
+)
 VARS = TaskInput(variables={"request": "요구", "existing": [], "targets": {"grade": "채점"}})
 
 

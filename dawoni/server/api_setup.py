@@ -13,6 +13,7 @@ from dawoni.config import AGENT_NAMES, AgentName, AppConfig
 from dawoni.models.job import Job
 from dawoni.models.source import WorkspaceMode
 from dawoni.ocr.pages import PageError
+from dawoni.roles import ROLES
 from dawoni.server import files
 from dawoni.server.jobs import JobContext
 from dawoni.server.state import AppState, NeedsSetup
@@ -118,6 +119,25 @@ def test_agent(name: AgentName, body: AgentTestBody, st: AppState = State) -> Jo
 
 
 # ---------------------------------------------------------------- 설정
+
+
+@router.get("/roles")
+def roles(st: AppState = State) -> list[dict[str, Any]]:
+    """AI 역할마다 기본 등급·지금 등급·맡는 작업 (설정 화면용)."""
+    cfg = st.config()
+    return [
+        {
+            "name": r.name,
+            "title": r.title,
+            "default_tier": r.tier,
+            "tier": cfg.role_tiers.get(r.name, r.tier),
+            "tasks": list(r.tasks),
+            "max_repairs": r.max_repairs,
+            "timeout_s": r.timeout_s,
+            "budget_tokens": r.budget_tokens,
+        }
+        for r in ROLES.values()
+    ]
 
 
 def masked_config(cfg: AppConfig) -> dict[str, Any]:

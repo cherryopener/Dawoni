@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -18,6 +19,7 @@ from dawoni.agents.base import (
     AgentError,
     AgentErrorCode,
     AgentRequest,
+    AgentSwitchNeeded,
     classify_failure,
 )
 from dawoni.agents.claude import MAX_INLINE_SCHEMA_CHARS, ClaudeAdapter
@@ -215,9 +217,25 @@ def client(
     return make
 
 
-def test_fallback_on_quota(client: Callable[[str, str], client_mod.AgentClient]) -> None:
-    res = client("quota", "ok").run(AgentRequest(prompt="x"))
-    assert res.agent == "claude"
+def test_quota_stops_and_asks_by_default(
+    client: Callable[[str, str], client_mod.AgentClient],
+) -> None:
+    """2026-10-30: agy 한도가 끝나자 103건이 조용히 claude로 넘어갔다 — 기본은 멈추고 묻기."""
+    with pytest.raises(AgentSwitchNeeded) as ei:
+        client("quota", "ok").run(AgentRequest(prompt="x"))
+    assert ei.value.code == AgentErrorCode.QUOTA
+    assert ei.value.alternatives == ["claude"]
+    assert ei.value.user_message.startswith("agy 사용 한도 초과 — 다른 AI로 계속할지 정하세요")
+
+
+def test_fallback_on_quota_when_opted_in(
+    client: Callable[[str, str], client_mod.AgentClient],
+) -> None:
+    c = client("quota", "ok")
+    c.config.auto_fallback = True
+    assert c.run(AgentRequest(prompt="x")).agent == "claude"
+    c.config.auto_fallback = False
+    assert c.run(AgentRequest(prompt="x"), fallback=True).agent == "claude"
 
 
 def test_no_fallback_on_stall(client: Callable[[str, str], client_mod.AgentClient]) -> None:
@@ -235,8 +253,40 @@ def test_fallback_disabled(client: Callable[[str, str], client_mod.AgentClient])
 
 def test_all_unavailable(client: Callable[[str, str], client_mod.AgentClient]) -> None:
     with pytest.raises(AgentError) as ei:
-        client("quota", "auth").run(AgentRequest(prompt="x"))
+        client("quota", "auth").run(AgentRequest(prompt="x"), fallback=True)
     assert ei.value.code in (AgentErrorCode.NOT_LOGGED_IN, AgentErrorCode.NOT_INSTALLED)
+
+
+def test_tier_model_falls_back_to_agent_model() -> None:
+    cfg = AppConfig()
+    assert cfg.tier_model("agy", "fast").model == "gemini-3.8-flash-low"
+    assert cfg.tier_model("claude", "strong").effort == "high"
+    # 등급 칸이 없으면 AI 설정의 모델 (모델 이름을 짐작하지 않는다)
+    cfg.tiers["agy"].pop("strong")
+    assert cfg.tier_model("agy", "strong").model == "gemini-3.8-flash-medium"
+    cfg.agents["codex"].model = "my-codex"
+    assert cfg.tier_model("codex", "fast").model == "my-codex"
+    assert cfg.tier_model("codex", "fast").effort == "low"
+    assert cfg.tier_model("agy", None).model == "gemini-3.8-flash-medium"
+
+
+def test_old_config_gets_default_tiers() -> None:
+    cfg = AppConfig.model_validate({"default_agent": "claude", "agents": {}})
+    assert cfg.tiers["claude"]["standard"].model == "claude-sonnet-5-5"
+    assert cfg.auto_fallback is False
+
+
+def test_effort_flags(tmp_path: Path) -> None:
+    kw: dict[str, Any] = {
+        "model": "m", "schema_path": None, "schema": None, "attachments": [],
+        "timeout_s": 60, "workdir": tmp_path, "effort": "high",
+    }  # fmt: skip
+    argv = ClaudeAdapter().build(Path("c"), "p", **kw).argv
+    assert argv[argv.index("--effort") + 1] == "high"
+    assert 'model_reasoning_effort="high"' in CodexAdapter().build(Path("x"), "p", **kw).argv
+    assert "--effort" in AgyAdapter().build(Path("a"), "p", **kw).argv
+    kw["effort"] = None
+    assert "--effort" not in ClaudeAdapter().build(Path("c"), "p", **kw).argv
 
 
 # ---------------------------------------------------------------- 어댑터 단위

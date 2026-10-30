@@ -23,7 +23,7 @@ from pydantic import BaseModel, ValidationError
 from dawoni.agents import AgentClient, AgentError, AgentErrorCode, AgentRequest, AgentResult
 from dawoni.agents.base import as_dict
 from dawoni.agents.runner import ProgressCallback
-from dawoni.config import AgentName
+from dawoni.config import AgentName, TierName
 from dawoni.context.assembler import (
     AssembledPrompt,
     LayerInput,
@@ -35,6 +35,8 @@ from dawoni.context.extract import describe_validation_error, extract_json_objec
 from dawoni.context.rules import GlobalRule, RuleStore
 from dawoni.context.schema import agent_schema
 from dawoni.context.tasks import TaskDef
+from dawoni.roles import ROLES, Role, instructions
+from dawoni.roles import version as role_version
 
 log = logging.getLogger(__name__)
 
@@ -119,7 +121,8 @@ class TaskFailed(Exception):
 
 @dataclass(frozen=True)
 class _CallOptions:
-    fallback: bool
+    fallback: bool | None
+    tier: TierName
     keep_sandbox: bool
     on_progress: ProgressCallback | None
     cancel: threading.Event | None
@@ -159,10 +162,22 @@ class ContextEngine:
                 picked.setdefault(r.id, r)
         return list(picked.values())
 
+    def role(self, task: TaskDef[Any]) -> Role:
+        return ROLES[task.role]
+
+    def tier(self, task: TaskDef[Any]) -> TierName:
+        """역할의 등급 — 강사가 설정(`role_tiers`)에서 바꿨으면 그것."""
+        role = self.role(task)
+        return self.client.config.role_tiers.get(role.name, role.tier)
+
+    def budget(self, task: TaskDef[Any]) -> int:
+        return min(self.budget_tokens, self.role(task).budget_tokens)
+
     def preview(
         self, task: TaskDef[Any], inp: TaskInput, *, repair: str | None = None
     ) -> AssembledPrompt:
         """AI에게 보낼 프롬프트를 그대로 만들어 본다 (호출하지 않음)."""
+        role = self.role(task)
         return assemble(
             self.templates,
             task_template=task.template,
@@ -174,7 +189,8 @@ class ContextEngine:
             examples=inp.examples,
             target=inp.target,
             repair=repair,
-            budget_tokens=self.budget_tokens,
+            budget_tokens=self.budget(task),
+            role=(role.file, role_version(role.name), instructions(role.name)),
         )
 
     def _log(self, rec: CallRecord) -> None:
@@ -191,6 +207,7 @@ class ContextEngine:
             req,
             agent=agent,
             model=model,
+            tier=o.tier,
             fallback=o.fallback,
             keep_sandbox=o.keep_sandbox,
             on_progress=o.on_progress,
@@ -204,15 +221,19 @@ class ContextEngine:
         *,
         agent: AgentName | None = None,
         model: str | None = None,
-        fallback: bool = True,
+        fallback: bool | None = None,
         keep_sandbox: bool = False,
         on_progress: ProgressCallback | None = None,
         cancel: threading.Event | None = None,
     ) -> TaskResult[T]:
+        """`fallback`: None이면 설정(`auto_fallback`) — 기본은 다른 AI로 넘어가지 않고 멈춤."""
         schema = agent_schema(task.output)
         cancel = cancel or _CANCEL.get()
         on_progress = on_progress or _PROGRESS.get()
-        opts = _CallOptions(fallback, keep_sandbox, on_progress, cancel)
+        opts = _CallOptions(fallback, self.tier(task), keep_sandbox, on_progress, cancel)
+        role = self.role(task)
+        own = task.max_repairs if task.max_repairs is not None else role.max_repairs
+        max_repairs = min(self.max_repairs, own)
         errors: list[str] = []
         previous = ""
         total_tokens: int | None = None
@@ -222,7 +243,7 @@ class ContextEngine:
         attempts = 0
         transient_left = self.transient_retries
 
-        for attempt in range(1, self.max_repairs + 2):
+        for attempt in range(1, max_repairs + 2):
             attempts = attempt
             repair = None
             if errors:
@@ -230,12 +251,14 @@ class ContextEngine:
                     "repair.md.j2", attempt=attempt - 1, errors=errors, previous=_clip(previous)
                 )
                 if on_progress:
-                    on_progress(f"응답 수리 요청 ({attempt - 1}/{self.max_repairs})")
+                    on_progress(f"응답 수리 요청 ({attempt - 1}/{max_repairs})")
             prompt = self.preview(task, inp, repair=repair)
             rec = CallRecord(
                 task=task.name,
                 attempt=attempt,
                 ok=False,
+                role=role.name,
+                tier=opts.tier,
                 template_versions=prompt.template_versions,
                 rule_ids=prompt.rule_ids,
                 est_prompt_tokens=prompt.est_tokens,
@@ -246,7 +269,7 @@ class ContextEngine:
                 attachments=inp.attachments,
                 json_schema=schema,
                 task=task.name,
-                timeout_s=task.timeout_s,
+                timeout_s=task.timeout_s or role.timeout_s,
             )
             res: AgentResult
             try:

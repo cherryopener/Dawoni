@@ -40,6 +40,7 @@ class RefinedRule(DawoniModel):
 
 
 REFINE_RULE: TaskDef[RefinedRule] = TaskDef(
+    role="light_helper",
     name="refine_rule",
     template="refine_rule.md.j2",
     output=RefinedRule,

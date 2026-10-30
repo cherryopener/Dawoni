@@ -49,6 +49,7 @@ class ChapterExtraction(DawoniModel):
 
 
 EXTRACT_CONCEPTS: TaskDef[ChapterExtraction] = TaskDef(
+    role="concept_extractor",
     name="extract_concepts",
     template="extract_concepts.md.j2",
     output=ChapterExtraction,

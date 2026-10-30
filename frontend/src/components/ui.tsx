@@ -188,8 +188,35 @@ function elapsed(fromIso: string | null | undefined, now: number): string {
   return sec < 60 ? `${sec}초` : `${Math.floor(sec / 60)}분 ${sec % 60}초`;
 }
 
+/** AI를 쓸 수 없어 멈춘 작업: 다른 AI로 넘어갈지 강사가 고른다 (자동 전환은 기본 꺼짐). */
+function AgentStop({ alternatives }: { alternatives: string[] }) {
+  const [msg, setMsg] = useState<string | null>(null);
+  const patch = (body: Record<string, unknown>, done: string) =>
+    api
+      .patch("/config", body)
+      .then(() => setMsg(done))
+      .catch((e: unknown) => setMsg(errorText(e)));
+  return (
+    <div className={s.notice}>
+      <div className={s.row}>
+        <span>다른 AI로 계속할까요? 고른 뒤 같은 버튼을 다시 누르세요.</span>
+        {alternatives.map((a) => (
+          <Button key={a} small onClick={() => void patch({ default_agent: a }, `기본 AI를 ${a}(으)로 바꿨습니다.`)}>
+            {a}로 계속
+          </Button>
+        ))}
+        <Button small variant="ghost" onClick={() => void patch({ auto_fallback: true }, "앞으로는 한도 초과 때 다른 AI로 저절로 넘어갑니다.")}>
+          항상 자동 전환
+        </Button>
+      </div>
+      {msg && <div>{msg}</div>}
+    </div>
+  );
+}
+
 export function JobProgress({ job, onCancel }: { job: Job | null; onCancel?: () => void }) {
   const now = useNow(1000);
+  if (job?.status === "failed" && job.error?.alternatives?.length) return <AgentStop alternatives={job.error.alternatives} />;
   if (!job || ["succeeded", "failed", "cancelled"].includes(job.status)) return null;
   const { done, total, message } = job.progress;
   const pct = total ? Math.round((done / total) * 100) : null;

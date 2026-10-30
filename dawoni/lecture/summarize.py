@@ -46,10 +46,12 @@ def _noop(done: int, total: int, message: str) -> None:
 
 
 CHUNK: TaskDef[ChunkNotes] = TaskDef(
+    role="lecture_summarizer",
     name="lecture_chunk", template="lecture_chunk.md.j2", output=ChunkNotes,
     rule_target="lecture", timeout_s=600,
 )  # fmt: skip
 SUMMARY: TaskDef[SummaryDraft] = TaskDef(
+    role="lecture_summarizer",
     name="lecture_summary", template="lecture_summary.md.j2", output=SummaryDraft,
     rule_target="lecture", timeout_s=900,
 )  # fmt: skip

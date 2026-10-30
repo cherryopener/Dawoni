@@ -30,6 +30,7 @@ from dawoni.models.answer_key import AnswerKey, KeyExtraction, KeyPart, KeyQuest
 from dawoni.models.grading import Exam, ExamQuestion
 
 EXTRACT_KEY: TaskDef[KeyExtraction] = TaskDef(
+    role="key_reader",
     name="extract_answer_key",
     template="extract_answer_key.md.j2",
     output=KeyExtraction,

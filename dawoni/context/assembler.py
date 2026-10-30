@@ -1,6 +1,7 @@
 """프롬프트 조립: 정해진 레이어를 정해진 순서로.
 
-    [계약] → [과업] → [전역 규칙] → [풀이 범위] → [자료] → [기준 예시] → [대상] → [출력 형식]
+    [계약] → [역할] → [과업] → [전역 규칙] → [풀이 범위] → [자료] → [기준 예시] → [대상]
+    → [출력 형식]
 
 - 출력 형식(스키마)은 맨 끝에 둔다. 마지막에 읽은 지시를 가장 잘 따르기 때문.
 - 예산을 넘으면 줄일 수 있는 레이어(기준 예시 → 풀이 범위 → 자료)를 정해진 순서로 줄이고,
@@ -102,6 +103,7 @@ class AssembledPrompt:
 _SHRINK_ORDER = ("examples", "scope", "material")
 
 _HEADINGS = {
+    "role": "역할",
     "task": "과업",
     "rules": "반드시 지킬 전역 규칙 (강사 설정)",
     "scope": "풀이 범위",
@@ -137,11 +139,15 @@ def assemble(
     target: str | None = None,
     repair: str | None = None,
     budget_tokens: int,
+    role: tuple[str, str, str] | None = None,
 ) -> AssembledPrompt:
+    """`role`: (역할 지시서 파일 이름, 판, 본문) — 계약 다음, 과업 앞에 넣는다."""
     versions = {
         "contract.md.j2": templates.version("contract.md.j2"),
         task_template: templates.version(task_template),
     }
+    if role is not None:
+        versions[role[0]] = role[1]
     contract = templates.render("contract.md.j2")
     task = templates.render(task_template, **variables)
 
@@ -158,6 +164,7 @@ def assemble(
 
     def build() -> str:
         sections: list[tuple[str, str | None]] = [
+            ("role", role[2] if role else None),
             ("task", task),
             ("rules", render_rules(rules) if rules else None),
             ("scope", layer_text("scope")),

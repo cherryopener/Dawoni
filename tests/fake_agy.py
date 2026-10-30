@@ -63,6 +63,7 @@ def main() -> int:
         n = int(counter.read_text()) + 1 if counter.exists() else 1
         counter.write_text(str(n))
         (state / f"prompt_{n}.txt").write_text(content, encoding="utf-8")
+        (state / f"args_{n}.json").write_text(json.dumps(args), encoding="utf-8")
         script = json.loads(Path(os.environ["FAKE_SCRIPT"]).read_text(encoding="utf-8"))
         entry = script[min(n, len(script)) - 1]
         if entry.get("stall"):

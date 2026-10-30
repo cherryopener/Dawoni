@@ -46,6 +46,7 @@ class CodexAdapter:
         attachments: list[Path],
         timeout_s: float,
         workdir: Path,
+        effort: str | None = None,
     ) -> Invocation:
         argv = [
             str(exe),
@@ -61,6 +62,8 @@ class CodexAdapter:
         ]
         if model:
             argv += ["-m", model]
+        if effort:
+            argv += ["-c", f'model_reasoning_effort="{effort}"']
         if schema_path is not None:
             argv += ["--output-schema", str(schema_path)]
         for rel in attachments:

@@ -51,6 +51,8 @@ class RunOptions:
     idle_timeout_s: float
     keep_sandbox: bool = False
     """True면 성공해도 격리 폴더를 남긴다 (디버깅용). 실패 시에는 항상 남긴다."""
+    effort: str | None = None
+    """추론 깊이 (low~max). 지원하는 CLI만 쓴다."""
 
 
 def _spawn(argv: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Popen[bytes]:
@@ -162,6 +164,7 @@ def _run_in_sandbox(
         attachments=rels,
         timeout_s=options.timeout_s,
         workdir=sb.root,
+        effort=options.effort,
     )
     sb.log_path("stdin.txt").write_bytes(inv.stdin)
     sb.log_path("argv.txt").write_text("\n".join(inv.argv), encoding="utf-8")

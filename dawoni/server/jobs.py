@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import JsonValue
 
-from dawoni.agents import AgentError, AgentErrorCode
+from dawoni.agents import AgentError, AgentErrorCode, AgentSwitchNeeded
 from dawoni.context import TaskFailed, call_context
 from dawoni.models.base import utcnow
 from dawoni.models.job import Job, JobError, JobProgress
@@ -58,6 +58,13 @@ JobFn = Callable[[JobContext], dict[str, Any] | None]
 
 
 def describe_error(e: BaseException) -> JobError:
+    if isinstance(e, AgentSwitchNeeded):
+        return JobError(
+            code=e.code.value,
+            message=e.user_message,
+            detail=e.detail[:2000] or None,
+            alternatives=list(e.alternatives),
+        )
     if isinstance(e, AgentError):
         return JobError(code=e.code.value, message=e.user_message, detail=e.detail[:2000] or None)
     if isinstance(e, TaskFailed):

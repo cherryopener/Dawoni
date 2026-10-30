@@ -327,7 +327,7 @@ export type Job = {
   progress: { done: number; total: number; message: string };
   params: Record<string, unknown>;
   result: Record<string, unknown> | null;
-  error: { code: string; message: string; detail?: string | null } | null;
+  error: { code: string; message: string; detail?: string | null; alternatives?: string[] } | null;
   created_at: string;
   started_at?: string | null;
   finished_at?: string | null;

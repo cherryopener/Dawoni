@@ -37,10 +37,12 @@ class CompareResult(DawoniModel):
 
 
 SPEC_TASK: TaskDef[SpecDraft] = TaskDef(
+    role="figure_maker",
     name="figure_spec", template="figure_spec.md.j2", output=SpecDraft, rule_target="ingest",
     timeout_s=600,
 )  # fmt: skip
 COMPARE_TASK: TaskDef[CompareResult] = TaskDef(
+    role="figure_maker",
     name="figure_compare", template="figure_compare.md.j2", output=CompareResult,
     rule_target="ingest", timeout_s=600,
 )  # fmt: skip

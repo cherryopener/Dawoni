@@ -22,6 +22,8 @@ class CallRecord:
     task: str
     attempt: int
     ok: bool
+    role: str | None = None
+    tier: str | None = None
     agent: str | None = None
     model: str | None = None
     template_versions: dict[str, str] = field(default_factory=lambda: dict[str, str]())

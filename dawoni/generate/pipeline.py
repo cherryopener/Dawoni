@@ -46,7 +46,11 @@ from dawoni.models.scope import ExtensionConcept, ScopeProfile
 
 def _task[T: BaseModel](name: str, template: str, output: type[T]) -> TaskDef[T]:
     return TaskDef(
-        name=name, template=template, output=output, rule_target="variant", timeout_s=900
+        name=name,
+        template=template,
+        output=output,
+        rule_target="variant",
+        role="problem_maker",
     )
 
 

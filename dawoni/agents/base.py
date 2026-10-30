@@ -71,6 +71,31 @@ class AgentError(Exception):
         return _USER_MESSAGES[self.code]
 
 
+_STOP_REASONS: dict[AgentErrorCode, str] = {
+    AgentErrorCode.NOT_INSTALLED: "설치 안 됨",
+    AgentErrorCode.NOT_LOGGED_IN: "로그인 필요",
+    AgentErrorCode.QUOTA: "사용 한도 초과",
+}
+
+
+class AgentSwitchNeeded(AgentError):
+    """쓰려던 AI를 쓸 수 없고, 다른 AI로 넘어갈지는 강사가 정한다 (자동 전환 꺼짐).
+
+    `alternatives`: 켜져 있는 다른 AI (설치·로그인 여부는 넘어가 봐야 안다)."""
+
+    def __init__(self, cause: AgentError, alternatives: list[AgentName]) -> None:
+        self.alternatives = alternatives
+        super().__init__(cause.code, cause.detail, agent=cause.agent, sandbox=cause.sandbox)
+
+    @property
+    def user_message(self) -> str:
+        reason = _STOP_REASONS.get(self.code, "사용 불가")
+        head = f"{self.agent or 'AI'} {reason} — 다른 AI로 계속할지 정하세요"
+        if not self.alternatives:
+            return head + " (켜져 있는 다른 AI가 없습니다)"
+        return head + f" (켤 수 있는 AI: {', '.join(self.alternatives)})"
+
+
 @dataclass(frozen=True)
 class AgentRequest:
     prompt: str
@@ -154,6 +179,7 @@ class AgentAdapter(Protocol):
         attachments: list[Path],
         timeout_s: float,
         workdir: Path,
+        effort: str | None = None,
     ) -> Invocation: ...
 
     def parse_line(self, line: str) -> ParsedLine: ...

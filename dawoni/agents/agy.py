@@ -49,6 +49,7 @@ class AgyAdapter:
         attachments: list[Path],
         timeout_s: float,
         workdir: Path,
+        effort: str | None = None,
     ) -> Invocation:
         argv = [
             str(exe),
@@ -63,6 +64,8 @@ class AgyAdapter:
         ]
         if model:
             argv += ["--model", model]
+        if effort:
+            argv += ["--effort", effort]
         if schema_path is not None:
             argv += ["--json-schema", str(schema_path)]
         msg = {"event": "user", "message": {"content": prompt}}
