@@ -38,18 +38,28 @@ uv run dawoni ui                               # 앱 창 (macOS: pywebview, Wind
 uv run dawoni ingest exam 시험지.pdf --title 중간고사 --scope <범위ID>   # 해설 쪽은 자동으로 찾음 (--key-pages 6 | none)
 uv run dawoni exam key <시험ID> 해설지.pdf [--pages 6]                   # 해설지가 따로 있을 때
 uv run dawoni exam key-confirm <시험ID> --by 김선생                        # 해설지 판독을 원본과 비교한 뒤
-uv run dawoni exam solve <시험ID> && uv run dawoni exam rubric <시험ID>
-uv run dawoni exam show <시험ID> -q 3                                    # 해설지·AI 풀이·비교·정답 후보
+uv run dawoni exam rubric <시험ID>                                       # 해설지 넓히기 (AI 호출 문항당 1번)
+uv run dawoni exam rubric <시험ID> --ai-solve                            # AI 풀기 (해설지 검산): 풀이·비교·검토·검산
+uv run dawoni exam show <시험ID> -q 3                                    # 해설지·AI 풀이·비교·정답 후보·넓힌 표현
 uv run dawoni exam candidates <시험ID> -q 3                              # 후보를 정하기 전에: 학생 답이 어느 쪽인지 (판독 후)
-uv run dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1] [--reject A2]
+uv run dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1 E1] [--reject A2]
 ```
+
+- **기본은 해설지 넓히기** (2026-10-31): 해설지가 있는 문항은 루브릭 역할 호출 한 번(문항 + 그 문항의
+  해설지 + 짧은 범위, 2분, 수리 1번)으로 해설지의 정답·배점·부분 점수 논리를 그대로 펼친 루브릭을 만든다.
+  서술형 소문항은 해설지와 **같은 근거·같은 결론**의 다른 표현을 'AI가 넓힌 표현'(E1, E2 …)으로
+  제안한다 — 강사가 인정한 것만 채점 기준에 들어간다. 해설지와 값·결론이 다른 답은 넓히지 않는다.
+  AI 풀이·검토·검산 호출이 없어, 같은 2소문항 예제에서 호출 8번(프롬프트 약 1.5만 토큰) → 1번(약 0.27만).
+- 해설지에 오타가 걱정되면 화면의 **"AI 풀기 (해설지 검산)"**(`--ai-solve`): 아래의 예전 경로
+  (AI가 해설지를 보지 않고 먼저 풀기 → 비교 → 다른 세션 검토 → 독립 검산). 해설이 없으면 먼저 푼다.
+  해설지가 없는 문항은 언제나 예전 경로(먼저 "해설 만들기").
 
 - 시험지 PDF 뒤의 해설 쪽("부분 점수", "정답 및 해설" 표시)은 문항 영역에서 빼고 **해설지**로 읽는다:
   소문항마다 답·해설·부분 점수 표기(항목별 점수 / 없음 / 범위)·0점 조건.
 - 해설지는 새 세션에서 **두 번** 읽어 숫자를 비교하고, 다른 소문항은 '원본 확인'으로 표시한다
   (실측: 한글은 그대로 옮기면서 수식의 숫자를 바꿔 읽음). 강사가 원본과 비교해 확인·수정한다.
 - 문항의 소문항((1), (2), (1)① …)마다 배점과 유형(서술형/단답형)을 함께 저장한다.
-- AI는 해설지를 **보지 않고** 먼저 푼다 → 루브릭은 해설지의 정답·배점·부분 점수를 기준으로 만들고,
+- (AI 풀기) AI는 해설지를 **보지 않고** 먼저 푼다 → 루브릭은 해설지의 정답·배점·부분 점수를 기준으로 만들고,
   소문항마다 AI 답과 비교한다: 같음 / AI 오답(해설지 따름) / 다른 정답 후보 / 해설지·문제 의문.
   두 답이 다르면 **둘 다** 문제에 대입해 독립 검산한다 — 해설지 답이 검산을 통과하지 못하면 강사에게
   알린다 (실측: 해설지가 그림과 다른 기호로 답을 적은 경우).
@@ -62,6 +72,64 @@ uv run dawoni exam approve <시험ID> -q 3 --by 김선생 [--accept A1] [--rejec
   함께 본다 (`exam candidates`, 화면의 "학생 답과 비교"). AI에는 이름 대신 학생1, 학생2 …만 보내고,
   결론 문장은 판독문에서 그대로 인용해야 한다 — 인용이 판독문에 없으면 다시 시킨다
   (실측: 그냥 "채점해"라고 맡기면 학생의 "㉢이 밝다"를 해설지에 맞춰 "㉠이 밝다"로 고쳐 읽었다).
+
+## AI 역할과 모델 등급
+
+작업 흐름은 결정적인 파이썬(`ContextEngine` + 작업 흐름)이 정하고, AI 호출 하나하나는 **역할** 하나가
+맡는다. 역할 지시서는 `dawoni/roles/<역할>.md`(영어, 짧게 — 호출마다 60~150토큰)이고 계약 다음,
+과업 앞에 들어간다. 강사·학생이 읽는 출력은 계약에 따라 언제나 한국어(서술형, 부분 점수, ㄱㄴㄷ 그대로).
+등록부 `dawoni/roles/__init__.py`가 역할마다 등급·수리 횟수·시간·프롬프트 예산·그림 크기를 정하고,
+`calls.jsonl`에 역할·등급이 남는다 — 며칠 써 보고 오류가 쌓이는 역할만 등급을 올린다.
+
+| 역할 | 맡는 작업 | 등급 | 수리 | 예산(토큰) | 그림 긴 변 |
+|---|---|---|---|---|---|
+| 쪽 판독 page_reader | extract_questions | standard | 2 | 40k | 1568px |
+| 해설지 판독 key_reader | extract_answer_key | standard | 2 | 40k | 1568px |
+| 손글씨 판독 handwriting_reader | transcribe_answer | standard | 2 | 20k | 그대로 |
+| 표지 판독 cover_reader | read_cover | fast | 1 | 8k | 1568px |
+| 개념 추출 concept_extractor | extract_concepts | standard | 2 | 50k | — |
+| 루브릭 rubric_builder | expand_key_rubric(수리 1), derive/audit/suggest_rubric | standard | 2 | 30k | — |
+| 채점 grader | grade_answer | standard | 2 | 24k | — |
+| 풀이·검산 solver_verifier | solve_question, check_answer | strong | 2 | 16k | — |
+| 문제 만들기 problem_maker | gen_*, propose_extensions, draft_extension | strong | 2 | 24k | — |
+| 그림 figure_maker | figure_spec, figure_compare | standard | 2 | 12k | 1568px |
+| 강의 요약 lecture_summarizer | lecture_chunk, lecture_summary | fast | 2 | 40k | — |
+| 가벼운 도우미 light_helper | match_candidates, refine_rule | fast | 1 | 24k | — |
+
+- **예산**은 글자로 된 프롬프트의 추정치(이미지 제외). 실제 기록(`calls.jsonl`)에서 가장 큰 것은 해설지
+  판독 약 1만, 쪽 판독 0.6만, 강의 0.8만, 채점 0.27만 — 넘치면 줄일 수 있는 레이어(기준 예시 → 범위 →
+  자료)부터 줄이고 그래도 넘치면 멈춘다(조용히 자르지 않음). 호출 하나의 전체 토큰은 2만~15만이라
+  **그림과 생각**이 대부분이다 → 호출 수를 줄이고(해설지 넓히기, 미리 맞추기) 그림을 줄이는 쪽이 효과가 크다.
+- 역할마다 보내는 것: 그 문항과 그 문항의 해설지만(시험 전체를 다시 보내지 않음), 해설지 넓히기는 범위의
+  짧은 판본(이름만), 인정 안 된 넓힌 표현·정답 후보는 채점 기준에 넣지 않음, 학생 답 비교는 정해지지 않은
+  학생만.
+- **등급 → 모델**은 설정(`config.json`의 `tiers`, 화면 "연결 · 설정 → 5. AI 역할과 모델 등급")에서 고친다.
+  칸이 비면 그 AI 설정의 모델을 쓴다(모델 이름을 짐작하지 않음). 역할 등급 바꾸기는 `role_tiers`.
+
+  | 등급 | agy (Gemini) | claude | codex |
+  |---|---|---|---|
+  | fast | gemini-3.8-flash-low | claude-haiku-5-5 | effort low |
+  | standard | gemini-3.8-flash-medium | claude-sonnet-5-5, effort medium | effort medium |
+  | strong | gemini-3.8-flash-high | claude-sonnet-5-5, effort high | effort high |
+
+  agy 이름은 `agy models` 목록(2026-10-31)에서 골랐다. 더 높은 것(gemini-4-argon-high, claude-opus-5-5)은
+  한도를 빨리 써서 기본으로 두지 않았다. claude·agy는 `--effort`, codex는 `-c model_reasoning_effort=…`.
+- **다른 AI로 저절로 넘어가지 않는다**: 한도 초과·로그인 필요·미설치면 "agy 사용 한도 초과 — 다른 AI로
+  계속할지 정하세요"로 멈추고, 화면에 "claude로 계속"(기본 AI 바꾸기)·"항상 자동 전환" 단추가 뜬다.
+  2026-10-30에 agy 한도가 끝나자 호출 103건(약 340만 토큰)이 조용히 claude로 넘어가 claude 주간 한도까지
+  다 쓴 일이 계기. 자동 전환은 설정 `auto_fallback`.
+- **토큰 줄이는 무료 도구**
+  - 그림 줄이기(Pillow, 이미 있음): 역할별 긴 변 상한, JPEG가 PNG의 70%보다 작을 때만 JPEG. 실측(실제 자료,
+    AI 없음): 해설지 쪽 170dpi 1405×1989 → 1108×1568, 스캔 쪽 2866×2024 → 1568×1107, 시험지 쪽
+    1821×2635 → 1084×1568. claude는 어차피 1568px로 줄여 보므로 손실 없음. Gemini는 768px 타일 수로 추정하면
+    시험지·스캔 쪽 12 → 6타일(약 3,100 → 1,550토큰), 해설지 쪽은 원래 6타일이라 그대로. 스캔 파일 718KB →
+    182KB(JPEG). 손글씨는 작은 계수를 잘못 읽은
+    사례("5h"→"h")가 있어 줄이지 않는다.
+  - 학생 답 미리 맞추기(`rapidfuzz`): 결론 줄에 해설지 답·후보 중 **하나만** 그대로 있으면(글이 같음 /
+    값이 같고 좌변도 같음 / 숫자 없는 긴 글은 95점 이상) AI 없이 정하고, 남은 학생만 AI에 보낸다.
+  - 무료 로컬 OCR(선택, `uv sync --extra local-ocr`): RapidOCR로 스캔 시험지·교재 PDF에 보이지 않는
+    글자 층을 입혀 디지털 PDF와 같은 길로 읽는다. onnxruntime이 아직 Python 3.14용까지만 있어 3.15에서는
+    설치되지 않는다 — 없으면 스캔 PDF는 예전처럼 거절(설치 안내 포함).
 
 ## 여러 학생 답안지 한 번에 (스캔 PDF)
 
