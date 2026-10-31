@@ -56,6 +56,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="Dawoni",
+    icon=str(ROOT / "packaging" / "icon.ico"),  # Windows exe (macOS는 BUNDLE의 icns)
     console=sys.platform == "win32",
     upx=False,
     argv_emulation=False,
@@ -66,6 +67,7 @@ if sys.platform == "darwin":
     app = BUNDLE(
         coll,
         name="Dawoni.app",
+        icon=str(ROOT / "packaging" / "icon.icns"),
         bundle_identifier="com.cherryopener.dawoni",
         info_plist={
             "CFBundleDisplayName": "다워니",

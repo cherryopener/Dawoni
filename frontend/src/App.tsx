@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import s from "./App.module.css";
+import logoMark from "./assets/logo-mark.png";
 import { Badge, Button, JobProgress } from "./components/ui";
 import { api, onJobsChanged } from "./lib/api";
 import { go, useRoute } from "./lib/router";
@@ -129,8 +130,11 @@ export function App() {
     <div className={s.shell}>
       <aside className={s.side}>
         <div className={s.brand}>
-          다워니
-          <small>강사 기준 서술형 채점</small>
+          <img src={logoMark} alt="" />
+          <div className={s.brandName}>
+            다워니
+            <small>다원교육 · 서술형 채점</small>
+          </div>
         </div>
         {NAV.map((n) => (
           <button

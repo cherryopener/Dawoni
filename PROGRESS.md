@@ -173,7 +173,8 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
   - `.github/workflows/build.yml` 직접 실행 또는 `v*` 태그: 화면 빌드 → 테스트(Windows는 실패해도 계속) → 묶기 → 스모크 → `Dawoni-mac-arm64.dmg`·`Dawoni-windows-x64.zip`, 태그면 Release(사전 배포)
   - 묶다가 발견·수정: 창 모드 앱엔 `sys.stdout`이 없어 실행기가 죽을 수 있음, Windows 폴더·저장 대화상자의 한글 경로가 PowerShell 출력(cp949)에서 깨질 수 있음 → UTF-8로 받기 + 대화상자용 PowerShell 창 숨김
   - 확인: macOS `Dawoni.app` 380MB, 실행 0.9초, 스모크 통과, 더블클릭으로 서버 응답(창은 사용자 확인)
-  - 남은 것: Windows 실행 확인(창·폴더 고르기·AI CLI 감지 — npm `.cmd` 실행·Word 열기), 서명·공증 없음(첫 실행 안내 필요), Intel Mac용 빌드 없음, 앱 아이콘 없음
+  - 다원교육 로고(`packaging/logo.png`): `make_icons.py`가 오른쪽 위 ㄷㅇ 기호만 잘라 앱 아이콘(icns·ico, 흰 둥근 사각형)·화면 사이드바 기호·탭 아이콘을 만듦(결과는 커밋). 화면 색: 주 색 남색 `#243b97`(사이드바 `#18286b`), 주황 `#f47920`은 선택 메뉴 표시에만 — 경고(`--warn`)·Claude 태그가 이미 주황 계열이라
+  - 남은 것: Windows 실행 확인(창·폴더 고르기·AI CLI 감지 — npm `.cmd` 실행·Word 열기), 서명·공증 없음(첫 실행 안내 필요), Intel Mac용 빌드 없음
 
 ## 다음에 할 일 / 미뤄 둔 것
 
