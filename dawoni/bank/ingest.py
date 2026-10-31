@@ -571,7 +571,7 @@ def ingest_chunk(
         chunk = chunk.model_copy(
             update={"status": "failed" if missing or key_failed else "ingested", "machine": None,
                     "updated_at": utcnow(), "item_ids": sorted({*chunk.item_ids, *res.skipped}),
-                    "message": message}
+                    "key_failed_pages": key_failed, "message": message}
         )  # fmt: skip
         res.chunk = chunk
         _set_chunk(svc, source_id, chunk)

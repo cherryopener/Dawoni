@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from dawoni.bank import BankError
+from dawoni.bank import BankError, manual
 from dawoni.bank import ingest as bi
 from dawoni.bank.export import bank_exam, export_bank
 from dawoni.bank.store import BankStore, BankSummary
@@ -363,6 +363,81 @@ def bank_file(path: str, st: AppState = State) -> FileResponse:
     if not full.is_file():
         raise KeyError(f"파일 없음: {path}")
     return FileResponse(full)
+
+
+# ---------------------------------------------------------------- 직접 입력 (AI 없음)
+
+
+Box = tuple[float, float, float, float]
+
+
+@router.get("/bank/sources/{source_id}/page/{page}")
+def source_page(source_id: str, page: int, st: AppState = State) -> FileResponse:
+    """원본 쪽 이미지 (직접 입력·다시 자르기에서 원본을 보며)."""
+    return FileResponse(manual.page_image(st.services(), source_id, page))
+
+
+@router.get("/bank/sources/{source_id}/chunks/{index}/manual")
+def chunk_manual(source_id: str, index: int, st: AppState = State) -> manual.ChunkManual:
+    return manual.chunk_manual(st.services(), source_id, index)
+
+
+@router.get("/bank/sources/{source_id}/chunks/{index}/work-file")
+def chunk_work_file(source_id: str, index: int, path: str, st: AppState = State) -> FileResponse:
+    """구간 작업 폴더(이 PC의 앱 데이터)의 문항 영역 이미지·그림 크롭."""
+    svc = st.services()
+    full = files.inside(bi.work_dir(svc, source_id, index), path)
+    if full.suffix != ".png" or not full.is_file():
+        raise KeyError(f"파일 없음: {path}")
+    return FileResponse(full)
+
+
+class ManualBody(BaseModel):
+    draft: manual.ManualDraft
+    by: str | None = None
+
+
+@router.post("/bank/sources/{source_id}/chunks/{index}/manual")
+def save_manual(source_id: str, index: int, body: ManualBody, st: AppState = State) -> BankItem:
+    return manual.save_new(st.services(), source_id, index, body.draft, by=body.by)
+
+
+class CropBody(BaseModel):
+    page: int = Field(ge=1)
+    box: Box
+    number: str | None = None
+    """새 문항(구간 직접 입력)일 때 문항 번호."""
+
+
+@router.post("/bank/sources/{source_id}/chunks/{index}/crop")
+def crop_chunk(
+    source_id: str, index: int, body: CropBody, st: AppState = State
+) -> manual.DraftFigure:
+    if not body.number:
+        raise BankError("문항 번호가 필요합니다")
+    svc = st.services()
+    return manual.crop_new(svc, source_id, index, body.number, body.page, body.box)
+
+
+@router.get("/bank/items/{item_id}/manual")
+def item_manual(item_id: str, st: AppState = State) -> manual.ItemManual:
+    return manual.item_manual(st.services(), item_id)
+
+
+class ItemManualBody(ManualBody):
+    base_revision: int
+
+
+@router.put("/bank/items/{item_id}/manual")
+def save_item_manual(item_id: str, body: ItemManualBody, st: AppState = State) -> BankItem:
+    return manual.save_existing(
+        st.services(), item_id, body.draft, base_revision=body.base_revision, by=body.by
+    )
+
+
+@router.post("/bank/items/{item_id}/crop")
+def crop_item(item_id: str, body: CropBody, st: AppState = State) -> manual.DraftFigure:
+    return manual.crop_item(st.services(), item_id, body.page, body.box)
 
 
 # ---------------------------------------------------------------- 내보내기 · 시험으로

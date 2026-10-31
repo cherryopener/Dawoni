@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { FileActions } from "../components/FileActions";
 import { ItemView } from "../components/Item";
+import { ManualEditor } from "../components/ManualEditor";
 import { Loose, Tex } from "../components/Math";
 import { UnitTreeNav } from "../components/UnitTree";
 import {
@@ -24,7 +25,7 @@ import {
 } from "../components/ui";
 import { api, errorText, useLoad } from "../lib/api";
 import { go } from "../lib/router";
-import type { BankItem, BankSummary, ExportResult, Scope, ScopeSummary, UnitTree } from "../lib/types";
+import type { BankItem, BankSummary, ExportResult, ItemManual, Scope, ScopeSummary, UnitTree } from "../lib/types";
 import { bankFileUrl, SOURCE_KIND } from "../lib/bank";
 import { descendants, resolve, unitCounts, unitLabel } from "../lib/units";
 import { SolveButton } from "../components/SolveButton";
@@ -70,7 +71,7 @@ export function BankPage({ tab }: { tab?: string }) {
 
 // ---------------------------------------------------------------- 문항 목록
 
-type Status = "all" | "unsolved" | "check" | "ai" | "unreviewed" | "reviewed";
+type Status = "all" | "unsolved" | "check" | "noted" | "ai" | "unreviewed" | "reviewed";
 
 export function useBank() {
   const trees = useLoad<UnitTree[]>("/units");
@@ -101,6 +102,7 @@ export function BankBrowser({ trees, items, picked, onPick, selected, onSelect }
       if (itype !== "all" && i.item_type !== itype) return false;
       if (status === "unsolved" && i.solved) return false;
       if (status === "check" && !i.needs_check) return false;
+      if (status === "noted" && !i.noted) return false;
       if (status === "ai" && i.solution_by !== "ai") return false;
       if (status === "unreviewed" && i.reviewed) return false;
       if (status === "reviewed" && !i.reviewed) return false;
@@ -134,6 +136,7 @@ export function BankBrowser({ trees, items, picked, onPick, selected, onSelect }
             { value: "all", label: "상태 전체" },
             { value: "unsolved", label: "풀이 없음" },
             { value: "check", label: "답 확인 필요" },
+            { value: "noted", label: "원본과 비교 필요" },
             { value: "ai", label: "AI 해설" },
             { value: "unreviewed", label: "검토 전" },
             { value: "reviewed", label: "검토함" },
@@ -190,6 +193,7 @@ export function BankBrowser({ trees, items, picked, onPick, selected, onSelect }
                     {i.solution_by === "ai" && <Badge>AI 해설</Badge>}
                     {i.origin !== "ingested" && <Badge tone="ok">{i.origin === "variant" ? "동형" : "새 문제"}</Badge>}
                     {i.reviewed && <Badge tone="ok">검토함</Badge>}
+                    {i.noted && <Badge tone="warn" title="DB화 때 PDF 글자로 확인하지 못한 부분이 있습니다">원본과 비교</Badge>}
                   </Row>
                 </div>
               </div>
@@ -332,6 +336,12 @@ export function ItemDetail({ id, trees, onClose, onChanged }: {
   );
   const [err, setErr] = useState<string | null>(null);
   const [editUnits, setEditUnits] = useState(false);
+  const [manual, setManual] = useState<ItemManual | null>(null);
+  const openManual = () => {
+    setErr(null);
+    api.get<ItemManual>(`/bank/items/${encodeURIComponent(id)}/manual`).then(setManual)
+      .catch((e: unknown) => setErr(errorText(e)));
+  };
   const save = (patch: Partial<BankItem>) => {
     if (!data) return;
     setErr(null);
@@ -359,7 +369,10 @@ export function ItemDetail({ id, trees, onClose, onChanged }: {
   const it = data?.item;
   return (
     <Modal wide title={it ? it.source.title : "문항"} onClose={onClose}
-           actions={it && <Button small onClick={() => go("make", "variant", it.id)}>이 문제로 동형 만들기</Button>}>
+           actions={it && <>
+             <Button small onClick={openManual} title="원본 쪽을 보며 본문·그림·정답을 고칩니다 (AI 없음)">원본과 비교해 고치기</Button>
+             <Button small onClick={() => go("make", "variant", it.id)}>이 문제로 동형 만들기</Button>
+           </>}>
       <ErrorBox error={error ?? err} />
       {!it ? <Loading /> : (
         <Stack gap={14}>
@@ -371,8 +384,16 @@ export function ItemDetail({ id, trees, onClose, onChanged }: {
               {it.updated_by && it.updated_by !== it.created_by && ` · 고친 사람 ${it.updated_by}`}
             </span>
           </Row>
+          {it.note && (
+            <Notice>{it.note.split("\n").map((l, k) => <div key={k}>{l}</div>)}</Notice>
+          )}
           <ItemView number={it.question.number} points={it.question.points} item={it.question.item}
                     examId="" fileUrl={bankFileUrl} />
+          {manual && (
+            <ManualEditor target={{ kind: "item", itemId: it.id, m: manual, revision: it.revision }}
+                          onClose={() => setManual(null)}
+                          onSaved={() => { setManual(null); reload(); onChanged(); }} />
+          )}
 
           <Card title="단원" actions={<Button small variant="ghost" onClick={() => setEditUnits(!editUnits)}>
             {editUnits ? "닫기" : "고치기"}</Button>}>

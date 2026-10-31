@@ -24,6 +24,7 @@ import { SOURCE_KIND } from "../../lib/bank";
 import { pagesText, parsePages } from "../../lib/pages";
 import { ChapterTable } from "./Chapters";
 import { SolveButton } from "../../components/SolveButton";
+import { ChunkManualButton } from "../../components/ChunkManual";
 
 const KIND_OPTIONS = (["problem_bank", "mock_exam", "textbook"] as BankSourceKind[]).map((k) => ({
   value: k, label: SOURCE_KIND[k] ?? k,
@@ -211,6 +212,7 @@ function ChunkRow({ src, c, trees, solve, onChanged }: {
         <Button small variant={c.status === "ingested" ? "default" : "primary"} onClick={start} disabled={job.running}>
           {c.status === "ingested" ? "다시 (빠진 문항만)" : c.status === "failed" ? "다시 DB화" : "DB화"}
         </Button>
+        <ChunkManualButton sourceId={src.source_id} c={c} onChanged={onChanged} />
         {c.item_ids.length > 0 && (
           <SolveButton ids={[]} url={`/bank/sources/${src.source_id}/chunks/${c.index}/solve`}
                        label={`이 구간 풀이 만들기 (${c.item_ids.length}문항 중 없는 것)`} onDone={onChanged} />

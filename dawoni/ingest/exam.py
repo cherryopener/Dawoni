@@ -100,9 +100,11 @@ class IngestResult:
     """문항 번호 → 강사가 원본과 비교할 것 (PDF 글자로 확인하지 못한 본문)."""
 
 
-def prepare_regions(layout: DocumentLayout, out_dir: Path) -> list[PreparedRegion]:
+def prepare_regions(
+    layout: DocumentLayout, out_dir: Path, regions: list[Region] | None = None
+) -> list[PreparedRegion]:
     out: list[PreparedRegion] = []
-    for r in layout.regions:
+    for r in layout.regions if regions is None else regions:
         d = out_dir / safe_name(r.label)
         d.mkdir(parents=True, exist_ok=True)
         images = [

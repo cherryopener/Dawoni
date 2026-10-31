@@ -573,6 +573,7 @@ export type BankSummary = {
   solved: boolean;
   needs_check: boolean;
   reviewed: boolean;
+  noted?: boolean;
   difficulty: number | null;
   parent_id: string | null;
   preview: string;
@@ -624,6 +625,7 @@ export type SourceChunk = {
   concept_message?: string | null;
   scope_id?: string | null;
   item_ids: string[];
+  key_failed_pages?: number[];
   message?: string | null;
   by?: string | null;
   machine?: string | null;
@@ -643,4 +645,35 @@ export type BankSource = {
   chunks: SourceChunk[];
   ingest: { status: string; item_count: number; message?: string | null };
   added_at: string;
+};
+
+// ---------------------------------------------------------------- 직접 입력 (dawoni/bank/manual.py)
+
+export type DraftPart = ExamPart & { answer: string };
+export type ManualDraft = {
+  number: string;
+  item_type: ItemType;
+  points: number;
+  /** 한 줄 = 문단. 식은 \( \), `[그림 F1]` 줄은 그림, `[블록 k]`는 원래 문항의 보기·표 (고치지 않음). */
+  text: string;
+  choices: string[];
+  answer: string;
+  parts: DraftPart[];
+};
+export type DraftFigure = { id: string; path: string };
+export type ManualQuestion = {
+  number: string;
+  pages: number[];
+  draft: ManualDraft;
+  figures: DraftFigure[];
+  images: string[];
+  part_labels: string[];
+};
+export type ChunkManual = { questions: ManualQuestion[]; need_answer: string[]; key_failed_pages: number[] };
+export type ItemManual = {
+  draft: ManualDraft;
+  figures: DraftFigure[];
+  source_id: string | null;
+  pages: number[];
+  locked: string[];
 };

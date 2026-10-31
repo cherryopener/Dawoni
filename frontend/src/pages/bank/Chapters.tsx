@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ChunkManualButton } from "../../components/ChunkManual";
 import { SolveButton } from "../../components/SolveButton";
 import {
   Badge,
@@ -174,6 +175,7 @@ export function ChapterTable({ src, trees, onChanged }: { src: BankSource; trees
                           <Button small disabled={busy} onClick={() => run({ indexes: [c.index] })}>
                             {c.concept_status === "ingested" || c.status === "ingested" ? "다시 DB화" : "DB화"}
                           </Button>
+                          <ChunkManualButton sourceId={src.source_id} c={c} onChanged={onChanged} />
                           {c.item_ids.length > 0 && (
                             <SolveButton ids={[]} url={`/bank/sources/${src.source_id}/chunks/${c.index}/solve`}
                                          label="풀이 만들기" onDone={onChanged} />

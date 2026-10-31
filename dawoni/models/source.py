@@ -44,6 +44,9 @@ class SourceChunk(DawoniModel):
     concept_message: str | None = None
     scope_id: str | None = Field(default=None, description="교재: 이 챕터 개념의 범위 프로필")
     item_ids: list[str] = Field(default_factory=lambda: list[str]())
+    key_failed_pages: list[int] = Field(
+        default_factory=lambda: list[int](), description="지난 DB화에서 읽지 못한 해설 쪽"
+    )
     message: str | None = None
     by: str | None = None
     machine: str | None = Field(

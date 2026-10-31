@@ -1,0 +1,79 @@
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 18px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+}
+.left { position: sticky; top: 0; display: flex; flex-direction: column; gap: 8px; }
+.pageWrap {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: auto;
+  max-height: 72vh;
+  background: #fff;
+}
+.pageWrap img { display: block; width: 100%; height: auto; user-select: none; }
+.cropping { cursor: crosshair; }
+.cropBox {
+  position: absolute;
+  border: 2px solid var(--accent);
+  background: rgb(47 91 210 / 12%);
+  pointer-events: none;
+}
+.right { display: flex; flex-direction: column; gap: 12px; }
+.editor {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--panel);
+  color: var(--text);
+}
+.guide { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip {
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 12.5px;
+  cursor: pointer;
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.chip:hover { border-color: var(--accent); }
+.chip code { font-size: 11px; color: var(--text-3); }
+.figs { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.fig {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  font-size: 12.5px;
+}
+.figUsed { border-color: var(--accent); background: var(--accent-soft); }
+.fig img { max-width: 100%; max-height: 110px; object-fit: contain; background: #fff; }
+.preview {
+  border: 1px dashed var(--line-strong);
+  border-radius: 6px;
+  padding: 10px 14px;
+  line-height: 1.75;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.preview img { max-width: 70%; height: auto; display: block; margin: 0 auto; }
+.locked { color: var(--text-2); font-size: 13px; background: var(--panel-2); padding: 4px 8px; border-radius: 4px; }
+.partRow { display: grid; grid-template-columns: 70px 76px 110px minmax(0, 1fr) auto; gap: 6px; align-items: center; }
