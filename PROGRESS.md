@@ -166,7 +166,14 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
     (2) 해설의 답 모양이 문항 유형과 안 맞으면(객관식인데 선지 번호 없음) 같은 번호의 맞는 답이 있을 때만 버리고, 혼자면 남기고 메모
   - 직접 입력 (AI 없음, `dawoni/bank/manual.py`, 화면 `ManualEditor`): 실패한 문항은 원본 쪽을 보며 PDF 글자·레이아웃 크롭으로 미리 채운 초안을 고쳐 넣고, 있는 문항은 "원본과 비교해 고치기". 수식 안내, 그림 넣기·빼기·새로 자르기, 그림마다 소문항, 정답. 구간 상태는 빠진 문항·못 읽은 해설 쪽(`key_failed_pages`, 예전 구간은 메시지에서)으로 다시 계산. 목록 필터 "원본과 비교 필요"(`noted`). 실제 작업공간 사본으로 화면 확인: 기초물리학 5번(회로 7개) 입력·저장, 1번 고치기·자르기
   - 역할 지시서 8개에 실제 자료에서 본 실수를 2~3줄씩 (판독·채점·루브릭·해설지·쪽·표지·그림·검산, version `2026-10-31.2`). 실수를 본 적 없는 4개(개념·문제 만들기·강의 요약·가벼운 도우미)는 그대로
-- [ ] M11 패키징
+- [~] **M11 패키징** — macOS .app 로컬 확인 (2026-10-31), Windows exe는 GitHub Actions로 빌드해 강사가 직접 실행 확인 예정
+  - `packaging/dawoni.spec` PyInstaller(폴더형): `dawoni/` 패키지 데이터(역할·템플릿·화면 `web/`)를 같은 상대 경로로, pandoc은 pypandoc-binary 동봉, python-docx는 파일로(`docx/parts/../templates` 경로 때문), 로컬 OCR 제외. macOS는 창 모드 `Dawoni.app`, Windows는 콘솔 창 + Edge 앱 창
+  - `packaging/dawoni_app.py` 인자 없으면 `ui`, 있으면 `dawoni` 명령줄과 같음(`Dawoni.exe agent detect`). matplotlib 설정 폴더를 앱 데이터 `cache/matplotlib`로 고정(PyInstaller 훅이 실행마다 임시 폴더로 바꿔 폰트 캐시를 매번 다시 만듦)
+  - `packaging/smoke.py` 묶은 실행 파일로 판·AI 감지·그림·작업공간·범위·시험·Word(수식)·서버 화면 응답 확인 (AI 없음)
+  - `.github/workflows/build.yml` 직접 실행 또는 `v*` 태그: 화면 빌드 → 테스트(Windows는 실패해도 계속) → 묶기 → 스모크 → `Dawoni-mac-arm64.dmg`·`Dawoni-windows-x64.zip`, 태그면 Release(사전 배포)
+  - 묶다가 발견·수정: 창 모드 앱엔 `sys.stdout`이 없어 실행기가 죽을 수 있음, Windows 폴더·저장 대화상자의 한글 경로가 PowerShell 출력(cp949)에서 깨질 수 있음 → UTF-8로 받기 + 대화상자용 PowerShell 창 숨김
+  - 확인: macOS `Dawoni.app` 380MB, 실행 0.9초, 스모크 통과, 더블클릭으로 서버 응답(창은 사용자 확인)
+  - 남은 것: Windows 실행 확인(창·폴더 고르기·AI CLI 감지 — npm `.cmd` 실행·Word 열기), 서명·공증 없음(첫 실행 안내 필요), Intel Mac용 빌드 없음, 앱 아이콘 없음
 
 ## 다음에 할 일 / 미뤄 둔 것
 
@@ -214,6 +221,8 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 - agy가 `~/.gemini/GEMINI.md`를 실제로 읽는지 확인 (현재 빈 파일이라 영향 없음, detect가 비어 있지 않으면 경고)
 
 ## 작업 로그
+
+- 2026-10-31: M11 패키징 시작. 저장소를 공개로 바꿈(사용자 결정, Actions 무료 — 민감 자료는 Google Drive·`real_data/`(git 제외)에만 있음을 git 기록 전체에서 확인). 이 Mac에서는 Windows exe를 만들 수 없어 GitHub Actions로. 로컬 .app 스모크에서 python-docx 머리말 템플릿을 못 찾아 Word 출력이 죽는 것을 잡음(파일은 들어 있었으나 `docx/parts` 폴더가 없어 `..` 경로가 안 풀림).
 
 - 2026-10-31: 직접 입력 화면. 강사 제안 — 실패가 몇 문항뿐이면 AI를 다시 돌리기보다 사람이 넣는 게 빠르고, 회로 문항처럼 그림이 곧 문항이면 글보다 그림 확인이 중요. 실측(실제 작업공간 사본): 기초물리학 51쪽 F1이 오른쪽 단 (5)번 회로라 레이아웃 번호 순서 ≠ 읽는 순서 → 단·위치 순으로 정렬. 저장 한 번에 105쪽 레이아웃을 두 번 분석해 약 10초 → 구간 레이아웃 캐시로 즉시.
 

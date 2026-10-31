@@ -45,6 +45,22 @@ def reveal(path: Path) -> None:
         subprocess.run(["xdg-open", str(path.parent)], check=False)
 
 
+# Windows PowerShell 5.1은 콘솔 코드 페이지(cp949)로 내보낸다 → 한글 경로가 깨지지 않게 UTF-8로
+_PS_UTF8 = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+
+
+def _powershell(script: str) -> Path | None:
+    r = subprocess.run(
+        ["powershell", "-NoProfile", "-STA", "-Command", _PS_UTF8 + script],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return Path(r.stdout.strip()) if r.stdout.strip() else None
+
+
 def _ask_save_path(default_name: str) -> Path | None:
     """운영체제 저장 대화상자. 취소하면 None."""
     if sys.platform == "darwin":
@@ -60,13 +76,7 @@ def _ask_save_path(default_name: str) -> Path | None:
             "$d.Filter='Word 문서 (*.docx)|*.docx|모든 파일 (*.*)|*.*';"
             "if($d.ShowDialog() -eq 'OK'){Write-Output $d.FileName}"
         )
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-STA", "-Command", ps],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return Path(r.stdout.strip()) if r.stdout.strip() else None
+        return _powershell(ps)
     return None
 
 
@@ -82,13 +92,7 @@ def choose_folder() -> Path | None:
             "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
             "if($d.ShowDialog() -eq 'OK'){Write-Output $d.SelectedPath}"
         )
-        r = subprocess.run(
-            ["powershell", "-NoProfile", "-STA", "-Command", ps],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return Path(r.stdout.strip()) if r.stdout.strip() else None
+        return _powershell(ps)
     return None
 
 

@@ -59,8 +59,9 @@ def run_ui(
         uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
     )
     url = f"http://127.0.0.1:{port}/login?t={token}"
-    sys.stdout.write(f"다워니 화면 주소 (이 PC에서만): {url}\n")
-    sys.stdout.flush()
+    if sys.stdout is not None:  # 창 모드로 묶은 앱(.app)에는 stdout이 없다
+        sys.stdout.write(f"다워니 화면 주소 (이 PC에서만): {url}\n")
+        sys.stdout.flush()
 
     if not window:
         server.run()

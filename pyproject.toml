@@ -38,6 +38,9 @@ local-ocr = [
 ]
 
 [dependency-groups]
+build = [
+    "pyinstaller>=6.22.3",
+]
 dev = [
     "pytest>=8.4",
     "ruff>=0.14",
@@ -67,6 +70,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]
+"packaging/smoke.py" = ["T20"]  # 검사 결과를 그대로 출력
 "tests/test_ingest.py" = ["E501"]  # 한글 시험지 픽스처 데이터 (줄을 나누면 오히려 읽기 어려움)
 "tests/test_docx.py" = ["E501"]  # 같은 이유 (시험지 문항 픽스처)
 "tests/test_calibration.py" = ["E501"]  # 채점 응답 픽스처
