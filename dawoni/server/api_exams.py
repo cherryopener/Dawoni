@@ -36,7 +36,7 @@ from dawoni.models.grading import (
     TranscriptLine,
 )
 from dawoni.models.job import Job
-from dawoni.server import files
+from dawoni.server import files, learning
 from dawoni.server.api_content import save_upload, upload_dir
 from dawoni.server.api_setup import State
 from dawoni.server.jobs import JobContext
@@ -467,7 +467,7 @@ def get_transcript(exam_id: str, student: str, number: str, st: AppState = State
     }
 
 
-class TranscriptBody(BaseModel):
+class TranscriptBody(learning.LearnFields):
     lines: list[TranscriptLine]
     confirm: bool = False
     by: str | None = None
@@ -481,6 +481,7 @@ def put_transcript(
     t = store.transcript(student, number)
     if t is None:
         raise KeyError(f"{student} 문항 {number}: 판독문 없음")
+    before = t
     t = t.model_copy(
         update={
             "lines": body.lines,
@@ -489,6 +490,9 @@ def put_transcript(
         }
     )
     store.save_transcript(t)
+    if body.learn:
+        c = learning.transcript_correction(before, t, store.exam().title)
+        learning.from_edit(st, body, c, body.by)
     return t
 
 
@@ -584,7 +588,7 @@ def get_grade(exam_id: str, student: str, number: str, st: AppState = State) -> 
     }
 
 
-class ReviewBody(BaseModel):
+class ReviewBody(learning.LearnFields):
     awarded: dict[str, float] = Field(default_factory=lambda: dict[str, float]())
     item_notes: dict[str, str] = Field(default_factory=lambda: dict[str, str]())
     note: str | None = None
@@ -601,8 +605,12 @@ def confirm_grade(
     if g is None or r is None:
         raise KeyError(f"{student} 문항 {number}: 채점 결과 없음")
     notes = {k: v for k, v in body.item_notes.items() if v.strip()}
+    before = g
     g = teacher_review(g, r, body.awarded, note=body.note, by=body.by, item_notes=notes)
     store.save_grade(g)
+    if body.learn:
+        c = learning.grade_correction(before, g, r, store.exam().title)
+        learning.from_edit(st, body, c, body.by)
     return g
 
 
@@ -651,7 +659,7 @@ def scan_batch(exam_id: str, body: BatchScanBody, st: AppState = State) -> Job:
     return st.jobs.submit("scan_batch", run, {"exam": exam_id, "file": pdf.name})
 
 
-class PartReviewBody(BaseModel):
+class PartReviewBody(learning.LearnFields):
     part_scores: dict[str, float]
     part_notes: dict[str, str] = Field(default_factory=lambda: dict[str, str]())
     note: str | None = None
@@ -670,8 +678,12 @@ def confirm_grade_parts(
         raise KeyError(f"{student} 문항 {number}: 채점 결과 없음")
     q = store.exam().question(number)
     notes = {k: v for k, v in body.part_notes.items() if v.strip()}
+    before = g
     g = teacher_part_review(g, r, q, body.part_scores, part_notes=notes, note=body.note, by=body.by)
     store.save_grade(g)
+    if body.learn:
+        c = learning.grade_correction(before, g, r, store.exam().title)
+        learning.from_edit(st, body, c, body.by)
     return g
 
 

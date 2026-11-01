@@ -10,7 +10,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel
 
-from dawoni.context.learn import Correction, learn, propose
+from dawoni.context.learn import Correction
 from dawoni.context.memory import MemoryNote
 from dawoni.context.refine import RefinedRule, refine_rule
 from dawoni.context.rules import GlobalRule, RuleScope
@@ -20,6 +20,7 @@ from dawoni.grading.store import ScopeStore
 from dawoni.models.base import utcnow
 from dawoni.models.job import Job
 from dawoni.models.scope import ScopeProfile
+from dawoni.server import learning
 from dawoni.server.api_setup import State
 from dawoni.server.jobs import JobContext
 from dawoni.server.state import AppState
@@ -189,23 +190,11 @@ class LearnBody(BaseModel):
 @router.post("/learn")
 def learn_from(body: LearnBody, st: AppState = State) -> Job:
     """강사의 말·수정 → 메모리 또는 스킬 제안 (승인 전에는 적용되지 않음)."""
-    svc = st.services()
     c = Correction(
         note=body.note, before=body.before, after=body.after, target=body.target,
         situation=body.situation,
     )  # fmt: skip
-
-    def run(ctx: JobContext) -> dict[str, Any]:
-        ctx.progress(0, 1, "다음 작업에 쓸 것을 정리하는 중")
-        res = learn(svc.engine, c, rules=svc.rules, memory=svc.memory, skills=svc.skills)
-        saved = propose(res.value, c, memory=svc.memory, skills=svc.skills, by=body.by)
-        ctx.progress(1, 1, "제안 완료 — 승인하면 적용됩니다" if saved else "배울 것이 없었습니다")
-        return {
-            "lesson": res.value.model_dump(mode="json"),
-            "saved_id": saved.id if saved else None,
-        }
-
-    return st.jobs.submit("learn_lesson", run, {"note": body.note[:80]})
+    return learning.submit(st, c, body.by)
 
 
 # ---------------------------------------------------------------- 범위 프로필

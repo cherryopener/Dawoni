@@ -6,6 +6,7 @@ import {
   FIG_LINE, MATH_GUIDE, draftProblems, insertAt, lines, partsPerFigure, removeFigure, usedFigures,
 } from "../lib/manual";
 import type { DraftFigure, ItemManual, ItemType, ManualDraft, ManualQuestion } from "../lib/types";
+import { useLearn } from "./LearnToggle";
 import { Loose, Tex } from "./Math";
 import {
   Badge, Button, ErrorBox, Field, Info, Modal, NumberInput, Row, Select, Stack, TextInput, teacherName,
@@ -38,6 +39,7 @@ export function ManualEditor({ target, onSaved, onClose }: {
   const pages = target.kind === "new" ? target.q.pages : target.m.pages;
   const [d, setD] = useState<ManualDraft>(init.draft);
   const [figs, setFigs] = useState<DraftFigure[]>(init.figures);
+  const learn = useLearn();
   const [page, setPage] = useState(pages[0] ?? 1);
   const [cropping, setCropping] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -86,16 +88,19 @@ export function ManualEditor({ target, onSaved, onClose }: {
     const req = target.kind === "new"
       ? api.post(`/bank/sources/${target.sourceId}/chunks/${target.index}/manual`, { draft: d, by })
       : api.put(`/bank/items/${encodeURIComponent(target.itemId)}/manual`, {
-          draft: d, by, base_revision: target.revision,
+          draft: d, by, base_revision: target.revision, ...learn.fields,
         });
-    req.then(onSaved).catch((e: unknown) => setErr(errorText(e))).finally(() => setSaving(false));
+    req.then(() => { learn.saved(); onSaved(); }).catch((e: unknown) => setErr(errorText(e))).finally(() => setSaving(false));
   };
 
   return (
     <Modal wide onClose={onClose}
            title={<>{target.kind === "new" ? "직접 입력" : "원본과 비교해 고치기"} · {d.number}번</>}
-           actions={<Button variant="primary" disabled={saving || problems.length > 0} onClick={save}>
-             {saving ? "저장 중…" : "저장 (검토함)"}</Button>}>
+           actions={<>
+             {target.kind === "item" && learn.view}
+             <Button variant="primary" disabled={saving || problems.length > 0} onClick={save}>
+               {saving ? "저장 중…" : "저장 (검토함)"}</Button>
+           </>}>
       <div className={s.grid}>
         <div className={s.left}>
           <Row style={{ gap: 6 }}>

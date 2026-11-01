@@ -261,3 +261,83 @@ def test_learning_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path) 
 
     mem = c.get("/api/memory").json()
     assert mem["notes"] == [] and mem["limit"] > 0 and mem["usage"]["grade"] == 0
+
+
+# ---------------------------------------------------------------- 수정에서 배우기
+
+
+def test_diff_text_keeps_only_changed_parts() -> None:
+    from dawoni.context.learn import diff_text
+
+    before = {"stem": "다음을 구하시오", "choices": ["①", "②"], "id": "a", "orig": "x.png"}
+    after = {"stem": "다음을 구하시오", "choices": ["1)", "②"], "id": "b", "orig": "y.png"}
+    b, a = diff_text(before, after, ignore=("id", "orig"))
+    assert (b, a) == ("choices[0]: ①", "choices[0]: 1)")
+    assert diff_text({"x": 1}, {"x": 1}) == ("", "")
+    assert diff_text({}, {"note": "새로"}) == ("note: (없음)", "note: 새로")
+
+
+def test_grade_correction_shows_changed_items_with_criterion() -> None:
+    from test_grading import GRADE_A, approved_rubric
+
+    from dawoni.models.grading import GradeResult
+    from dawoni.server.learning import grade_correction
+
+    r = approved_rubric()
+    g = GradeResult.model_validate(
+        {**GRADE_A, "student_id": "A", "question_number": "1", "rubric_version": 1,
+         "total": 4, "max_points": 4}
+    )  # fmt: skip
+    after = g.model_copy(
+        update={
+            "judgements": [g.judgements[0], g.judgements[1].model_copy(update={"awarded": 1})],
+            "teacher_note": "결론 근거 부족",
+            "teacher_part_notes": {"(가)": "식만 있으면 1점"},
+        }
+    )
+    c = grade_correction(g, after, r, "1학기 중간")
+    assert c.target == "grade" and c.situation == "1학기 중간"
+    assert "R1" not in c.before and "R2 (2점, 기준: x=2일 때 최솟값 3을 제시): AI 2점" in c.before
+    assert c.after.startswith("R2") and "강사 1점" in c.after
+    assert c.note == "결론 근거 부족\n소문항 (가): 식만 있으면 1점"
+
+
+def test_transcript_edit_with_learn_submits_lesson(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path
+) -> None:
+    from test_grading import FIX
+
+    from dawoni.fsio import read_json
+
+    lesson = {
+        "kind": "memory", "reason": "판독 습관",
+        "memory": {"text": "'ㅅ' 모양 기호는 √로 읽는다.", "applies_to": ["transcribe"]},
+    }  # fmt: skip
+    exe = make_fake("script", script=[{"response": json.dumps(lesson, ensure_ascii=False)}])
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    save_config(app_paths, cfg)
+    c = _client(app_paths)
+    c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q1 = read_json(FIX / "questions.json")[:1]
+    exam = c.post("/api/exams", json={"title": "중간고사 물리", "scope_id": scope["id"],
+                                      "questions": q1}).json()  # fmt: skip
+    base = f"/api/exams/{exam['id']}"
+    t = c.post(f"{base}/students/A/answers", json={"question": "1", "text": "y=ㅅ2\n답 3"}).json()
+    lines = t["lines"]
+
+    # 바뀐 것 없이 저장: 배우기를 켜도 작업을 띄우지 않는다
+    path = f"{base}/students/A/transcripts/1"
+    c.put(path, json={"lines": lines, "learn": True})
+    assert not [j for j in c.get("/api/jobs").json() if j["kind"] == "learn_lesson"]
+
+    lines[0]["text"] = "y=√2"
+    c.put(path, json={"lines": lines, "learn": True, "learn_note": "ㅅ은 루트"})
+    job = next(j for j in c.get("/api/jobs").json() if j["kind"] == "learn_lesson")
+    assert _wait(c, job)["status"] == "succeeded"
+    prompt = fake_prompts(exe)[0]
+    assert "[AI가 낸 결과]\n[0].글: y=ㅅ2" in prompt and "[0].글: y=√2" in prompt
+    assert "ㅅ은 루트" in prompt and "중간고사 물리" in prompt
+    notes = c.get("/api/memory").json()["notes"]
+    assert len(notes) == 1 and notes[0]["proposed"] and notes[0]["applies_to"] == ["transcribe"]

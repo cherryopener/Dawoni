@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ItemView } from "../../components/Item";
+import { useLearn } from "../../components/LearnToggle";
 import { Loose, Tex } from "../../components/Math";
 import {
   Badge,
@@ -116,14 +117,16 @@ export function TranscriptModal({ examId, student, number, onClose, onSaved, onM
   const { data, error } = useLoad<TDetail>(path);
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const learn = useLearn();
   useEffect(() => {
     if (data) setLines(data.transcript.lines);
   }, [data]);
   const save = (confirm: boolean) => {
     setErr(null);
     api
-      .put(path, { lines, confirm, by: teacherName() || null })
+      .put(path, { lines, confirm, by: teacherName() || null, ...learn.fields })
       .then(() => {
+        learn.saved();
         onSaved();
         onClose();
       })
@@ -143,6 +146,7 @@ export function TranscriptModal({ examId, student, number, onClose, onSaved, onM
               직접 채점
             </Button>
           )}
+          {learn.view}
           <Button onClick={() => save(false)}>저장 (확인 전)</Button>
           <Button variant="primary" onClick={() => save(true)}>
             확인 완료 — 채점 가능

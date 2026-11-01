@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Literal
+from collections.abc import Iterable
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -67,6 +68,33 @@ class Correction:
     target: RuleTarget | None = None
     situation: str = ""
     """자료 파일 이름, 강의 제목·채널, 시험 이름 등 — 스킬의 상황 단어 후보."""
+
+
+def _leaves(node: Any, path: str, ignore: frozenset[str], out: dict[str, str]) -> None:
+    if isinstance(node, dict):
+        for k, v in node.items():  # pyright: ignore[reportUnknownVariableType]
+            if str(k) not in ignore:  # pyright: ignore[reportUnknownArgumentType]
+                _leaves(v, f"{path}.{k}" if path else str(k), ignore, out)  # pyright: ignore[reportUnknownArgumentType]
+    elif isinstance(node, list):
+        for i, v in enumerate(node):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
+            _leaves(v, f"{path}[{i}]", ignore, out)
+    elif node not in (None, "", [], {}):
+        out[path] = str(node)
+
+
+def diff_text(before: Any, after: Any, *, ignore: Iterable[str] = ()) -> tuple[str, str]:
+    """두 JSON 값에서 **바뀐 부분만** "경로: 값" 줄로 (배우기 요청을 짧게)."""
+    skip = frozenset(ignore)
+    b: dict[str, str] = {}
+    a: dict[str, str] = {}
+    _leaves(before, "", skip, b)
+    _leaves(after, "", skip, a)
+    changed = [k for k in dict.fromkeys([*b, *a]) if b.get(k) != a.get(k)]
+
+    def show(d: dict[str, str]) -> str:
+        return "\n".join(f"{k}: {d[k]}" if k in d else f"{k}: (없음)" for k in changed)
+
+    return show(b), show(a)
 
 
 def _clip(s: str) -> str:

@@ -18,13 +18,13 @@ from dawoni.bank.units import UnitStore, merge, parse_toc
 from dawoni.export.docx.documents import KeyOptions, PaperOptions
 from dawoni.export.docx.fonts import FontSpec
 from dawoni.grading.store import ExamStore, ScopeStore
-from dawoni.ingest.sources import all_sources, get_source, source_file
+from dawoni.ingest.sources import all_sources, get_source, source_file, source_situation
 from dawoni.models.answer_key import AnswerKey
 from dawoni.models.bank import BankItem
 from dawoni.models.job import Job
 from dawoni.models.source import Source, SourceChunk, SourceKind
 from dawoni.models.units import UnitTree
-from dawoni.server import files
+from dawoni.server import files, learning
 from dawoni.server.api_content import save_upload, upload_dir
 from dawoni.server.api_setup import State
 from dawoni.server.jobs import JobContext
@@ -424,15 +424,26 @@ def item_manual(item_id: str, st: AppState = State) -> manual.ItemManual:
     return manual.item_manual(st.services(), item_id)
 
 
-class ItemManualBody(ManualBody):
+class ItemManualBody(ManualBody, learning.LearnFields):
     base_revision: int
 
 
 @router.put("/bank/items/{item_id}/manual")
 def save_item_manual(item_id: str, body: ItemManualBody, st: AppState = State) -> BankItem:
-    return manual.save_existing(
-        st.services(), item_id, body.draft, base_revision=body.base_revision, by=body.by
+    svc = st.services()
+    before = _bank(st).get(item_id)
+    saved = manual.save_existing(
+        svc, item_id, body.draft, base_revision=body.base_revision, by=body.by
     )
+    if body.learn:
+        ref = before.source
+        try:
+            where = source_situation(get_source(svc.workspace, ref.source_id or ""))
+        except KeyError:  # 직접 만든 문항 등
+            where = (ref.title,)
+        c = learning.item_correction(before, saved, "\n".join(where))
+        learning.from_edit(st, body, c, body.by)
+    return saved
 
 
 @router.post("/bank/items/{item_id}/crop")

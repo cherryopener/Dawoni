@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { AiTag } from "../../components/AiTag";
 import { ItemView } from "../../components/Item";
+import { useLearn } from "../../components/LearnToggle";
 import { Loose, Tex } from "../../components/Math";
 import {
   Badge,
@@ -63,12 +64,16 @@ function PartScores({ path, q, r, g, onSaved }: {
   );
   const [notes, setNotes] = useState<Record<string, string>>(() => ({ ...(g.teacher_part_notes ?? {}) }));
   const [err, setErr] = useState<string | null>(null);
+  const learn = useLearn();
   if (!parts.length) return null;
   const save = () => {
     setErr(null);
     api
-      .put(`${path}/parts`, { part_scores: scores, part_notes: notes, by: teacherName() || null })
-      .then(onSaved)
+      .put(`${path}/parts`, { part_scores: scores, part_notes: notes, by: teacherName() || null, ...learn.fields })
+      .then(() => {
+        learn.saved();
+        onSaved();
+      })
       .catch((e: unknown) => setErr(errorText(e)));
   };
   return (
@@ -111,6 +116,7 @@ function PartScores({ path, q, r, g, onSaved }: {
         <Button small variant="primary" onClick={save}>
           소문항 점수로 확정
         </Button>
+        {learn.view}
       </Row>
       <ErrorBox error={err} />
     </details>
@@ -129,6 +135,7 @@ function GradeModal({ examId, row, onClose, onSaved }: {
   const [note, setNote] = useState("");
   const [itemNotes, setItemNotes] = useState<Record<string, string>>({});
   const [err, setErr] = useState<string | null>(null);
+  const learn = useLearn();
   useEffect(() => {
     if (!data) return;
     setAwarded(Object.fromEntries(data.grade.judgements.map((j) => [j.rubric_item_id, j.awarded])));
@@ -145,8 +152,9 @@ function GradeModal({ examId, row, onClose, onSaved }: {
   const save = () => {
     setErr(null);
     api
-      .put(path, { awarded, item_notes: itemNotes, note: note || null, by: teacherName() || null })
+      .put(path, { awarded, item_notes: itemNotes, note: note || null, by: teacherName() || null, ...learn.fields })
       .then(() => {
+        learn.saved();
         onSaved();
         onClose();
       })
@@ -162,6 +170,7 @@ function GradeModal({ examId, row, onClose, onSaved }: {
           <Badge tone="accent">
             {total} / {g.max_points}점
           </Badge>
+          {learn.view}
           <Button variant="primary" onClick={save}>
             이 점수로 확정
           </Button>
