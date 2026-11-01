@@ -32,9 +32,11 @@ from dawoni.context.assembler import (
 )
 from dawoni.context.calllog import CallLog, CallRecord
 from dawoni.context.extract import describe_validation_error, extract_json_object
+from dawoni.context.memory import MemoryNote, MemoryStore
 from dawoni.context.rules import GlobalRule, RuleStore
 from dawoni.context.schema import agent_schema
-from dawoni.context.tasks import TaskDef
+from dawoni.context.skills import Skill, SkillStore
+from dawoni.context.tasks import RuleTarget, TaskDef
 from dawoni.roles import ROLES, Role, instructions
 from dawoni.roles import version as role_version
 
@@ -48,6 +50,7 @@ _PREVIOUS_CLIP = 4_000
 
 _CANCEL: ContextVar[threading.Event | None] = ContextVar("dawoni_cancel", default=None)
 _PROGRESS: ContextVar[ProgressCallback | None] = ContextVar("dawoni_progress", default=None)
+_SITUATION: ContextVar[tuple[str, ...]] = ContextVar("dawoni_situation", default=())
 _MADE_BY: ContextVar[list[tuple[str, str | None]] | None] = ContextVar(
     "dawoni_made_by", default=None
 )
@@ -83,6 +86,18 @@ def call_context(
         _PROGRESS.reset(t2)
 
 
+@contextmanager
+def situation(*texts: str | None) -> Generator[None]:
+    """이 안의 `engine.run`에 지금 상황(자료 파일 이름, 강의 제목·채널, 시험 이름 등)을 알린다.
+
+    스킬의 상황 단어를 여기에 맞춰 본다. 겹쳐 쓰면 바깥 것과 합쳐진다."""
+    token = _SITUATION.set(_SITUATION.get() + tuple(t for t in texts if t))
+    try:
+        yield
+    finally:
+        _SITUATION.reset(token)
+
+
 @dataclass
 class TaskInput:
     variables: dict[str, Any] = field(default_factory=lambda: dict[str, Any]())
@@ -105,6 +120,8 @@ class TaskResult[T: BaseModel]:
     total_tokens: int | None
     duration_s: float
     warnings: list[str]
+    skill_ids: list[str] = field(default_factory=lambda: list[str]())
+    memory_ids: list[str] = field(default_factory=lambda: list[str]())
 
 
 class TaskFailed(Exception):
@@ -139,6 +156,8 @@ class ContextEngine:
         *,
         templates: TemplateStore | None = None,
         rules: RuleStore | None = None,
+        skills: SkillStore | None = None,
+        memory: MemoryStore | None = None,
         calllog: CallLog | None = None,
         budget_tokens: int = DEFAULT_BUDGET_TOKENS,
         max_repairs: int = 2,
@@ -147,20 +166,37 @@ class ContextEngine:
         self.client = client
         self.templates = templates or TemplateStore()
         self.rules = rules
+        self.skills = skills
+        self.memory = memory
         self.calllog = calllog
         self.budget_tokens = budget_tokens
         self.max_repairs = max_repairs
         self.transient_retries = transient_retries
 
+    @staticmethod
+    def _targets(task: TaskDef[Any]) -> tuple[RuleTarget, ...]:
+        t = task.rule_target
+        return () if t is None else (t,) if isinstance(t, str) else t
+
     def active_rules(self, task: TaskDef[Any]) -> list[GlobalRule]:
         if self.rules is None or task.rule_target is None:
             return []
-        targets = (task.rule_target,) if isinstance(task.rule_target, str) else task.rule_target
         picked: dict[str, GlobalRule] = {}
-        for target in targets:
+        for target in self._targets(task):
             for r in self.rules.active_for(target):
                 picked.setdefault(r.id, r)
         return list(picked.values())
+
+    def active_memory(self, task: TaskDef[Any]) -> list[MemoryNote]:
+        if self.memory is None or task.rule_target is None:
+            return []
+        return self.memory.active_for(self._targets(task))
+
+    def active_skills(self, task: TaskDef[Any]) -> list[Skill]:
+        """상황이 맞는 스킬만. 상황 단어가 안 맞는 스킬은 토큰을 한 글자도 쓰지 않는다."""
+        if self.skills is None or task.rule_target is None:
+            return []
+        return self.skills.active_for(self._targets(task), "\n".join(_SITUATION.get()))
 
     def role(self, task: TaskDef[Any]) -> Role:
         return ROLES[task.role]
@@ -184,6 +220,8 @@ class ContextEngine:
             variables=inp.variables,
             output_schema=agent_schema(task.output),
             rules=self.active_rules(task),
+            memory=self.active_memory(task),
+            skills=self.active_skills(task),
             scope=inp.scope,
             material=inp.material,
             examples=inp.examples,
@@ -261,6 +299,8 @@ class ContextEngine:
                 tier=opts.tier,
                 template_versions=prompt.template_versions,
                 rule_ids=prompt.rule_ids,
+                skill_ids=prompt.skill_ids,
+                memory_ids=prompt.memory_ids,
                 est_prompt_tokens=prompt.est_tokens,
             )
 
@@ -333,6 +373,8 @@ class ContextEngine:
                             total_tokens=total_tokens,
                             duration_s=duration,
                             warnings=warnings,
+                            skill_ids=prompt.skill_ids,
+                            memory_ids=prompt.memory_ids,
                         )
             rec.errors = errors
             self._log(rec)

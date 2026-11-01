@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from dawoni.context import situation
 from dawoni.grading.store import ExamStore, ScopeStore, safe_name
 from dawoni.ingest.layout import DocumentLayout, analyze, find_key_pages, page_count
 from dawoni.ingest.sources import find_source, register_source, update_source
@@ -131,10 +132,11 @@ def ingest_exam_pdf(
         layout = ocr
     src = register_source(svc.workspace, path, "exam", title=title)
     progress(1, steps, f"문항 {len(layout.regions)}개 구조화")
-    result = extract_exam(
-        svc.engine, layout, exam_dir / "ingest", subject=subject or scope.subject,
-        level=scope.level, workers=svc.config.parallel_questions,
-    )  # fmt: skip
+    with situation(path.name, title, subject or scope.subject):
+        result = extract_exam(
+            svc.engine, layout, exam_dir / "ingest", subject=subject or scope.subject,
+            level=scope.level, workers=svc.config.parallel_questions,
+        )  # fmt: skip
     for label, figs in result.figure_files.items():
         target = exam_dir / "figures" / safe_name(label)
         target.mkdir(parents=True, exist_ok=True)
@@ -151,10 +153,11 @@ def ingest_exam_pdf(
         from dawoni.ingest.answer_key import extract_answer_key
 
         progress(2, steps, f"해설지 {', '.join(map(str, key_pages))}쪽 읽기")
-        key = extract_answer_key(
-            svc.engine, path, key_pages, exam, exam_dir / "key_work", level=scope.level,
-            workers=svc.config.parallel_questions,
-        )  # fmt: skip
+        with situation(path.name, title, subject or scope.subject):
+            key = extract_answer_key(
+                svc.engine, path, key_pages, exam, exam_dir / "key_work", level=scope.level,
+                workers=svc.config.parallel_questions,
+            )  # fmt: skip
         for k in key.keys:
             store.save_key(k)
         out.keys = key.keys
@@ -184,7 +187,10 @@ def ingest_textbook_pdf(
 
     src = register_source(svc.workspace, path, "textbook", title=title)
     progress(0, 1, "교재에서 개념·기법 추출")
-    draft = extract_scope(svc.engine, path, title=title, level=level, subject=subject, pages=pages)
+    with situation(path.name, title, subject):
+        draft = extract_scope(
+            svc.engine, path, title=title, level=level, subject=subject, pages=pages
+        )
     if unit_ids:
         draft.scope = draft.scope.model_copy(update={"unit_ids": unit_ids})
     ScopeStore(svc.workspace).save(draft.scope)

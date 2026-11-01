@@ -27,10 +27,17 @@ from pathlib import Path
 from dawoni.bank import BankError
 from dawoni.bank.store import BankStore
 from dawoni.bank.units import UnitStore
+from dawoni.context import situation
 from dawoni.grading import checks
 from dawoni.grading.pipeline import SecondOpinion, _verify_answer, solve_question  # pyright: ignore[reportPrivateUsage]
 from dawoni.ingest.layout import analyze, find_key_pages, page_count
-from dawoni.ingest.sources import get_source, register_source, source_file, update_source
+from dawoni.ingest.sources import (
+    get_source,
+    register_source,
+    source_file,
+    source_situation,
+    update_source,
+)
 from dawoni.models.answer_key import KeyPart
 from dawoni.models.bank import (
     AnswerComparison,
@@ -479,9 +486,10 @@ def ingest_chunk(
         def page_progress(done: int, total: int, msg: str) -> None:
             progress(0, steps, f"문항 구조화 — {msg}")
 
-        extracted = extract_exam(svc.engine, layout, work, subject=subject, level=scope.level,
-                                 workers=workers, progress=page_progress, partial=True,
-                                 default_points=default_points(src))  # fmt: skip
+        with situation(*source_situation(src)):
+            extracted = extract_exam(svc.engine, layout, work, subject=subject,
+                                     level=scope.level, workers=workers, progress=page_progress,
+                                     partial=True, default_points=default_points(src))  # fmt: skip
         res = ChunkResult(chunk, warnings=list(extracted.warnings))
 
         keys: dict[str, list[KeyPart]] = {}
@@ -496,11 +504,12 @@ def ingest_chunk(
                 raise BankError(
                     f"구간 안에 같은 번호의 문항이 있습니다 — 단원별로 구간을 나누세요 ({e})"
                 ) from e
-            key = extract_answer_key(
-                svc.engine, pdf, chunk.key_pages, exam, work / "key", level=scope.level,
-                cross=False, ignore_other_numbers=True, workers=workers, partial=True,
-                pages_per_call=1,  # 실측: 수식 많은 3쪽을 한 번에 → 900초 초과
-            )  # fmt: skip
+            with situation(*source_situation(src)):
+                key = extract_answer_key(
+                    svc.engine, pdf, chunk.key_pages, exam, work / "key", level=scope.level,
+                    cross=False, ignore_other_numbers=True, workers=workers, partial=True,
+                    pages_per_call=1,  # 실측: 수식 많은 3쪽을 한 번에 → 900초 초과
+                )  # fmt: skip
             keys = {k.question_number: k.parts for k in key.keys}
             key_notes = key.notes
             key_failed_pages = key.failed_pages
@@ -549,7 +558,9 @@ def ingest_chunk(
                 note=_join_notes(extracted.notes.get(q.number), key_notes.get(q.number)),
             )  # fmt: skip
             if solve:
-                it = with_solution(it, *solve_bank_question(svc, q, scope, parts), mapping)
+                with situation(*source_situation(src)):
+                    solved = solve_bank_question(svc, q, scope, parts)
+                it = with_solution(it, *solved, mapping)
             it = bank.save(it, by=by)
             res.items.append(it)
             chunk = chunk.model_copy(update={"item_ids": [*chunk.item_ids, item_id]})
@@ -627,9 +638,10 @@ def ingest_concepts(
     try:
         progress(0, 1, f"{chunk.label or f'구간 {index}'} 개념 {len(chunk.concept_pages)}쪽 정리")
         subject = " · ".join(UnitStore(ws).get(t).subject for t in src.unit_trees) or None
-        draft = extract_scope(svc.engine, source_file(ws, src), title=title,
-                              level=chapter_level(svc, src), subject=subject,
-                              pages=chunk.concept_pages)  # fmt: skip
+        with situation(*source_situation(src)):
+            draft = extract_scope(svc.engine, source_file(ws, src), title=title,
+                                  level=chapter_level(svc, src), subject=subject,
+                                  pages=chunk.concept_pages)  # fmt: skip
         update: dict[str, object] = {"unit_ids": [chunk.unit_hint] if chunk.unit_hint else []}
         if chunk.scope_id:
             update["id"] = chunk.scope_id

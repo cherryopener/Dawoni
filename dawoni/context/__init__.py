@@ -8,17 +8,24 @@ from dawoni.context.engine import (
     TaskResult,
     call_context,
     made_by,
+    situation,
 )
+from dawoni.context.memory import MemoryNote, MemoryStore
 from dawoni.context.rules import GlobalRule, RuleStore
+from dawoni.context.skills import Skill, SkillStore
 from dawoni.context.tasks import RuleTarget, TaskDef
 
 __all__ = [
     "ContextBudgetError",
     "ContextEngine",
     "GlobalRule",
+    "MemoryNote",
+    "MemoryStore",
     "RuleStore",
     "RuleTarget",
     "Shrinkable",
+    "Skill",
+    "SkillStore",
     "TaskDef",
     "TaskFailed",
     "TaskInput",
@@ -26,4 +33,5 @@ __all__ = [
     "TemplateStore",
     "call_context",
     "made_by",
+    "situation",
 ]

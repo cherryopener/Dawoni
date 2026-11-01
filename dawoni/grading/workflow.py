@@ -7,13 +7,13 @@
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dawoni import sharing
 from dawoni.agents import AgentError, AgentErrorCode
-from dawoni.context import TaskFailed
+from dawoni.context import TaskFailed, situation
 from dawoni.grading import calibration
 from dawoni.grading.pipeline import (
     PipelineError,
@@ -59,12 +59,16 @@ def select_questions(exam: Exam, only: list[str] | None) -> list[ExamQuestion]:
 # ---------------------------------------------------------------- 해설·루브릭
 
 
-def _working(
-    svc: Services, store: ExamStore, task: str, q: str, by: str | None
-) -> contextlib.AbstractContextManager[None]:
-    return sharing.working_on(
-        svc.workspace, store.exam_id, task, q, sharing.machine_id(svc.paths), by
-    )
+@contextlib.contextmanager
+def _working(svc: Services, store: ExamStore, task: str, q: str, by: str | None) -> Generator[None]:
+    """다른 컴퓨터에 작업 중임을 알리고, 스킬에 시험 이름을 상황으로 알린다."""
+    with (
+        sharing.working_on(
+            svc.workspace, store.exam_id, task, q, sharing.machine_id(svc.paths), by
+        ),
+        situation(store.exam().title),
+    ):
+        yield
 
 
 def solve_questions(
@@ -447,16 +451,17 @@ def grade_exam(
         progress(k, len(todo), f"{t.student_id} 문항 {q.number} 채점")
         pick = calibration.pick_for(store, q.number, rubric, t) if use_examples else None
         try:
-            g = grade_answer(
-                svc.engine,
-                q,
-                rubric,
-                t,
-                scope,
-                double=double,
-                examples=pick.layer if pick else None,
-                example_students=pick.students if pick else None,
-            )
+            with situation(exam.title):
+                g = grade_answer(
+                    svc.engine,
+                    q,
+                    rubric,
+                    t,
+                    scope,
+                    double=double,
+                    examples=pick.layer if pick else None,
+                    example_students=pick.students if pick else None,
+                )
         except (AgentError, TaskFailed) as e:
             if isinstance(e, AgentError) and e.code == AgentErrorCode.CANCELLED:
                 raise

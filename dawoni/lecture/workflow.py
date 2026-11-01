@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
+from dawoni.context import situation
 from dawoni.export.docx.check import check_docx
 from dawoni.export.docx.export import ExportOutcome
 from dawoni.export.docx.fonts import FontSpec
@@ -92,10 +93,11 @@ def run_summary(
     progress(0, 1, "자막 가져오는 중")
     src = get_source(svc.workspace, url, refresh=refresh, loader=loader)
     scope = ScopeStore(svc.workspace).get(scope_id) if scope_id else None
-    run = summarize(
-        svc.engine, src, scope=scope, pages=pages, progress=progress,
-        note_cache=svc.workspace.lectures / src.video_id / "notes",
-    )  # fmt: skip
+    with situation(src.title, src.channel, src.url):
+        run = summarize(
+            svc.engine, src, scope=scope, pages=pages, progress=progress,
+            note_cache=svc.workspace.lectures / src.video_id / "notes",
+        )  # fmt: skip
     return LectureStore(svc.workspace).save(run.summary, run.notes)
 
 

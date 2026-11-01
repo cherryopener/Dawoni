@@ -10,6 +10,7 @@ import { ExamsPage } from "./pages/Exams";
 import { BankPage } from "./pages/Bank";
 import { LecturesPage } from "./pages/Lectures";
 import { MakePage } from "./pages/Make";
+import { LearningPage } from "./pages/Learning";
 import { RulesPage } from "./pages/Rules";
 import { ScopeEditPage, ScopesPage } from "./pages/Scopes";
 import { SetupPage } from "./pages/Setup";
@@ -84,6 +85,7 @@ const NAV: { key: string; label: string }[] = [
   { key: "scopes", label: "범위 프로필" },
   { key: "lectures", label: "강의 요약" },
   { key: "rules", label: "전역 규칙" },
+  { key: "learning", label: "메모리 · 스킬" },
   { key: "setup", label: "연결 · 설정" },
 ];
 
@@ -118,6 +120,7 @@ export function App() {
   let body;
   if (page === "setup") body = <SetupPage status={status} onChanged={loadStatus} />;
   else if (page === "rules") body = <RulesPage />;
+  else if (page === "learning") body = <LearningPage />;
   else if (page === "bank") body = <BankPage tab={route[1]} />;
   else if (page === "make") body = <MakePage tab={route[1]} itemId={route[2]} />;
   else if (page === "scopes" && route[1]) body = <ScopeEditPage id={route[1]} />;

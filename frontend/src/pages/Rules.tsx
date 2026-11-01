@@ -31,7 +31,7 @@ export const TARGET_LABELS: Record<RuleScope, string> = {
 };
 const TARGETS = Object.keys(TARGET_LABELS) as RuleScope[];
 
-function TargetPicker({ value, onChange }: { value: RuleScope[]; onChange: (v: RuleScope[]) => void }) {
+export function TargetPicker({ value, onChange }: { value: RuleScope[]; onChange: (v: RuleScope[]) => void }) {
   return (
     <Row>
       {TARGETS.map((t) => (

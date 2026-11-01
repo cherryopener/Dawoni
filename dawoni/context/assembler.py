@@ -1,7 +1,7 @@
 """프롬프트 조립: 정해진 레이어를 정해진 순서로.
 
-    [계약] → [역할] → [과업] → [전역 규칙] → [풀이 범위] → [자료] → [기준 예시] → [대상]
-    → [출력 형식]
+    [계약] → [역할] → [과업] → [전역 규칙] → [메모리] → [스킬] → [풀이 범위] → [자료]
+    → [기준 예시] → [대상] → [출력 형식]
 
 - 출력 형식(스키마)은 맨 끝에 둔다. 마지막에 읽은 지시를 가장 잘 따르기 때문.
 - 예산을 넘으면 줄일 수 있는 레이어(기준 예시 → 풀이 범위 → 자료)를 정해진 순서로 줄이고,
@@ -18,7 +18,9 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from dawoni.context.memory import MemoryNote
 from dawoni.context.rules import GlobalRule
+from dawoni.context.skills import Skill
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _VERSION = re.compile(r"\{#-?\s*version:\s*([\w.\-]+)")
@@ -95,6 +97,8 @@ class AssembledPrompt:
     template_versions: dict[str, str]
     rule_ids: list[str]
     est_tokens: int
+    skill_ids: list[str] = field(default_factory=lambda: list[str]())
+    memory_ids: list[str] = field(default_factory=lambda: list[str]())
     shrunk: list[str] = field(default_factory=lambda: list[str]())
     """예산 때문에 줄인 레이어 이름."""
 
@@ -106,6 +110,8 @@ _HEADINGS = {
     "role": "역할",
     "task": "과업",
     "rules": "반드시 지킬 전역 규칙 (강사 설정)",
+    "memory": "메모리 (이전 작업에서 강사에게 배운 것)",
+    "skills": "스킬 (이번 상황에 맞는 작업 방식 — 따를 것)",
     "scope": "풀이 범위",
     "material": "자료",
     "examples": "기준 예시",
@@ -116,6 +122,14 @@ _HEADINGS = {
 
 def render_rules(rules: list[GlobalRule]) -> str:
     return "\n".join(f"- [{r.title}] {r.text}" for r in rules)
+
+
+def render_memory(notes: list[MemoryNote]) -> str:
+    return "\n".join(f"- {n.text}" for n in notes)
+
+
+def render_skills(skills: list[Skill]) -> str:
+    return "\n\n".join(f"### {s.name}\n{s.body.strip()}" for s in skills)
 
 
 def render_output_section(schema: dict[str, Any]) -> str:
@@ -140,6 +154,8 @@ def assemble(
     repair: str | None = None,
     budget_tokens: int,
     role: tuple[str, str, str] | None = None,
+    memory: list[MemoryNote] | None = None,
+    skills: list[Skill] | None = None,
 ) -> AssembledPrompt:
     """`role`: (역할 지시서 파일 이름, 판, 본문) — 계약 다음, 과업 앞에 넣는다."""
     versions = {
@@ -167,6 +183,8 @@ def assemble(
             ("role", role[2] if role else None),
             ("task", task),
             ("rules", render_rules(rules) if rules else None),
+            ("memory", render_memory(memory) if memory else None),
+            ("skills", render_skills(skills) if skills else None),
             ("scope", layer_text("scope")),
             ("material", layer_text("material")),
             ("examples", layer_text("examples")),
@@ -203,5 +221,7 @@ def assemble(
         template_versions=versions,
         rule_ids=[r.id for r in rules],
         est_tokens=est,
+        skill_ids=[s.id for s in skills or []],
+        memory_ids=[n.id for n in memory or []],
         shrunk=shrunk,
     )

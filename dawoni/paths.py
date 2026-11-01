@@ -105,6 +105,16 @@ class WorkspacePaths:
         return self.root / "rules"
 
     @property
+    def skills(self) -> Path:
+        """스킬: 상황이 맞을 때만 꺼내 쓰는 작업 방식 (`<id>/SKILL.md`)."""
+        return self.root / "skills"
+
+    @property
+    def memory(self) -> Path:
+        """다워니가 강사에게 배운 짧은 메모."""
+        return self.root / "memory"
+
+    @property
     def exams(self) -> Path:
         return self.root / "exams"
 
@@ -139,6 +149,8 @@ class WorkspacePaths:
             self.rubrics,
             self.scopes,
             self.rules,
+            self.skills,
+            self.memory,
             self.exams,
             self.students,
             self.lectures,

@@ -56,6 +56,11 @@ def get_source(ws: WorkspacePaths, source_id: str) -> Source:
     return Source.model_validate(read_json(p))
 
 
+def source_situation(src: Source) -> tuple[str, ...]:
+    """스킬의 상황 단어를 맞춰 볼 자료 정보 (파일 이름·제목·출판사·과목)."""
+    return tuple(x for x in (src.filename, src.title, src.publisher, src.subject) if x)
+
+
 def all_sources(ws: WorkspacePaths) -> list[Source]:
     d = ws.sources / ".dawoni"
     if not d.is_dir():

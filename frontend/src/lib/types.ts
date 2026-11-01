@@ -381,6 +381,29 @@ export type GlobalRule = {
   applies_to: RuleScope[];
   request?: string | null;
 };
+export type MemoryNote = {
+  id: string;
+  text: string;
+  applies_to: RuleScope[];
+  enabled: boolean;
+  proposed: boolean;
+  replaces: string[];
+  origin: "learned" | "teacher";
+  request?: string | null;
+};
+export type MemoryList = { notes: MemoryNote[]; usage: Record<RuleTarget, number>; limit: number };
+export type AgentSkill = {
+  id: string;
+  name: string;
+  description: string;
+  applies_to: RuleScope[];
+  triggers: string[];
+  body: string;
+  enabled: boolean;
+  proposed: boolean;
+  revises: string | null;
+  request?: string | null;
+};
 export type RefinedRule = {
   title: string;
   text: string;

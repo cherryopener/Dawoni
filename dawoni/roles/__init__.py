@@ -88,7 +88,7 @@ ROLES: dict[RoleName, Role] = {
         Role("lecture_summarizer", "강의 요약", "fast", 2, 600, 40_000,
              ("lecture_chunk", "lecture_summary")),
         Role("light_helper", "가벼운 도우미", "fast", 1, 600, 24_000,
-             ("match_candidates", "refine_rule")),
+             ("match_candidates", "refine_rule", "learn_lesson")),
     )
 }  # fmt: skip
 

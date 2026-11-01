@@ -28,6 +28,8 @@ class CallRecord:
     model: str | None = None
     template_versions: dict[str, str] = field(default_factory=lambda: dict[str, str]())
     rule_ids: list[str] = field(default_factory=lambda: list[str]())
+    skill_ids: list[str] = field(default_factory=lambda: list[str]())
+    memory_ids: list[str] = field(default_factory=lambda: list[str]())
     est_prompt_tokens: int = 0
     total_tokens: int | None = None
     duration_s: float | None = None

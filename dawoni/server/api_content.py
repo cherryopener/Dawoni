@@ -1,4 +1,4 @@
-"""전역 규칙·범위 프로필 API."""
+"""전역 규칙·메모리·스킬·범위 프로필 API."""
 
 from __future__ import annotations
 
@@ -10,8 +10,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel
 
+from dawoni.context.learn import Correction, learn, propose
+from dawoni.context.memory import MemoryNote
 from dawoni.context.refine import RefinedRule, refine_rule
-from dawoni.context.rules import GlobalRule
+from dawoni.context.rules import GlobalRule, RuleScope
+from dawoni.context.skills import Skill
+from dawoni.context.tasks import RuleTarget
 from dawoni.grading.store import ScopeStore
 from dawoni.models.base import utcnow
 from dawoni.models.job import Job
@@ -94,6 +98,114 @@ def patch_rule(rule_id: str, body: RulePatch, st: AppState = State) -> GlobalRul
 @router.delete("/rules/{rule_id}")
 def delete_rule(rule_id: str, st: AppState = State) -> dict[str, bool]:
     return {"deleted": st.services().rules.delete(rule_id)}
+
+
+# ---------------------------------------------------------------- 메모리·스킬 (배우기)
+
+
+@router.get("/memory")
+def list_memory(st: AppState = State) -> dict[str, Any]:
+    store = st.services().memory
+    return {"notes": store.all(), "usage": store.usage(), "limit": store.limit}
+
+
+class MemoryPatch(BaseModel):
+    enabled: bool | None = None
+    text: str | None = None
+
+
+@router.patch("/memory/{note_id}")
+def patch_memory(note_id: str, body: MemoryPatch, st: AppState = State) -> MemoryNote:
+    store = st.services().memory
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    return store.save(MemoryNote.model_validate({**store.require(note_id).model_dump(), **update}))
+
+
+@router.post("/memory/{note_id}/approve")
+def approve_memory(note_id: str, st: AppState = State) -> MemoryNote:
+    return st.services().memory.approve(note_id)
+
+
+@router.delete("/memory/{note_id}")
+def delete_memory(note_id: str, st: AppState = State) -> dict[str, bool]:
+    return {"deleted": st.services().memory.delete(note_id)}
+
+
+@router.get("/skills")
+def list_skills(st: AppState = State) -> list[Skill]:
+    return st.services().skills.all()
+
+
+class SkillBody(BaseModel):
+    name: str
+    description: str
+    applies_to: list[RuleScope]
+    triggers: list[str] = []
+    body: str
+    by: str | None = None
+
+
+@router.post("/skills")
+def create_skill(body: SkillBody, st: AppState = State) -> Skill:
+    data = body.model_dump(exclude={"by"})
+    return st.services().skills.save(Skill.model_validate({**data, "created_by": body.by}))
+
+
+class SkillPatch(BaseModel):
+    enabled: bool | None = None
+    name: str | None = None
+    description: str | None = None
+    applies_to: list[RuleScope] | None = None
+    triggers: list[str] | None = None
+    body: str | None = None
+
+
+@router.patch("/skills/{skill_id}")
+def patch_skill(skill_id: str, body: SkillPatch, st: AppState = State) -> Skill:
+    store = st.services().skills
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    return store.save(Skill.model_validate({**store.require(skill_id).model_dump(), **update}))
+
+
+@router.post("/skills/{skill_id}/approve")
+def approve_skill(skill_id: str, st: AppState = State) -> Skill:
+    return st.services().skills.approve(skill_id)
+
+
+@router.delete("/skills/{skill_id}")
+def delete_skill(skill_id: str, st: AppState = State) -> dict[str, bool]:
+    return {"deleted": st.services().skills.delete(skill_id)}
+
+
+class LearnBody(BaseModel):
+    note: str = ""
+    before: str = ""
+    after: str = ""
+    target: RuleTarget | None = None
+    situation: str = ""
+    by: str | None = None
+
+
+@router.post("/learn")
+def learn_from(body: LearnBody, st: AppState = State) -> Job:
+    """강사의 말·수정 → 메모리 또는 스킬 제안 (승인 전에는 적용되지 않음)."""
+    svc = st.services()
+    c = Correction(
+        note=body.note, before=body.before, after=body.after, target=body.target,
+        situation=body.situation,
+    )  # fmt: skip
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        ctx.progress(0, 1, "다음 작업에 쓸 것을 정리하는 중")
+        res = learn(svc.engine, c, rules=svc.rules, memory=svc.memory, skills=svc.skills)
+        saved = propose(res.value, c, memory=svc.memory, skills=svc.skills, by=body.by)
+        ctx.progress(1, 1, "제안 완료 — 승인하면 적용됩니다" if saved else "배울 것이 없었습니다")
+        return {
+            "lesson": res.value.model_dump(mode="json"),
+            "saved_id": saved.id if saved else None,
+        }
+
+    return st.jobs.submit("learn_lesson", run, {"note": body.note[:80]})
 
 
 # ---------------------------------------------------------------- 범위 프로필

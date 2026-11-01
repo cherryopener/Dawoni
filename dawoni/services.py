@@ -7,7 +7,7 @@ from pathlib import Path
 
 from dawoni.agents import AgentClient
 from dawoni.config import AppConfig, load_config
-from dawoni.context import ContextEngine, RuleStore
+from dawoni.context import ContextEngine, MemoryStore, RuleStore, SkillStore
 from dawoni.context.calllog import CallLog
 from dawoni.logs import setup_logging
 from dawoni.paths import AppPaths, WorkspacePaths
@@ -21,6 +21,8 @@ class Services:
     workspace: WorkspacePaths
     rules: RuleStore
     engine: ContextEngine
+    skills: SkillStore
+    memory: MemoryStore
 
 
 def open_services(workspace: Path | None = None, *, paths: AppPaths | None = None) -> Services:
@@ -35,8 +37,20 @@ def open_services(workspace: Path | None = None, *, paths: AppPaths | None = Non
             "`dawoni workspace init <경로>` 후 --workspace로 지정하세요."
         )
     ws, _ = open_workspace(root.expanduser())
-    rules = RuleStore(ws.rules)
+    rules, skills, memory = RuleStore(ws.rules), SkillStore(ws.skills), MemoryStore(ws.memory)
     engine = ContextEngine(
-        AgentClient(config, paths), rules=rules, calllog=CallLog(paths.logs / "calls.jsonl")
+        AgentClient(config, paths),
+        rules=rules,
+        skills=skills,
+        memory=memory,
+        calllog=CallLog(paths.logs / "calls.jsonl"),
     )
-    return Services(paths=paths, config=config, workspace=ws, rules=rules, engine=engine)
+    return Services(
+        paths=paths,
+        config=config,
+        workspace=ws,
+        rules=rules,
+        engine=engine,
+        skills=skills,
+        memory=memory,
+    )
