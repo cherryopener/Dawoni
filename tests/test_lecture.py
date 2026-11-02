@@ -28,6 +28,7 @@ from dawoni.lecture.summarize import (
     chunks,
     estimate_lines,
     stamp,
+    summarize,
 )
 from dawoni.lecture.youtube import LectureError, canonical_url, video_id_of
 from dawoni.models.lecture import (
@@ -175,6 +176,7 @@ def env(
         cfg.agents["agy"].executable = str(exe)
         cfg.agents["claude"].enabled = False
         cfg.agents["codex"].enabled = False
+        cfg.parallel_questions = 1  # 가짜 AI 응답 순서를 고정
         ws = create_workspace(tmp_path / "ws")
         cfg.workspace = ws.root
         save_config(app_paths, cfg)
@@ -292,14 +294,51 @@ def test_rerun_reuses_finished_chunk_notes(env: Any) -> None:
     """긴 강의가 마지막 구간에서 실패해도, 다시 하면 끝난 구간은 AI를 부르지 않는다."""
     garbage = {"nope": 1}  # 스키마 위반 3번 → 실패
     svc, exe = env([notes(10, ["C1"]), garbage, garbage, garbage, notes(1250, ["C2"]), draft()])
-    from dawoni.context import TaskFailed
+    from dawoni.parallel import ParallelError
 
-    with pytest.raises(TaskFailed):
+    with pytest.raises(ParallelError, match="lecture_chunk_2"):
         lw.run_summary(svc, VID, scope_id=SCOPE_ID, loader=lambda _url: source(25))
     n = len(fake_prompts(exe))
     s = lw.run_summary(svc, VID, scope_id=SCOPE_ID, loader=lambda _url: source(25))
     assert len(fake_prompts(exe)) == n + 2, "1구간은 저장된 노트, 2구간 + 요약만 호출"
     assert s.covered == ["C1", "C2"]
+
+
+def test_chunks_are_summarized_in_parallel() -> None:
+    """구간 노트는 서로 기다리지 않는다 (동시에 돈 구간 수를 잰다). 요약은 구간이 다 끝난 뒤."""
+    import threading
+    import time
+    from types import SimpleNamespace
+
+    from dawoni.models.lecture import ChunkNotes
+
+    lock = threading.Lock()
+    now = peak = 0
+    order: list[str] = []
+
+    class Engine:
+        def run(self, task: Any, inp: Any) -> Any:
+            nonlocal now, peak
+            if task.name == "lecture_summary":
+                order.append("summary")
+                return SimpleNamespace(value=SummaryDraft.model_validate(draft()), agent="agy",
+                                       model=None)  # fmt: skip
+            with lock:
+                now += 1
+                peak = max(peak, now)
+            time.sleep(0.05)
+            hms = inp.variables["span"].split("~")[0].split(":")
+            start = sum(int(x) * 60**i for i, x in enumerate(reversed(hms))) + 10.0
+            with lock:
+                now -= 1
+                order.append(task.name)
+            return SimpleNamespace(value=ChunkNotes.model_validate(notes(start, ["C1"])))
+
+    run = summarize(Engine(), source(65), scope=scope(), workers=3)  # pyright: ignore[reportArgumentType]
+    assert peak == 3, "65분 강의 = 20분 구간 4개, 동시에 3개"
+    assert order[-1] == "summary" and len(run.notes) == 4
+    starts = [n.topics[0].start_s for n in run.notes]
+    assert starts == [10, 1210, 2410, 3610], "결과는 구간 순서대로"
 
 
 def test_overescaped_latex_is_fixed() -> None:

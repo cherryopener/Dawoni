@@ -97,6 +97,7 @@ def run_summary(
         run = summarize(
             svc.engine, src, scope=scope, pages=pages, progress=progress,
             note_cache=svc.workspace.lectures / src.video_id / "notes",
+            workers=svc.config.parallel_questions,
         )  # fmt: skip
     return LectureStore(svc.workspace).save(run.summary, run.notes)
 

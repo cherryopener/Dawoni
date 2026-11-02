@@ -31,6 +31,7 @@ from dawoni.models.lecture import (
     SummaryDraft,
 )
 from dawoni.models.scope import ScopeProfile
+from dawoni.parallel import each_in_parallel
 
 CHUNK_S = 1200.0
 CHUNK_CHARS = 14000
@@ -183,39 +184,44 @@ def summarize(
     pages: PageMode = 1,
     progress: Progress = _noop,
     note_cache: Path | None = None,
+    workers: int = 1,
 ) -> SummaryRun:
-    """`note_cache`: 구간 노트 저장 폴더 — 중간에 실패해도 다시 하면 끝난 구간은 건너뛴다."""
+    """`note_cache`: 구간 노트 저장 폴더 — 중간에 실패해도 다시 하면 끝난 구간은 건너뛴다.
+    `workers`: 구간 요약을 동시에 몇 개까지 (구간마다 새 세션)."""
     parts = chunks(src)
     allowed: set[str] = scope.allowed_ids() if scope else set()
     total = len(parts) + 1
-    notes: list[ChunkNotes] = []
-    for k, c in enumerate(parts):
-        progress(k, total, f"구간 {k + 1}/{len(parts)} ({stamp(c.start)}~{stamp(c.end)}) 정리")
 
+    def note_for(kc: tuple[int, Chunk]) -> ChunkNotes:
+        k, c = kc
         cached = note_cache / f"{_note_key(c, scope)}.json" if note_cache else None
         if cached and cached.is_file():
-            notes.append(ChunkNotes.model_validate(read_json(cached)))
-            continue
+            return ChunkNotes.model_validate(read_json(cached))
 
-        def check(n: ChunkNotes, c: Chunk = c) -> list[str]:
+        def check(n: ChunkNotes) -> list[str]:
             return check_chunk(n, c, allowed)
 
-        notes.append(
-            engine.run(
-                dataclasses.replace(CHUNK, name=f"lecture_chunk_{k + 1}", validator=check),
-                TaskInput(
-                    variables={
-                        "span": f"{stamp(c.start)}~{stamp(c.end)}",
-                        "level": scope.level if scope else "",
-                        "has_scope": scope is not None,
-                    },
-                    scope=scope_layer(scope) if scope else None,
-                    material=c.text(),
-                ),
-            ).value
-        )
+        note = engine.run(
+            dataclasses.replace(CHUNK, name=f"lecture_chunk_{k + 1}", validator=check),
+            TaskInput(
+                variables={
+                    "span": f"{stamp(c.start)}~{stamp(c.end)}",
+                    "level": scope.level if scope else "",
+                    "has_scope": scope is not None,
+                },
+                scope=scope_layer(scope) if scope else None,
+                material=c.text(),
+            ),
+        ).value
         if cached:
-            write_model_atomic(cached, notes[-1])
+            write_model_atomic(cached, note)
+        return note
+
+    # 구간끼리는 서로의 결과를 쓰지 않으므로 동시에 (끝난 구간은 저장돼 다시 하면 건너뜀)
+    notes = each_in_parallel(
+        list(enumerate(parts)), note_for, what="구간 정리", workers=workers, progress=progress,
+        name=lambda kc: f"{stamp(kc[1].start)}~{stamp(kc[1].end)}",
+    )  # fmt: skip
     noted = {cid for n in notes for t in n.topics for cid in t.concept_ids}
 
     def check_sum(d: SummaryDraft) -> list[str]:

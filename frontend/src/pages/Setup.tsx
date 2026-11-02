@@ -296,6 +296,7 @@ type Tier = "fast" | "standard" | "strong";
 type TierModel = { model: string | null; effort: string | null };
 type Config = {
   auto_fallback?: boolean;
+  parallel_questions?: number;
   tiers?: Partial<Record<AgentName, Partial<Record<Tier, TierModel>>>>;
   ocr: { cross_check: boolean; clova_enabled: boolean; mathpix_enabled: boolean };
   docx: { body_font: string; body_size_pt: number };
@@ -438,6 +439,18 @@ function ModelsCard() {
         <Check checked={!!data.auto_fallback} onChange={(v) => void patch({ auto_fallback: v })}>
           AI가 한도 초과·로그인 필요일 때 다른 AI로 저절로 넘어가기 (끄면 멈추고 물어봅니다 — 다른 AI 한도를 몰래 쓰지 않음)
         </Check>
+        <Row>
+          <Field
+            label="한 작업에서 동시에 돌릴 AI 수"
+            hint="PDF는 쪽마다, 강의는 20분 구간마다, 해설·루브릭은 문항마다 따로 부릅니다. 늘리면 빨라지지만 구독 한도가 그만큼 빨리 닳고, 너무 많으면 한도 초과·응답 멈춤이 날 수 있습니다 (권장 3~5)."
+          >
+            <Select
+              value={String(data.parallel_questions ?? 3)}
+              options={[1, 2, 3, 4, 5, 6].map((n) => ({ value: String(n), label: n === 1 ? "1 (차례로)" : String(n) }))}
+              onChange={(v) => void patch({ parallel_questions: Number(v) })}
+            />
+          </Field>
+        </Row>
         <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
           작업마다 역할이 정해져 있고, 역할마다 등급(빠름·보통·깊이)을 씁니다. 오류가 자주 나는 역할만 등급을 올리세요.
         </span>
