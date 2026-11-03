@@ -1,0 +1,7 @@
+{
+  "google_client_id": "000000000000-xxxxxxxx.apps.googleusercontent.com",
+  "google_client_secret": "GOCSPX-xxxxxxxx",
+  "allowlist_url": "https://gist.githubusercontent.com/cherryopener/<gist-id>/raw/allowlist.txt",
+  "allowed_emails": ["cherryopener@gmail.com, 개발자"],
+  "offline_days": 7
+}

@@ -1,0 +1,29 @@
+[
+  {
+    "number": "1",
+    "points": 4,
+    "item": {
+      "item_type": "essay",
+      "subject": "대수",
+      "unit": "이차함수의 최대·최소",
+      "stem": [{"type": "paragraph", "runs": [
+        {"t": "text", "v": "이차함수 "}, {"t": "math", "v": "y=x^2-4x+7"},
+        {"t": "text", "v": "의 최솟값을 구하는 과정을 서술하시오."}
+      ]}]
+    }
+  },
+  {
+    "number": "2",
+    "points": 6,
+    "item": {
+      "item_type": "essay",
+      "subject": "대수",
+      "unit": "이차함수의 최대·최소",
+      "stem": [{"type": "paragraph", "runs": [
+        {"t": "math", "v": "0 \\le x \\le 3"}, {"t": "text", "v": "에서 이차함수 "},
+        {"t": "math", "v": "y=-x^2+2x+3"},
+        {"t": "text", "v": "의 최댓값과 최솟값을 구하는 과정을 서술하시오."}
+      ]}]
+    }
+  }
+]

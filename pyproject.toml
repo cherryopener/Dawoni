@@ -1,0 +1,96 @@
+[project]
+name = "dawoai"
+version = "0.0.1"
+description = "다워이 — 구독 중인 AI CLI를 일꾼으로 부려, 해설지 기준으로 손글씨 서술형 답안을 토큰 적게·일관되게 채점하는 학원 강사용 도구"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+license = "MIT"
+dependencies = [
+    "fastapi>=0.162.0",
+    "jinja2>=3.1",
+    "lxml>=6.1.3",
+    "numpy>=2.3",
+    "openpyxl>=3.1.5",
+    "pillow>=11",
+    "pydantic>=2.12",
+    # 다워니에서 1.28.2 고정: 이후 판은 새 Python용 빌드가 없는 onnxruntime을 요구 (2026-10-27)
+    "pymupdf==1.28.2",
+    "python-docx>=1.2.0",
+    "python-multipart>=0.0.32",
+    "pywebview>=6.2.1 ; sys_platform == 'darwin'",
+    "rapidfuzz>=3.9",
+    "sympy>=1.14",
+    "uvicorn>=0.54.0",
+]
+
+[project.scripts]
+dawoai = "dawoai.cli:main"
+
+[project.optional-dependencies]
+local-ocr = [
+    "onnxruntime>=1.20",
+    "rapidocr>=3",
+]
+# 한글·Word가 설치된 Windows PC에서만: COM으로 PDF 저장, HWPX 열어 보기 (PLAN.md §3, §5-3)
+windows = [
+    "pywin32>=311 ; sys_platform == 'win32'",
+]
+
+[dependency-groups]
+build = [
+    "pyinstaller>=6.22.3",
+]
+dev = [
+    "pytest>=8.4",
+    "ruff>=0.14",
+    "pyright>=1.1.400",
+    "types-lxml>=2026.2.16",
+    "httpx2>=2.16.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dawoai"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["real_data", "experiments/out"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PTH", "T20"]
+ignore = [
+    "RUF001",  # 한글·수학 기호(①, ×, −)는 의도된 문자
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["T20"]
+"experiments/**" = ["T20"]  # 실험 스크립트는 결과를 그대로 출력
+"tests/test_ingest.py" = ["E501"]  # 한글 시험지 픽스처 데이터 (줄을 나누면 오히려 읽기 어려움)
+"tests/test_calibration.py" = ["E501"]  # 채점 응답 픽스처
+"tests/test_server.py" = ["E501"]
+"tests/test_real_layouts.py" = ["E501"]  # 실제 자료 기대값 표
+"tests/test_grading.py" = ["E501"]
+
+[tool.pyright]
+include = ["dawoai", "tests"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers -m 'not agent'"
+filterwarnings = [
+    # PyMuPDF(SWIG) 경고 — 우리 코드와 무관
+    "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
+]
+markers = [
+    "agent: 실제 AI CLI를 호출하는 테스트 (기본 제외, `-m agent`로 실행)",
+]

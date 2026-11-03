@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+.DS_Store
+node_modules/
+frontend/dist/
+# 로컬 테스트용 작업공간 (실제 시험·학생 자료는 커밋하지 않음)
+/workspace/
+/scratch/
+.claude/settings.local.json
+/dawoai/web/
+# 로그인 설정 (Google 클라이언트 비밀값) — 빌드 때 비밀값으로 만든다
+/dawoai/assets/access.json
+# 다워니 실측 시험·학생 답안 (회귀 시험 자료, 개인정보) — 올리지 않는다
+/real_data/
+# 실험 스크립트가 만든 결과물 (HWPX·측정 기록)
+/experiments/out/

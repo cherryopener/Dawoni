@@ -1,0 +1,21 @@
+{
+  "id": "scope-quadratic-minmax",
+  "title": "이차함수의 최대·최소",
+  "subject": "대수",
+  "level": "고등학교 1학년 (공통수학1)",
+  "concepts": [
+    {"id": "C1", "name": "이차함수의 표준형", "summary": "y=a(x-p)^2+q 의 꼭짓점은 (p, q)"},
+    {"id": "C2", "name": "완전제곱식", "summary": "x^2+bx = (x+b/2)^2-(b/2)^2"},
+    {"id": "C3", "name": "이차함수의 최대·최소", "summary": "a>0이면 꼭짓점에서 최솟값, a<0이면 꼭짓점에서 최댓값"},
+    {"id": "C4", "name": "제한된 범위에서의 최대·최소", "summary": "꼭짓점의 x좌표가 범위 안에 있는지 보고, 꼭짓점과 양 끝의 함숫값을 비교"}
+  ],
+  "skills": [
+    {"id": "S1", "name": "완전제곱식으로 표준형 만들기", "description": "일반형을 완전제곱식으로 바꿔 꼭짓점을 구한다", "concept_ids": ["C1", "C2"]},
+    {"id": "S2", "name": "꼭짓점의 x좌표 공식", "description": "x=-b/(2a)로 꼭짓점의 x좌표를 구하고 대입한다", "concept_ids": ["C1"]},
+    {"id": "S3", "name": "끝값과 꼭짓점 비교", "description": "범위 양 끝과 꼭짓점의 함숫값을 비교한다", "concept_ids": ["C3", "C4"]}
+  ],
+  "forbidden": [
+    {"name": "미분", "reason": "수학II에서 배움"}
+  ],
+  "conventions": ["최댓값·최솟값은 그때의 x값과 함께 쓴다"]
+}
