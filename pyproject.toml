@@ -16,6 +16,7 @@ dependencies = [
     # 다워니에서 1.28.2 고정: 이후 판은 새 Python용 빌드가 없는 onnxruntime을 요구 (2026-10-27)
     "pymupdf==1.28.2",
     "python-docx>=1.2.0",
+    "python-hwpx>=6.11,<7",
     "python-multipart>=0.0.32",
     "pywebview>=6.2.1 ; sys_platform == 'darwin'",
     "rapidfuzz>=3.9",
@@ -70,7 +71,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]
-"experiments/**" = ["T20"]  # 실험 스크립트는 결과를 그대로 출력
+"experiments/**" = ["T20", "E501"]  # 실험 스크립트: 결과를 그대로 출력, 표본 자료 표
 "tests/test_ingest.py" = ["E501"]  # 한글 시험지 픽스처 데이터 (줄을 나누면 오히려 읽기 어려움)
 "tests/test_calibration.py" = ["E501"]  # 채점 응답 픽스처
 "tests/test_server.py" = ["E501"]

@@ -80,5 +80,3 @@ def test_cho_basic_doubled_number_is_reported() -> None:
     """회로 이론 기본 문제: 교재에 10번이 두 번 인쇄돼 11번이 없다 → 7번은 찾고(2단 경계), 11만 빠짐."""
     got = labels(need(CHO_BASIC), 50, 60, 105)
     assert got == [str(n) for n in range(1, 24) if n != 11]
-
-
