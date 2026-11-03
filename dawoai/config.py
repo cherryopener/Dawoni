@@ -63,14 +63,15 @@ class TierModel(_Settings):
 def _default_tiers() -> dict[AgentName, dict[TierName, TierModel]]:
     """등급별 기본 모델 — AI마다 비슷한 수준으로 맞춘다.
 
-    agy 이름은 2026-10-31 `agy models` 목록에서 골랐다. 더 높은 등급(gemini-4-argon-high,
-    claude-opus-5-5)은 한도를 빨리 쓰므로 기본으로 두지 않는다 — 강사가 설정에서 바꿀 수 있다.
+    agy는 2026-11-04 실측(README "역할별 모델 실측")으로 정했다: gemini-4-argon-low가 모든 역할에서
+    flash-medium만큼 또는 더 정확하고 3~7배 빠르며 토큰은 약 1/3. argon-medium은 더 정확하지 않았다.
+    flash-low는 표지 회전·시험지 읽기에서 틀려 쓰지 않는다. 강사가 설정에서 바꿀 수 있다.
     codex는 모델 이름을 모르므로 깊이만 정하고 모델은 codex 설정을 따른다."""
     return {
         "agy": {
-            "fast": TierModel(model="gemini-3.8-flash-low"),
-            "standard": TierModel(model="gemini-3.8-flash-medium"),
-            "strong": TierModel(model="gemini-3.8-flash-high"),
+            "fast": TierModel(model="gemini-4-argon-low"),
+            "standard": TierModel(model="gemini-4-argon-low"),
+            "strong": TierModel(model="gemini-4-argon-medium"),
         },
         "claude": {
             "fast": TierModel(model="claude-haiku-5-5"),
@@ -87,7 +88,7 @@ def _default_tiers() -> dict[AgentName, dict[TierName, TierModel]]:
 
 def _default_agents() -> dict[AgentName, AgentSettings]:
     return {
-        "agy": AgentSettings(model="gemini-3.8-flash-medium"),
+        "agy": AgentSettings(model="gemini-4-argon-low"),
         "claude": AgentSettings(),
         "codex": AgentSettings(enabled=False),
         # 로컬 모델은 생각이 느리고 PC 사양에 따라 더 걸린다

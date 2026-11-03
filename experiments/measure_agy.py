@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import statistics
 import sys
@@ -38,6 +39,7 @@ from dawoai.config import TIER_NAMES, AppConfig, TierModel
 from dawoai.context import ContextEngine
 from dawoai.context.calllog import CallLog
 from dawoai.grading.pipeline import grade_answer
+from dawoai.ingest.answer_key import _NUMBER as _NUM  # pyright: ignore[reportPrivateUsage]
 from dawoai.ingest.answer_key import _numbers, extract_answer_key  # pyright: ignore[reportPrivateUsage]
 from dawoai.ingest.exam import extract_exam
 from dawoai.ingest.layout import analyze, find_key_pages
@@ -270,23 +272,47 @@ def score_exam(data: Any) -> tuple[float, str]:
     return ok / total, f"소문항 {ok}/{total}"
 
 
+TEACHER_FIXED_KEY = {("3", "(2)")}
+"""인쇄된 해설지가 틀려 강사가 고친 소문항 (PLAN.md §1-3: θ·α를 바꿔 적음). 원본대로 읽은 모델이
+맞으므로 판독 정확도에서 뺀다."""
+
+
 def score_key(data: Any) -> tuple[float, str]:
-    """강사가 확인한 다워니 해설지와 소문항마다 식의 숫자가 같은 비율 (§1-4: 숫자를 바꿔 읽는 실수)."""
+    """강사가 확인한 다워니 해설지와 비교 (§1-4: 숫자를 바꿔 읽는 실수).
+
+    맞음 = 답의 숫자가 같고, 확인된 해설의 숫자가 하나도 빠지거나 바뀌지 않음. 모델이 해설을 더
+    길게 옮겨 숫자가 더 있는 것은 틀림이 아니라 '더 옮김'으로 따로 센다."""
     want = dawoni_keys()
     got = {k["question_number"]: AnswerKey.model_validate(k) for k in data["keys"]}
     total = ok = 0
     diffs: list[str] = []
+    extra: list[str] = []
     for n, k in want.items():
         g = {p.label: p for p in got[n].parts} if n in got else {}
         for p in k.parts:
+            if (n, p.label) in TEACHER_FIXED_KEY:
+                continue
             total += 1
-            if p.label in g and _numbers(g[p.label]) == _numbers(p):
+            q = g.get(p.label)
+            if q is None:
+                diffs.append(f"{n}{p.label}(없음)")
+                continue
+            answer_same = Counter(_NUM.findall(q.answer or "")) == Counter(
+                _NUM.findall(p.answer or "")
+            )
+            missing = _numbers(p) - _numbers(q)
+            if answer_same and not missing:
                 ok += 1
+                if _numbers(q) - _numbers(p):
+                    extra.append(f"{n}{p.label}")
             else:
                 diffs.append(f"{n}{p.label}")
-    return ok / max(total, 1), f"소문항 {ok}/{total}" + (
-        f" (다름 {', '.join(diffs)})" if diffs else ""
-    )
+    note = f"소문항 {ok}/{total}"
+    if diffs:
+        note += f", 다름 {', '.join(diffs)}"
+    if extra:
+        note += f", 더 옮김 {len(extra)}"
+    return ok / max(total, 1), note
 
 
 COVER_FIELDS = ("rotation", "name", "class_name", "school", "scores")
@@ -334,20 +360,46 @@ def _transcript_text(d: dict[str, Any]) -> dict[str, str]:
             for n, t in d.get("transcripts", {}).items()}  # fmt: skip
 
 
-def score_read(results: dict[int, Any]) -> tuple[float, str]:
-    """기준 판독문(강사가 원본과 비교해 확인한 것, reference/reads.json)과 글자 유사도 평균."""
-    ref = load_reference("reads")
+CIRCLED = re.compile("[㉠-㉭①-⑳]")
+
+
+def _read_results(model: str) -> dict[int, Any]:
+    base = OUT / "results" / "read" / model
+    return {int(p.stem.removeprefix("set")): load(p) for p in base.glob("set*.json")}
+
+
+def score_read(results: dict[int, Any], model: str) -> tuple[float, str]:
+    """기준 판독문이 없으므로 (손글씨가 흐려 사람이 옮긴 기준을 만들지 못함) 다른 모델들의 같은
+    답안 판독과 글자 유사도 평균, 그리고 동그라미 기호(㉠㉡㉢①②) 순서가 다수와 다른 문항 수."""
+    others = {
+        p.name: _read_results(p.name)
+        for p in (OUT / "results" / "read").iterdir()
+        if p.is_dir() and p.name != model
+    }
     sims: list[float] = []
+    symbol_diff = 0
     for set_no, d in results.items():
-        r = ref.get(str(set_no))
-        if r is None or "error" in d:
+        if "error" in d:
             continue
         got = _transcript_text(d)
-        for n, want in r.items():
-            sims.append(fuzz.ratio(got.get(n, ""), want) / 100)
+        for n, text in got.items():
+            peers = [
+                _transcript_text(o[set_no]).get(n, "")
+                for o in others.values()
+                if set_no in o and "error" not in o[set_no]
+            ]
+            if not peers:
+                continue
+            sims.append(statistics.mean(fuzz.ratio(text, p) / 100 for p in peers))
+            mine = CIRCLED.findall(text)
+            votes = Counter(tuple(CIRCLED.findall(p)) for p in peers)
+            if votes and tuple(mine) != votes.most_common(1)[0][0]:
+                symbol_diff += 1
     if not sims:
-        return float("nan"), "기준값 없음"
-    return statistics.mean(sims), f"문항 {len(sims)}개 유사도"
+        return float("nan"), "비교할 판독 없음"
+    return statistics.mean(
+        sims
+    ), f"다른 모델과 유사도, 문항 {len(sims)}개, 기호 순서 다름 {symbol_diff}"
 
 
 def score_grade(results: dict[int, Any]) -> tuple[float, str]:
@@ -380,9 +432,11 @@ def report() -> str:
         "| 역할 | 모델 | 작업 수 | 성공 | 시간 중앙값(초) | 토큰 중앙값 | 재요청 비율 | 정확도 |",
         "|---|---|---|---|---|---|---|---|",
     ]
-    scorers: dict[str, Callable[[dict[int, Any]], tuple[float, str]]] = {
-        "cover": score_cover, "read": score_read, "grade": score_grade,
-    }  # fmt: skip
+    scorers: dict[str, Callable[[dict[int, Any], str], tuple[float, str]]] = {
+        "cover": lambda r, _: score_cover(r),
+        "read": score_read,
+        "grade": lambda r, _: score_grade(r),
+    }
     for task, role in ROLE_OF.items():
         base = OUT / "results" / task
         if not base.is_dir():
@@ -411,7 +465,7 @@ def report() -> str:
                 acc, note = score_key(ok[0]["data"]) if ok else (float("nan"), "실패")
             else:
                 res = {int(k.removeprefix("set")): v["data"] for k, v in items.items()}
-                acc, note = scorers[task](res)
+                acc, note = scorers[task](res, model)
             acc_s = "—" if acc != acc else f"{acc:.0%} ({note})"  # NaN
             rows.append(f"| {role} | {model} | {len(items)} | {len(ok)} | {secs:.0f} | "
                         f"{tokens:,.0f} | {retry:.0%} | {acc_s} |")  # fmt: skip
