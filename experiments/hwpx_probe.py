@@ -8,6 +8,8 @@ PLAN.md §5-2(판독본 구조), §5-3(만드는 법), §9-1(채점본 꾸밈)�
     uv run python experiments/hwpx_probe.py                      # 만들고 다시 읽기
     uv run python experiments/hwpx_probe.py --scan 답안.pdf --page 2  # 원본 그림을 실제 스캔으로
     uv run python experiments/hwpx_probe.py --hancom             # + 한글(COM)로 열어 PDF·HWPX 다시 저장
+    uv run python experiments/hwpx_probe.py --real gemini-4-argon-low [--hancom]
+        # 표본 대신 measure_agy.py의 실제 판독문·채점(학생 6명)으로 → experiments/out/real/<모델>/
 
 `--hancom`은 Windows + 한글 + `uv sync --extra windows`에서만 된다. 한글이 다시 저장한 HWPX를
 앱이 다시 읽어도 같은지(강사가 한글에서 저장하는 경우) 확인하고, PDF 첫 쪽을 PNG로 남긴다.
@@ -19,6 +21,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import re
 import sys
 import warnings
@@ -30,6 +33,7 @@ from typing import Any
 from hwpx.document import HwpxDocument
 from hwpx.equation.authoring import latex_to_eqedit
 from hwpx.equation.eqedit import eqedit_to_latex
+from hwpx.equation.measure import measure_equation
 from hwpx.oxml.paragraph import HwpxOxmlParagraph
 from lxml import etree
 
@@ -159,6 +163,7 @@ class Builder:
         self.style_part = st.ensure_style(STYLE_PART, char_pr_id_ref=self.part)
         self.style_graded = st.ensure_style(STYLE_GRADED, char_pr_id_ref=self.bold)
         self.first = True
+        self.failed_equations: list[str] = []
 
     def para(
         self, text: str = "", *, char: str | None = None, style: str | None = None
@@ -182,15 +187,28 @@ class Builder:
             if text:
                 p.add_run(text, char_pr_id_ref=char)
 
-    def equation(self, p: HwpxOxmlParagraph, latex: str) -> bool:
-        """한글 수식으로 넣는다. 못 바꾸면 글자로 넣고 False (PLAN.md §14)."""
+    def equation(self, p: HwpxOxmlParagraph, latex: str, *, lead: str = " ") -> bool:
+        """한글 수식으로 넣는다. 못 바꾸면 글자로 넣고 False (PLAN.md §14).
+        lead: 앞에 둘 글자 — 줄 끝에 붙는 식은 " ", 글 사이에 낀 식(`\\( \\)`)은 ""."""
         try:
-            script = latex_to_eqedit(_preclean(latex))
+            script = to_eqedit(latex)
         except Exception:
-            p.add_run(f" [식: {latex}]", char_pr_id_ref=self.red)
+            p.add_run(f"{lead}[식: {latex}]", char_pr_id_ref=self.red)
+            self.failed_equations.append(latex)
             return False
-        p.add_run(" ", char_pr_id_ref=self.plain)
-        self.doc.shapes.add_equation(script, paragraph=p)
+        if lead:
+            p.add_run(lead, char_pr_id_ref=self.plain)
+        # python-hwpx는 식 상자 폭을 스스로 재고 한글은 그 폭으로 쪽을 짠다. 틀리게 재는 두 가지를 비슷한
+        # 폭의 글자로 바꿔 잰다 (2026-11-04 한글 2024): `:` — 한글은 `=`처럼 양옆을 띄우는데 문장부호
+        # 폭으로 재어 뒤 글자가 식에 겹침, `uparrow` 등 — 화살표 하나인데 글자 7개 폭으로 재어 뒤가 빔.
+        sized = script.replace(" : ", " = ")
+        for word in _EQ_WORDS.values():
+            sized = re.sub(rf"(?<![A-Za-z]){word}(?![A-Za-z])", "x", sized)
+        size = None
+        if sized != script:
+            m = measure_equation(sized)
+            size = (m.width, m.height)
+        self.doc.shapes.add_equation(script, paragraph=p, size=size)
         return True
 
     def save(self, path: Path) -> Path:
@@ -199,11 +217,46 @@ class Builder:
         return path
 
 
-_SPACING = re.compile(re.escape("\\") + r"(?:quad|qquad|[ ,;:!])")
+_SPACING = re.compile(r"\\(qquad|quad|[ ;:!])")
+_SPACES = {"qquad": "~" * 8, "quad": "~" * 4, " ": "~", ";": "~", ":": "~", "!": ""}
+"""변환기가 모르는 LaTeX 띄우기 → `~`(한글 수식 띄어쓰기, 약 1/4 em). `\\,`은 변환기가 `` ` ``로 바꾼다.
+공백으로만 바꾸면 한글 수식이 공백을 무시해 `R=6\\Omega \\quad R=…`가 붙어 버린다 (2026-11-04)."""
 
 
 def _preclean(latex: str) -> str:
-    return _SPACING.sub(" ", latex)
+    return _SPACING.sub(lambda m: _SPACES[m.group(1)], latex)
+
+
+_EQ_WORDS = {r"\uparrow": "uparrow", r"\downarrow": "downarrow"}
+"""python-hwpx 변환기가 모르는 LaTeX 명령 → 한글 수식 낱말 (실제 판독문에서 나옴, 2026-11-04)."""
+_NON_ASCII = re.compile(r"\\text\{([^{}]*[^\x00-\x7f][^{}]*)\}|[^\x00-\x7f]+")
+
+
+def to_eqedit(latex: str) -> str:
+    """LaTeX → 한글 수식 스크립트. 변환기는 ASCII 밖 글자(㉠, 한글)와 `_EQ_WORDS`를 받지 않으므로
+    글자만 된 자리표로 바꿔 넘기고 되돌린다 (숫자를 넣으면 변환기가 `ZZQ 0 ZZ`처럼 띄워 버림).
+    ㉠은 `\\text{}` 안에 들어가 한글 수식 `rm "㉠"`이 된다."""
+    held: list[str] = []
+
+    def hold(script: str) -> str:
+        held.append(script)
+        return "ZZ" + "".join(chr(65 + int(d)) for d in str(len(held) - 1)) + "ZZ"
+
+    s = _preclean(latex)
+    for cmd, word in _EQ_WORDS.items():
+        s = re.sub(re.escape(cmd) + r"(?![A-Za-z])", lambda _, w=word: f" {hold(w)} ", s)
+    s = _NON_ASCII.sub(lambda m: rf"\text{{{hold(m.group(1) or m.group(0))}}}", s)
+    script = latex_to_eqedit(s)
+    for i, original in reversed(list(enumerate(held))):  # ZZBAZZ(10)를 ZZBZZ(1)보다 먼저
+        script = script.replace("ZZ" + "".join(chr(65 + int(d)) for d in str(i)) + "ZZ", original)
+    return script
+
+
+def from_eqedit(script: str) -> str:
+    latex = eqedit_to_latex(script)
+    for cmd, word in _EQ_WORDS.items():
+        latex = re.sub(rf"(?<![\\A-Za-z]){word}(?![A-Za-z])", lambda _, c=cmd: c, latex)
+    return latex
 
 
 def _by_part(lines: list[TranscriptLine]) -> dict[str, list[TranscriptLine]]:
@@ -211,6 +264,45 @@ def _by_part(lines: list[TranscriptLine]) -> dict[str, list[TranscriptLine]]:
     for line in lines:
         out.setdefault(line.part or UNASSIGNED, []).append(line)
     return out
+
+
+_INLINE = re.compile(r"\\\((.+?)\\\)")
+"""판독문 `text` 안의 식 (transcribe_answer 3번: 글과 식이 섞인 줄은 식만 `\\( \\)`로 감싼다)."""
+
+
+def _marked(text: str, quotes: list[str], base: str, mark: str) -> list[tuple[str, str]]:
+    """quotes가 나오는 곳만 mark 글자 모양으로 나눈다."""
+    for q in quotes:
+        if q and (s := _split_quote(text, q)):
+            return [*_marked(s[0], quotes, base, mark), (s[1], mark), *_marked(s[2], quotes, base, mark)]  # fmt: skip
+    return [(text, base)]
+
+
+def write_line(
+    b: Builder,
+    line: TranscriptLine,
+    *,
+    highlights: list[tuple[str, str]] | None = None,
+    underline: list[str] | None = None,
+) -> HwpxOxmlParagraph:
+    """판독문 한 줄 = 문단 하나. 글 사이의 `\\( \\)` 식은 그 자리에 한글 수식으로 넣는다.
+    highlights: (글, 색) 형광펜, underline: 빨간 밑줄 — 둘 다 글 부분에서만 찾는다."""
+    p = b.para()
+    if line.struck:
+        b.runs(p, [("[지움] ", b.small_gray)])
+    base = b.struck if line.struck else b.plain
+    for i, piece in enumerate(_INLINE.split(line.text)):
+        if i % 2:
+            b.equation(p, piece, lead="")
+        else:
+            b.runs(p, _marked(piece, [] if line.struck else underline or [], base, b.red_underline))
+    if not line.struck:
+        for match, color in highlights or []:
+            with contextlib.suppress(ValueError):  # 판독문에 없거나 식에 걸치면 칠하지 않는다
+                p.add_highlight(color=color, match=match)
+    if line.math:
+        b.equation(p, line.math)
+    return p
 
 
 def build_reading(
@@ -233,15 +325,7 @@ def write_reading(
     for part, part_lines in _by_part(lines).items():
         b.para(f"{MARK} {part}", char=b.part, style=b.style_part)
         for line in part_lines:
-            p = b.para()
-            if line.struck:
-                b.runs(p, [("[지움] ", b.small_gray), (line.text, b.struck)])
-            else:
-                b.runs(p, [(line.text, b.plain)])
-                for u in line.uncertain:
-                    p.add_highlight(color=YELLOW, match=u)
-            if line.math:
-                b.equation(p, line.math)
+            write_line(b, line, highlights=[(u, YELLOW) for u in line.uncertain])
     return head
 
 
@@ -325,30 +409,21 @@ def write_graded(
     for part, part_lines in _by_part(lines).items():
         g = grades.get(part)
         b.para(f"{MARK} {part}", char=b.part, style=b.style_part)
-        for line in part_lines:
-            p = b.para()
-            if line.struck:
-                b.runs(p, [("[지움] ", b.small_gray), (line.text, b.struck)])
-            else:
-                bad = next(
-                    (s for q, _ in (g.bad if g else []) if (s := _split_quote(line.text, q))), None
-                )
-                if bad:  # 틀린 곳: 빨간 밑줄
-                    b.runs(p, [(bad[0], b.plain), (bad[1], b.red_underline), (bad[2], b.plain)])
-                else:
-                    b.runs(p, [(line.text, b.plain)])
-                for q, _ in g.good if g else []:
-                    if q in line.text:  # 맞은 곳: 연두 형광펜
-                        p.add_highlight(color=GREEN, match=q)
-            if line.math:
-                b.equation(p, line.math)
+        for line in part_lines:  # 맞은 곳: 연두 형광펜, 틀린 곳: 빨간 밑줄
+            write_line(
+                b, line,
+                highlights=[(q, GREEN) for q, _ in g.good] if g else [],
+                underline=[q for q, _ in g.bad] if g else [],
+            )  # fmt: skip
         if g is None:
             continue
         score = b.para(f"점수 {g.awarded:g} / {g.points:g}", char=b.bold)
         for _, why in g.good:
-            b.para(f"○ {why}", char=b.blue)
+            if why:  # 인용 조각이 여럿이면 이유는 첫 조각에만 붙어 있다
+                b.para(f"○ {why}", char=b.blue)
         for _, why in g.bad:
-            b.para(f"✕ {why}", char=b.red)
+            if why:
+                b.para(f"✕ {why}", char=b.red)
         if g.bad:
             b.doc.notes.add_memo(g.bad[0][1], anchor=score, author="다워이")
     return head
@@ -371,7 +446,7 @@ def _paragraph_text(p: etree._Element) -> str:  # pyright: ignore[reportPrivateU
         if el.tag == f"{HP}t":
             out.append("".join(el.itertext()))
         else:
-            out.append(f"\\({eqedit_to_latex(el.text or '')}\\)")
+            out.append(f"\\({from_eqedit(el.text or '')}\\)")
     return "".join(out).strip()
 
 
@@ -415,10 +490,16 @@ def expected(lines: list[TranscriptLine]) -> dict[str, list[str]]:
     return out
 
 
+def _canon_math(s: str) -> str:
+    s = re.sub(r"\{([^{}\\]|\\[A-Za-z]+)\}", lambda m: m.group(1), normalize_latex(_preclean(s)))
+    s = s.replace("\\geq", "\\ge").replace("\\leq", "\\le")
+    return re.sub(r"\s+", "", s)  # 식 안의 띄어쓰기는 한글 수식이 다시 정한다
+
+
 def _canon(s: str) -> str:
-    s = _preclean(s)
-    s = re.sub(r"\{([^{}\\])\}", lambda m: m.group(1), normalize_latex(s))
-    return s.replace("\\geq", "\\ge").replace("\\leq", "\\le")
+    """다시 읽은 줄과 기대한 줄을 견줄 꼴: 식 안의 띄어쓰기·중괄호만 무시하고 글은 그대로."""
+    pieces = _INLINE.split(s.strip())
+    return "".join(f"\\({_canon_math(x)}\\)" if i % 2 else x for i, x in enumerate(pieces))
 
 
 def compare(got: ReadBack, want: dict[str, list[str]], student: Student) -> list[str]:
@@ -443,6 +524,129 @@ def teacher_edit(src: Path, dest: Path) -> Path:
             break
     doc.save_to_path(dest)
     return dest
+
+
+# ---------------------------------------------------------------- 실제 판독문 (--real)
+
+
+MEASURE = OUT / "measure"  # experiments/measure_agy.py 결과 (학생 이름·답안이 들어 있음, git 제외)
+DAWONI_EXAM = Path(r"D:\Downloads\Dawoni-windows\temp\exams\exam-01a19b388c2a75f58e8cc7ffe047c0e2")
+
+
+def _json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _measured(task: str, model: str, set_no: int) -> dict[str, Any] | None:
+    p = MEASURE / "results" / task / model / f"set{set_no}.json"
+    return _json(p)["data"] if p.is_file() else None
+
+
+def _fragments(quote: str) -> list[str]:
+    """채점 근거 인용 → 판독문에서 찾을 글 조각: `…`·`;;`로 나뉜 조각의 식 밖 부분 (6자 이상)."""
+    out: list[str] = []
+    for chunk in re.split(r"…|\.\.\.|;;", quote):
+        out += [s for i, x in enumerate(_INLINE.split(chunk)) if i % 2 == 0 and len(s := x.strip()) >= 6]  # fmt: skip
+    return out
+
+
+def real_grades(
+    q: str, grade: dict[str, Any] | None, parts: dict[str, str]
+) -> dict[str, PartGrade]:
+    """채점 결과(채점 항목별) → 소문항별 PartGrade. parts: 채점 항목 ID → 소문항."""
+    out: dict[str, PartGrade] = {}
+    judgements: list[dict[str, Any]] = grade["judgements"] if grade else []
+    for j in judgements:
+        part = parts.get(j["rubric_item_id"])
+        g = out.setdefault(f"{q}-{part}" if part else q, PartGrade(0, 0))
+        g.awarded += j["awarded"]
+        g.points += grade["item_points"][j["rubric_item_id"]]  # pyright: ignore[reportOptionalSubscript]
+        quotes = _fragments(j["evidence_quote"] or "") or [""]
+        if j["awarded"] > 0:
+            g.good += [(x, j["reason"] if not i else "") for i, x in enumerate(quotes)]
+        if j["deduction_reason"]:  # 일부만 받은 항목은 근거를 맞은 곳으로 칠하고 이유만 단다
+            bad = quotes if j["awarded"] == 0 else [""]
+            g.bad += [(x, j["deduction_reason"] if not i else "") for i, x in enumerate(bad)]
+    return out
+
+
+def real_entries(model: str, grade_model: str, sets: list[int]) -> dict[str, list[Entry]]:
+    """문항 → 학생마다 (학생, 그 문항 판독문 + 문항을 알 수 없는 줄, 채점, 답안 쪽 그림)."""
+    exam = _json(DAWONI_EXAM / "exam.json")
+    covers = _json(MEASURE / "reference" / "covers.json")
+    parts: dict[str, dict[str, str]] = {}
+    for q in exam["questions"]:
+        rp = DAWONI_EXAM / "rubrics" / f"{q['number']}.json"  # 루브릭이 없는 문항은 채점도 없다
+        items: list[dict[str, Any]] = _json(rp)["items"] if rp.is_file() else []
+        parts[q["number"]] = {it["id"]: it["part"] for it in items if it.get("part")}
+    out: dict[str, list[Entry]] = {q["number"]: [] for q in exam["questions"]}
+    for n in sets:
+        read = _measured("read", model, n)
+        if read is None:
+            raise SystemExit(f"판독 결과가 없습니다: read {model} set{n} (measure_agy.py read)")
+        ref: dict[str, Any] = covers.get(str(n), {})
+        cover = _measured("cover", "gemini-4-argon-low", n) or {}
+        # 기준값(사람이 봐도 확실한 것)이 없으면 AI가 읽은 표지
+        name, klass, school = (str(ref.get(k) or cover.get(k) or "") for k in ("name", "class_name", "school"))  # fmt: skip
+        st = Student(exam["title"], klass, name or f"학생{n}", school)
+        scan_dir = MEASURE / "scans" / f"set_{n:03d}_r{ref.get('rotation') or 90}"
+        scans = [p.read_bytes() for p in sorted(scan_dir.glob("p*.png")) if p.stem != "p1"]
+        unassigned = [TranscriptLine.model_validate(x) for x in read["unassigned"]]
+        grades = _measured("grade", grade_model, n) or {}
+        for q, entries in out.items():
+            t: dict[str, Any] | None = read["transcripts"].get(q)
+            raw: list[dict[str, Any]] = t["lines"] if t else []
+            lines = [
+                TranscriptLine.model_validate({**x, "part": f"{q}-{x['part']}" if x["part"] else q})
+                for x in raw
+            ]
+            lines += [x.model_copy(update={"part": None}) for x in unassigned]
+            entries.append((st, lines, real_grades(q, grades.get(q), parts[q]), scans))
+    return out
+
+
+def run_real(args: argparse.Namespace) -> int:
+    """실제 판독문(measure_agy.py 결과)으로 학생 × 문항 파일과 반별 묶음을 만든다."""
+    out = OUT / "real" / args.real
+    by_q = real_entries(args.real, args.grades or args.real, args.sets)
+    failed = False
+    made: list[tuple[Path, Student, dict[str, list[str]]]] = []
+    bundles: list[Path] = []
+    for q, entries in by_q.items():
+        for st, lines, grades, scans in entries:
+            path = build_combined(out / st.filename(q), st, lines, grades, scans)
+            want = expected(lines)
+            got = read_back(path)
+            issues = HwpxDocument.open(path).validate().issues
+            problems = compare(got, want, st)
+            n_chars = sum(len(x) for v in want.values() for x in v)
+            bad_eq = sum(x.count("[식:") for v in got.parts.values() for x in v)
+            print(f"{path.name}: 판독 {len(lines)}줄 {n_chars:,}자, 그림 {got.pictures}개, "
+                  f"스키마 {issues or '통과'}, 수식 실패 {bad_eq}, 다시 읽기 {'같음' if not problems else '다름'}")  # fmt: skip
+            for p in problems:
+                print("  - " + p)
+            failed |= bool(issues) or bool(problems)
+            made.append((path, st, want))
+        klass = entries[0][0].klass
+        bundle = build_class_bundle(out / bundle_filename(klass, q), entries)
+        heads = count_heads(bundle)
+        print(f"반별 묶음 {bundle.name}: {bundle.stat().st_size / 1e6:.1f} MB, 학생 {heads}명")
+        failed |= heads != len(entries)
+        bundles.append(bundle)
+
+    if args.hancom:
+        with hancom() as hwp:
+            for path in bundles:
+                _, _, pngs = hancom_roundtrip(hwp, path)
+                print(f"한글 {path.name}: PDF {len(pngs)}쪽")
+            for path, st, want in made:
+                _, resaved, pngs = hancom_roundtrip(hwp, path)
+                problems = compare(read_back(resaved), want, st)
+                print(
+                    f"한글 {path.name}: {len(pngs)}쪽, 다시 저장한 파일 다시 읽기 {problems or '같음'}"
+                )
+                failed |= bool(problems)
+    return 1 if failed else 0
 
 
 # ---------------------------------------------------------------- 한글(COM) 확인
@@ -493,12 +697,26 @@ def hancom_roundtrip(hwp: Any, src: Path) -> tuple[Path, Path, list[Path]]:
 # ---------------------------------------------------------------- 실행
 
 
+def _sets(s: str) -> list[int]:
+    a, _, b = s.partition("-")
+    return list(range(int(a), int(b or a) + 1))
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--scan", type=Path, help="원본 그림으로 쓸 스캔 PDF")
     ap.add_argument("--page", type=int, default=1)
     ap.add_argument("--hancom", action="store_true", help="한글(COM)로 열어 PDF·HWPX 다시 저장")
+    ap.add_argument(
+        "--real", metavar="MODEL", help="표본 대신 이 모델의 실제 판독문 (measure_agy.py read)"
+    )
+    ap.add_argument(
+        "--grades", metavar="MODEL", help="--real의 채점 결과 모델 (기본: --real과 같음)"
+    )
+    ap.add_argument("--sets", type=_sets, default=list(range(1, 7)), help="학생 묶음 (기본 1-6)")
     args = ap.parse_args(argv)
+    if args.real:
+        return run_real(args)
 
     scans = [scan_page(args.scan, args.page)] if args.scan else [placeholder_scan()]
     want = expected(LINES)

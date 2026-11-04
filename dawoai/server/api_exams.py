@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from dawoai import sharing
 from dawoai.cli_exam import parse_answer_text
+from dawoai.export.exam_files import write_all
 from dawoai.grading import workflow
 from dawoai.grading.pipeline import (
     PipelineError,
@@ -32,6 +33,7 @@ from dawoai.models.grading import (
     TranscriptLine,
 )
 from dawoai.models.job import Job
+from dawoai.ocr.review import confirm_problems
 from dawoai.server import files, learning
 from dawoai.server.api_content import save_upload, upload_dir
 from dawoai.server.api_setup import State
@@ -96,6 +98,7 @@ def _cell(store: ExamStore, student: str, q: ExamQuestion) -> dict[str, Any]:
             "confirmed": t.confirmed,
             "source": t.source,
             "attention": t.needs_attention,
+            "unreadable": t.unreadable,
             "agreement": t.agreement,
             "lines": len(t.lines),
         },
@@ -124,6 +127,9 @@ def exam_summary(store: ExamStore, exam: Exam) -> dict[str, Any]:
         "students": len(students),
         "pending_transcripts": sum(
             c["transcript"] is not None and not c["transcript"]["confirmed"] for c in cells
+        ),
+        "needs_input": sum(
+            c["transcript"] is not None and c["transcript"]["unreadable"] > 0 for c in cells
         ),
         "graded": sum(c["grade"] is not None for c in cells),
         "needs_review": sum(
@@ -442,9 +448,32 @@ def scan(
             "unassigned": [x.joined for x in res.unassigned],
             "notes": res.notes,
             "warnings": res.warnings,
+            **_grade_ready(svc, store, [student] if res.saved else [], ctx),
         }
 
     return st.jobs.submit("scan", run, {"exam": exam_id, "student": student})
+
+
+@router.post("/{exam_id}/export")
+def export(exam_id: str, st: AppState = State) -> Job:
+    """채점 HWPX를 모두 다시 쓴다 (코드만, 토큰 0). 채점할 때마다 저절로 쓰므로 보통은 필요 없다 —
+    내보내기가 들어오기 전에 채점한 시험, 파일을 지웠거나 한글에서 열어 두어 못 쓴 경우."""
+    svc, store = _store(st, exam_id)
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        ctx.progress(0, 1, "HWPX 쓰는 중")
+        res = write_all(svc.workspace, store)
+        return {"files": [p.name for p in res.written], "file_warnings": res.warnings}
+
+    return st.jobs.submit("export", run, {"exam": exam_id})
+
+
+@router.get("/{exam_id}/needs-input")
+def needs_input(exam_id: str, st: AppState = State) -> list[dict[str, Any]]:
+    """`[판독불가]`가 남아 강사 입력을 기다리는 답안 (알림 숫자 = 시험 요약의 `needs_input`).
+    누르면 `GET …/students/{학생}/transcripts/{문항}`으로 원본 그림과 판독문을 연다."""
+    _, store = _store(st, exam_id)
+    return [_waiting(t) for t in workflow.needs_input(store)]
 
 
 @router.get("/{exam_id}/students/{student}/transcripts/{number}")
@@ -459,6 +488,7 @@ def get_transcript(exam_id: str, student: str, number: str, st: AppState = State
         "transcript": t.model_dump(mode="json"),
         "page_images": images,
         "needs_attention": t.needs_attention,
+        "unreadable": t.unreadable,
         "question": store.exam().question(number).model_dump(mode="json"),
     }
 
@@ -473,7 +503,7 @@ class TranscriptBody(learning.LearnFields):
 def put_transcript(
     exam_id: str, student: str, number: str, body: TranscriptBody, st: AppState = State
 ) -> Transcript:
-    _, store = _store(st, exam_id)
+    svc, store = _store(st, exam_id)
     t = store.transcript(student, number)
     if t is None:
         raise KeyError(f"{student} 문항 {number}: 판독문 없음")
@@ -485,10 +515,23 @@ def put_transcript(
             "confirmed_by": body.by if body.confirm else None,
         }
     )
+    if body.confirm and (problems := confirm_problems(t)):
+        raise PipelineError(" ".join(problems))
     store.save_transcript(t)
     if body.learn:
         c = learning.transcript_correction(before, t, store.exam().title)
         learning.from_edit(st, body, c, body.by)
+    if workflow.wants_grading(store, before, t):
+        # 확정하면 그 학생·문항을 바로 채점한다 (작업 목록의 "grade", auto)
+
+        def run(ctx: JobContext) -> dict[str, Any]:
+            res = workflow.grade_after_confirm(svc, store, before, t, progress=ctx.progress)
+            return _grade_summary(res) if res else {"graded": 0}
+
+        st.jobs.submit("grade", run, {"exam": exam_id, "student": student, "question": number,
+                                      "auto": True})  # fmt: skip
+    else:  # AI를 부르지 않음: 고친 것 없이 확정만 했으면 채점의 '판독문 확인' 표시만 켠다
+        workflow.grade_after_confirm(svc, store, before, t)
     return t
 
 
@@ -524,15 +567,21 @@ def grade(exam_id: str, body: GradeBody, st: AppState = State) -> Job:
             use_examples=body.use_examples,
             progress=ctx.progress,
         )
-        return {
-            "graded": len(res.graded),
-            "with_examples": sum(bool(g.examples_used) for g in res.graded),
-            "needs_review": sum(g.status == "needs_review" for g in res.graded),
-            "skipped": [vars(s) for s in res.skipped],
-            "failed": [vars(s) for s in res.failed],
-        }
+        return _grade_summary(res)
 
     return st.jobs.submit("grade", run, {"exam": exam_id})
+
+
+def _grade_summary(res: workflow.GradeRun) -> dict[str, Any]:
+    return {
+        "graded": len(res.graded),
+        "with_examples": sum(bool(g.examples_used) for g in res.graded),
+        "needs_review": sum(g.status == "needs_review" for g in res.graded),
+        "skipped": [vars(s) for s in res.skipped],
+        "failed": [vars(s) for s in res.failed],
+        "files": [p.name for p in res.export.written],
+        "file_warnings": res.export.warnings,
+    }
 
 
 _ORDER = {"needs_review": 0, "auto": 1, "teacher_confirmed": 2}
@@ -595,7 +644,7 @@ class ReviewBody(learning.LearnFields):
 def confirm_grade(
     exam_id: str, student: str, number: str, body: ReviewBody, st: AppState = State
 ) -> GradeResult:
-    _, store = _store(st, exam_id)
+    svc, store = _store(st, exam_id)
     g = store.grade(student, number)
     r = store.rubric(number)
     if g is None or r is None:
@@ -604,6 +653,7 @@ def confirm_grade(
     before = g
     g = teacher_review(g, r, body.awarded, note=body.note, by=body.by, item_notes=notes)
     store.save_grade(g)
+    workflow.export_grades(svc, store, [g])
     if body.learn:
         c = learning.grade_correction(before, g, r, store.exam().title)
         learning.from_edit(st, body, c, body.by)
@@ -629,6 +679,24 @@ class BatchScanBody(BaseModel):
     covers_only: bool = False
     cross: bool | None = None
     overwrite: bool = False
+    grade: bool = True
+    """판독이 끝난 학생은 이어서 채점 (루브릭이 승인된 문항). `[판독불가]` 답안만 기다린다."""
+
+
+def _grade_ready(
+    svc: Services, store: ExamStore, students: list[str], ctx: JobContext
+) -> dict[str, Any]:
+    """판독 작업 끝에 이어서 채점한 결과 + 입력을 기다리는 답안 (알림)."""
+    res = workflow.grade_ready(svc, store, students, progress=ctx.progress)
+    waiting = [t for t in workflow.needs_input(store) if t.student_id in students]
+    return {
+        "grading": _grade_summary(res) if res else None,
+        "needs_input": [_waiting(t) for t in waiting],
+    }
+
+
+def _waiting(t: Transcript) -> dict[str, Any]:
+    return {"student": t.student_id, "question": t.question_number, "unreadable": t.unreadable}
 
 
 @router.post("/{exam_id}/scan-batch")
@@ -645,11 +713,13 @@ def scan_batch(exam_id: str, body: BatchScanBody, st: AppState = State) -> Job:
             only_questions=body.questions, covers_only=body.covers_only, cross=body.cross,
             overwrite=body.overwrite, progress=ctx.progress,
         )  # fmt: skip
+        students = [r.student_id for r in res.students]
         return {
-            "students": [r.student_id for r in res.students],
+            "students": students,
             "skipped": res.skipped,
             "warnings": res.warnings,
             "failed": [f"{f.student}: {f.reason}" for f in res.failed],
+            **_grade_ready(svc, store, students if body.grade else [], ctx),
         }
 
     return st.jobs.submit("scan_batch", run, {"exam": exam_id, "file": pdf.name})
@@ -667,7 +737,7 @@ def confirm_grade_parts(
     exam_id: str, student: str, number: str, body: PartReviewBody, st: AppState = State
 ) -> GradeResult:
     """강사가 소문항 단위로 확정 (빨간 펜처럼). 항목 점수는 앱이 나눈다."""
-    _, store = _store(st, exam_id)
+    svc, store = _store(st, exam_id)
     g = store.grade(student, number)
     r = store.rubric(number)
     if g is None or r is None:
@@ -677,6 +747,7 @@ def confirm_grade_parts(
     before = g
     g = teacher_part_review(g, r, q, body.part_scores, part_notes=notes, note=body.note, by=body.by)
     store.save_grade(g)
+    workflow.export_grades(svc, store, [g])
     if body.learn:
         c = learning.grade_correction(before, g, r, store.exam().title)
         learning.from_edit(st, body, c, body.by)

@@ -43,6 +43,7 @@ from dawoai.models.base import utcnow
 from dawoai.models.calibration import RubricSuggestion
 from dawoai.models.grading import (
     DEFAULT_NEVER_DEDUCT,
+    UNREADABLE,
     AcceptedAlternative,
     AnswerCandidate,
     AnswerCheck,
@@ -758,9 +759,11 @@ def grade_answer(
         raise PipelineError("채점 대상 학생의 답안을 기준 예시로 넣을 수 없습니다.")
     if rubric.status != "approved":
         raise PipelineError(f"문항 {q.number}: 루브릭이 아직 승인되지 않았습니다.")
-    if not transcript.confirmed:
+    if transcript.unreadable:
+        # 강사 확인 전 판독문도 채점한다 (2026-11-04 사용자 결정). 못 읽은 곳만 강사 입력을 기다린다
         raise PipelineError(
-            f"{transcript.student_id} 문항 {q.number}: 판독문을 강사가 확인하지 않았습니다."
+            f"{transcript.student_id} 문항 {q.number}: {UNREADABLE} {transcript.unreadable}곳을 "
+            "강사가 채워야 채점할 수 있습니다."
         )
     first, used_agent, used_model = _grade_once(
         engine, q, rubric, transcript, scope, agent, model, examples

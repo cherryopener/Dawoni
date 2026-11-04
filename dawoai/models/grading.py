@@ -457,6 +457,10 @@ class StudentRecord(DawoaiModel):
 # ---------------------------------------------------------------- 판독문
 
 
+UNREADABLE = "[판독불가]"
+"""판독문에서 끝내 읽지 못한 자리. AI가 남기고 강사가 채운다 (ocr/review.py)."""
+
+
 class TranscriptLine(DawoaiModel):
     text: str = Field(default="", description="학생이 쓴 글 (원문 그대로)")
     part: str | None = Field(default=None, description="소문항 표시 (답안지 칸에서). 모르면 null")
@@ -490,10 +494,17 @@ class Transcript(DawoaiModel):
         return not any(line.joined.strip() for line in self.lines if not line.struck)
 
     @property
+    def unreadable(self) -> int:
+        """`[판독불가]` 수. 0이 아니면 확정할 수 없다 (강사가 채운다)."""
+        return sum((line.text + (line.math or "")).count(UNREADABLE) for line in self.lines)
+
+    @property
     def needs_attention(self) -> bool:
         """강사가 특히 주의해서 확인할 판독문."""
-        return any(line.uncertain or line.confidence < 0.7 for line in self.lines) or (
-            self.agreement is not None and self.agreement < 0.9
+        return (
+            any(line.uncertain or line.confidence < 0.7 for line in self.lines)
+            or (self.agreement is not None and self.agreement < 0.9)
+            or self.unreadable > 0
         )
 
 
@@ -582,6 +593,9 @@ class GradeResult(DawoaiModel):
     total: float
     max_points: float
     status: GradeStatus = "auto"
+    transcript_confirmed: bool = True
+    """채점한 판독문이 강사 확인을 거쳤나. 판독이 끝나면 확인 전에도 채점하므로 False일 수 있다 —
+    강사가 고치지 않고 확정하면 True로 바뀌고, 고쳐 확정하면 다시 채점한다."""
     second_opinion: list[ItemJudgement] | None = None
     disagreements: list[str] = Field(
         default_factory=lambda: list[str](), description="이중 채점에서 차이가 난 항목 ID"

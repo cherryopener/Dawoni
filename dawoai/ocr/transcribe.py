@@ -1,6 +1,7 @@
 """학생 답안지 판독: 페이지 이미지 → 문항별 판독문 (강사 확인 전 상태).
 
-    페이지 준비 → AI 판독(원문 그대로) → (선택) 교차 판독 → 문항별로 나눔 → 저장(미확인)
+    페이지 준비 → AI 판독(원문 그대로) → (선택) 교차 판독 → 문항별로 나눔
+    → 자동 검토(ocr/review.py, 토큰 0) → 저장(미확인)
 
 판독문은 `confirmed=False`로 저장된다. 강사가 원본과 나란히 확인해야 채점할 수 있다.
 """
@@ -23,6 +24,7 @@ from dawoai.models.grading import (
     TranscriptLine,
 )
 from dawoai.ocr.crosscheck import cross_check
+from dawoai.ocr.review import normalize_unreadable, review_lines
 
 TRANSCRIBE: TaskDef[TranscriptionDraft] = TaskDef(
     role="handwriting_reader",
@@ -158,7 +160,7 @@ def transcribe_student(
         transcripts[q.number] = Transcript(
             student_id=student_id,
             question_number=q.number,
-            lines=[_to_line(x) for x in q_lines],
+            lines=review_lines([_to_line(x) for x in q_lines], exam_question_text(q)),
             source="ocr",
             confirmed=False,
             pages=page_refs,
@@ -166,9 +168,12 @@ def transcribe_student(
             agreement=agreement,
             notes=q_notes,
         )
+    unassigned = [
+        x.model_copy(update={"text": normalize_unreadable(x.text)}) for x in by_q.get(None, [])
+    ]
     return TranscriptionOutcome(
         transcripts=transcripts,
-        unassigned=by_q.get(None, []),
+        unassigned=unassigned,
         notes=notes,
         agent=used_agent,
         model=used_model,

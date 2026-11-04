@@ -21,10 +21,18 @@ from dawoai.context import ContextEngine
 from dawoai.fsio import read_json
 from dawoai.grading.pipeline import SecondOpinion
 from dawoai.grading.store import ExamStore
-from dawoai.models.grading import Exam, TranscribedLine, TranscriptionDraft
+from dawoai.models.grading import (
+    UNREADABLE,
+    Exam,
+    TranscribedLine,
+    Transcript,
+    TranscriptionDraft,
+    TranscriptLine,
+)
 from dawoai.ocr.crosscheck import cross_check
 from dawoai.ocr.hints import ClovaOcr, MathpixOcr, collect_hints, providers_from
 from dawoai.ocr.pages import PageError, prepare_pages
+from dawoai.ocr.review import REVIEW, confirm_problems, review_lines
 from dawoai.ocr.transcribe import check_transcription, transcribe_student
 from dawoai.paths import AppPaths
 from dawoai.workspace import create_workspace
@@ -99,6 +107,55 @@ def test_check_transcription() -> None:
     assert any("$ 기호" in p for p in problems)
     d2 = TranscriptionDraft(lines=[_line(math="y=1").model_copy(update={"page": 3})])
     assert any("첨부 1장을 넘는다" in p for p in check_transcription(d2, {"1"}, 1))
+
+
+QUESTION = "전구 ㉠, ㉡, ㉢이 있다. 전체 전압 V, 전구 저항 R일 때 (가), (나)에서 밝기를 비교하라."
+
+
+def _review(*lines: TranscriptLine) -> list[list[str]]:
+    return [[u.removeprefix(REVIEW) for u in x.uncertain if u.startswith(REVIEW)]
+            for x in review_lines(list(lines), QUESTION)]  # fmt: skip
+
+
+def test_review_flags_real_misreads() -> None:
+    """2026-11-04 실제 판독(claude)에서 나온 오독·표시가 걸린다."""
+    flags = _review(
+        TranscriptLine(text="친구야, 전류는 소모되지 않고 (판독불가)"),
+        TranscriptLine(text="㉠의 {1/2}배야."),
+        TranscriptLine(text=r"\(\therefore P\le\frac{V^2}{20a}\), 이때 전구저항은 2Ω"),
+        TranscriptLine(text="양단의 전압차는 동일하하지만 ㉣에는"),
+        TranscriptLine(text="전류의 비는 2i1이다"),
+    )
+    assert flags[0] == [f"{UNREADABLE} — 강사가 원본을 보고 채울 것"]
+    assert flags[1] == ["식 밖에 중괄호 { } (식을 \\( \\)로 감싸지 않았는지)"]
+    assert flags[2] == ["이 답안에서 한 번만 나오는 문자 a (문제에도 없음)"]
+    assert flags[3] == ["문제에 없는 기호 ㉣", "같은 글자가 겹침 하하"]
+    assert flags[4] == ["글 사이에 낀 영문·숫자 2i1 (식을 글로 읽었는지)"]
+
+
+def test_review_keeps_quiet_on_normal_answers() -> None:
+    """실제 gemini 판독 24건에서 거짓 경보가 없던 것: 점 이름, 이름만 쓴 변수, 단위, 겹낱말."""
+    flags = _review(
+        TranscriptLine(text=r"원O의 반지름을 \(r\), \(\overline{AH} = r\cos\theta\)"),
+        TranscriptLine(text=r"\(AP\)를 \(x\)축이라 하자. 각각의 전구는 점점 밝아져"),
+        TranscriptLine(
+            text=r"\(V = I R\), 10 m 높이, \(P = \frac{V^2}{R}\)", uncertain=["2 또는 z"]
+        ),
+        TranscriptLine(text="(가) 2Ω, (나) 2Ω"),
+    )
+    assert flags == [[], [], [], []]
+
+
+def test_review_is_idempotent_and_normalizes_marker() -> None:
+    once = review_lines(
+        [TranscriptLine(text="[판독 불가] 밝은 거야", uncertain=["흐림"])], QUESTION
+    )
+    twice = review_lines(once, QUESTION)
+    assert once == twice
+    assert once[0].text == f"{UNREADABLE} 밝은 거야" and once[0].uncertain[0] == "흐림"
+    t = Transcript(student_id="A", question_number="1", lines=once)
+    assert t.unreadable == 1 and t.needs_attention
+    assert confirm_problems(t) == [f"{UNREADABLE} 1곳을 원본을 보고 채우거나 지워 주세요."]
 
 
 def test_cross_check_identical() -> None:
@@ -281,18 +338,20 @@ def test_cli_scan_confirm_then_grade(
     assert main(["exam", *w, "rubric", exam_id]) == 0
     assert main(["exam", *w, "approve", exam_id, "-q", "1"]) == 0
 
+    # 판독이 끝나면 ([판독불가] 없음) 강사 확인 전에도 이어서 채점한다
     assert main(["exam", *w, "scan", exam_id, "--student", "F", str(SCAN)]) == 0
     out = capsys.readouterr().out
     assert "미확인" in out and "~~=(x-2)^2+11~~" in out.replace("식: ", "")
+    assert "F 문항 1: 4/4" in out
     store = ExamStore(ws, exam_id)
     t = store.transcript("F", "1")
     assert t is not None and not t.confirmed and t.pages == ["scans/F/original_01.jpg"]
     assert (store.scan_dir("F") / "page_01.png").exists()
+    g = store.grade("F", "1")
+    assert g is not None and not g.transcript_confirmed
 
-    assert main(["exam", *w, "grade", exam_id]) == 0
-    assert "판독문 확인 대기 — 건너뜀" in capsys.readouterr().out, "확인 전에는 채점하지 않음"
-
+    # 고친 것 없이 확정: AI를 부르지 않고 (가짜 AI의 응답이 다 떨어졌다) 표시만 켠다
     assert main(["exam", *w, "transcript", exam_id, "--student", "F", "-q", "1",
                  "--confirm", "--by", "강사"]) == 0  # fmt: skip
-    assert main(["exam", *w, "grade", exam_id, "--regrade"]) == 0
-    assert "F 문항 1: 4/4" in capsys.readouterr().out
+    g = store.grade("F", "1")
+    assert g is not None and g.transcript_confirmed and g.total == 4

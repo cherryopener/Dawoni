@@ -1,12 +1,14 @@
-"""시험 한 개를 끝까지: 해설 → 루브릭 → 답안(입력·판독) → 채점. 명령줄과 서버(화면)가 함께 쓴다.
+"""시험 한 개를 끝까지: 해설 → 루브릭 → 답안(입력·판독) → 채점 → HWPX. 명령줄과 서버(화면)가 쓴다.
 
 각 함수는 결과를 구조로 돌려주고 출력은 하지 않는다. 진행 상황은 `progress(done, total, 메시지)`로.
-강사 단계(루브릭 승인, 판독문 확인)를 건너뛰는 길은 여기에도 없다.
+루브릭 승인을 건너뛰는 길은 없다. 판독문 확인은 채점 뒤에 해도 된다 (`[판독불가]`만 기다린다 —
+PLAN.md §1 원칙 8의 예외, 2026-11-04).
 """
 
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +16,7 @@ from pathlib import Path
 from dawoai import sharing
 from dawoai.agents import AgentError, AgentErrorCode
 from dawoai.context import TaskFailed, situation
+from dawoai.export.exam_files import ExportResult, write_files
 from dawoai.grading import calibration
 from dawoai.grading.pipeline import (
     PipelineError,
@@ -29,6 +32,7 @@ from dawoai.grading.store import ExamStore, ScopeStore
 from dawoai.models.base import utcnow
 from dawoai.models.calibration import CalibrationEval, EvalCase, RubricSuggestion
 from dawoai.models.grading import (
+    UNREADABLE,
     CandidateMatches,
     Exam,
     ExamQuestion,
@@ -44,6 +48,7 @@ from dawoai.parallel import each_in_parallel
 from dawoai.services import Services
 
 Progress = Callable[[int, int, str], None]
+log = logging.getLogger(__name__)
 
 
 def _noop(done: int, total: int, message: str) -> None:
@@ -403,6 +408,17 @@ class GradeRun:
     graded: list[GradeResult] = field(default_factory=lambda: list[GradeResult]())
     skipped: list[Skipped] = field(default_factory=lambda: list[Skipped]())
     failed: list[Skipped] = field(default_factory=lambda: list[Skipped]())
+    export: ExportResult = field(default_factory=ExportResult)
+    """채점한 학생의 HWPX와 그 반 묶음 (채점이 끝날 때 한 번에 쓴다)."""
+
+
+def export_grades(svc: Services, store: ExamStore, grades: list[GradeResult]) -> ExportResult:
+    """채점이 바뀐 학생·문항의 HWPX를 쓰고 그 반 묶음을 다시 만든다 (코드만, 토큰 0).
+    쓰지 못해도(한글에서 열어 둠 등) 채점은 그대로 두고 경고만 돌려준다."""
+    res = write_files(svc.workspace, store, [(g.student_id, g.question_number) for g in grades])
+    for w in res.warnings:
+        log.warning(w)
+    return res
 
 
 def grade_exam(
@@ -416,7 +432,10 @@ def grade_exam(
     use_examples: bool = True,
     progress: Progress = _noop,
 ) -> GradeRun:
-    """승인된 루브릭 × 확인된 판독문만 채점. 한 학생의 실패가 나머지를 멈추지 않는다."""
+    """승인된 루브릭으로 채점. 한 학생의 실패·입력 대기가 나머지를 멈추지 않는다.
+
+    `[판독불가]`가 남은 판독문만 강사 입력을 기다린다 (2026-11-04 사용자 결정: 판독이 끝난 학생은
+    강사 확인 전에도 채점까지 간다. 강사는 결과를 보며 판독문을 고치고, 고쳐 확정하면 다시 채점)."""
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
     qs = select_questions(exam, only)
@@ -433,8 +452,10 @@ def grade_exam(
             t = store.transcript(st, q.number)
             if t is None:
                 continue
-            if not t.confirmed:
-                run.skipped.append(Skipped(st, q.number, "판독문 확인 대기"))
+            if t.unreadable:
+                run.skipped.append(
+                    Skipped(st, q.number, f"{UNREADABLE} {t.unreadable}곳 입력 대기")
+                )
                 continue
             old = store.grade(st, q.number)
             if old is not None and old.status == "teacher_confirmed":
@@ -467,10 +488,37 @@ def grade_exam(
                 raise
             run.failed.append(Skipped(t.student_id, q.number, str(e)))
             continue
+        g = g.model_copy(update={"transcript_confirmed": t.confirmed})
         store.save_grade(g)
         run.graded.append(g)
     progress(len(todo), len(todo), f"채점 {len(run.graded)}건 완료")
+    run.export = export_grades(svc, store, run.graded)
     return run
+
+
+def grade_ready(
+    svc: Services, store: ExamStore, students: list[str], *, progress: Progress = _noop
+) -> GradeRun | None:
+    """판독이 끝난 학생부터 바로 채점한다 (판독 작업 끝에 이어서). 루브릭이 승인된 문항만 —
+    하나도 없으면 None (승인 뒤 `grade_exam`). `[판독불가]`가 남은 학생·문항만 건너뛴다."""
+    exam = store.exam()
+    ready = [
+        q.number for q in exam.questions if (r := store.rubric(q.number)) and r.status == "approved"
+    ]
+    if not ready or not students:
+        return None
+    return grade_exam(svc, store, students=students, only=ready, progress=progress)
+
+
+def needs_input(store: ExamStore) -> list[Transcript]:
+    """`[판독불가]`가 남아 강사 입력을 기다리는 판독문 (알림 숫자)."""
+    exam = store.exam()
+    return [
+        t
+        for s in store.students()
+        for q in exam.questions
+        if (t := store.transcript(s, q.number)) is not None and t.unreadable
+    ]
 
 
 # ---------------------------------------------------------------- 보정
@@ -493,6 +541,46 @@ class TeacherImport:
     graded_first: list[str] = field(default_factory=lambda: list[str]())
     """강사 점수를 넣기 전에 AI 채점부터 한 답안 ('학생 문항')."""
     failed: list[Skipped] = field(default_factory=lambda: list[Skipped]())
+
+
+def wants_grading(store: ExamStore, before: Transcript | None, t: Transcript) -> bool:
+    """강사가 판독문을 확정했을 때 AI 채점이 필요한가: `[판독불가]`를 다 채웠고, 루브릭이 승인됐고,
+    채점이 아직 없거나 판독문을 고쳤을 때. 저장만(확정 안 함) 할 때는 채점하지 않는다 — 고칠 때마다
+    토큰을 쓰지 않게."""
+    rubric = store.rubric(t.question_number)
+    if not t.confirmed or t.unreadable or rubric is None or rubric.status != "approved":
+        return False
+    return store.grade(t.student_id, t.question_number) is None or (
+        before is None or before.lines != t.lines
+    )
+
+
+def grade_after_confirm(
+    svc: Services,
+    store: ExamStore,
+    before: Transcript | None,
+    t: Transcript,
+    *,
+    progress: Progress = _noop,
+) -> GradeRun | None:
+    """강사가 판독문을 확정하면 그 학생·문항을 맞춘다. 고친 것 없이 확정만 했으면 AI를 부르지 않고
+    채점의 '판독문 강사 확인' 표시만 켠다. 고쳤으면 다시 채점한다 (강사가 확정한 점수는
+    `grade_exam`이 지킨다)."""
+    old = store.grade(t.student_id, t.question_number)
+    if not wants_grading(store, before, t):
+        if t.confirmed and old is not None and not old.transcript_confirmed:
+            g = old.model_copy(update={"transcript_confirmed": True})
+            store.save_grade(g)
+            export_grades(svc, store, [g])  # 파일의 "판독문 확인 전" 줄을 지운다
+        return None
+    return grade_exam(
+        svc,
+        store,
+        students=[t.student_id],
+        only=[t.question_number],
+        regrade=old is not None,
+        progress=progress,
+    )
 
 
 def parse_teacher_csv(text: str) -> list[TeacherScore]:
@@ -572,6 +660,7 @@ def import_teacher_scores(
         except (PipelineError, KeyError, AgentError, TaskFailed) as e:
             res.failed.append(Skipped(st, qn, str(e).strip("'\"")))
     progress(len(groups), len(groups), f"강사 점수 {len(res.saved)}건 저장")
+    export_grades(svc, store, res.saved)
     return res
 
 

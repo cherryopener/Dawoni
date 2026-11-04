@@ -276,12 +276,13 @@ EXPORT_SUFFIXES = (".hwpx", ".xlsx")
 @router.get("/exports")
 def list_exports(st: AppState = State) -> list[dict[str, Any]]:
     ws = st.services().workspace
-    found = [p for p in ws.exports.iterdir() if p.suffix in EXPORT_SUFFIXES]
+    found = [p for p in ws.exports.rglob("*") if p.suffix in EXPORT_SUFFIXES and p.is_file()]
     items = sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
     return [
         {
             "path": p.relative_to(ws.root).as_posix(),
             "name": p.name,
+            "folder": p.parent.relative_to(ws.exports).as_posix(),
             "size": p.stat().st_size,
             "modified": p.stat().st_mtime,
         }

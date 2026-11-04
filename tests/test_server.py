@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from test_grading import FIX, GRADE_A, RUBRIC_OK, SOL_OK
 
 from dawoai.config import AppConfig, save_config
+from dawoai.export.hwpx import count_heads, read_back
 from dawoai.fsio import read_json
 from dawoai.paths import AppPaths
 from dawoai.server import files
@@ -161,7 +162,9 @@ def test_exam_end_to_end(
     for name in ("점수표.xlsx", "김다원_채점.hwpx", "옛것.docx"):
         (out_dir / name).write_bytes(b"x")
     exports = c.get("/api/exports").json()
-    assert sorted(e["name"] for e in exports) == ["김다원_채점.hwpx", "점수표.xlsx"]
+    names = sorted(e["name"] for e in exports)
+    # 채점이 쓴 학생 파일·반별 묶음(시험 폴더 안)도 함께 보인다
+    assert names == ["(반별)_반없음_1.hwpx", "김다원_채점.hwpx", "반없음_A_1.hwpx", "점수표.xlsx"]
     assert c.post("/api/files/open", json={"path": exports[0]["path"]}).json() == {"ok": True}
     assert opened and opened[0].suffix in (".hwpx", ".xlsx")
     out = c.post("/api/files/open", json={"path": "../../etc/passwd"})
@@ -215,6 +218,99 @@ def test_transcript_confirm_and_scan_job(
         and t["confirmed_by"] == "김선생"
         and t["lines"][1]["text"].startswith("따라서")
     )
+
+
+def test_one_unreadable_student_does_not_block_others(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path
+) -> None:
+    """학생 A는 판독이 끝나 바로 채점되고, B만 [판독불가] 입력을 기다린다 (알림 1). 강사가 B를 채워
+    확정하면 B를 채점한다. [판독불가]가 남은 채로는 확정할 수 없다."""
+    exe = make_fake(
+        "script",
+        script=[
+            {"response": json.dumps(r, ensure_ascii=False)}
+            for r in (SOL_OK, RUBRIC_OK, GRADE_A, GRADE_A)
+        ],
+    )
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    save_config(app_paths, cfg)
+    c = _client(app_paths)
+    c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q1 = read_json(FIX / "questions.json")[:1]
+    exam = c.post("/api/exams", json={"title": "자동 채점", "scope_id": scope["id"],
+                                      "questions": q1}).json()  # fmt: skip
+    base = f"/api/exams/{exam['id']}"
+    text = (FIX / "answers" / "A_q1.txt").read_text(encoding="utf-8")
+
+    # 판독 결과(미확인)를 흉내: A는 다 읽음, B는 한 곳을 못 읽음. 확정하지 않은 저장은 채점하지 않는다
+    lines: list[dict[str, Any]] = []
+    for s in ("A", "B"):
+        made: dict[str, Any] = c.post(
+            f"{base}/students/{s}/answers", json={"question": "1", "text": text}
+        ).json()
+        lines = made["lines"]
+    unreadable = [*lines, {"text": "[판독불가] 이다"}]
+    c.put(f"{base}/students/A/transcripts/1", json={"lines": lines, "confirm": False})
+    c.put(f"{base}/students/B/transcripts/1", json={"lines": unreadable, "confirm": False})
+    assert not [j for j in c.get("/api/jobs").json() if j["kind"] == "grade"]
+
+    assert _wait(c, c.post(f"{base}/solve", json={}).json())["status"] == "succeeded"
+    assert _wait(c, c.post(f"{base}/rubrics", json={}).json())["status"] == "succeeded"
+    c.post(f"{base}/questions/1/rubric/approve", json={"by": "김선생"})
+
+    job = _wait(c, c.post(f"{base}/grade", json={}).json())
+    assert job["result"]["graded"] == 1, "A는 강사 확인 전에도 채점"
+    assert job["result"]["skipped"] == [
+        {"student": "B", "question": "1", "reason": "[판독불가] 1곳 입력 대기"}
+    ]
+    assert c.get(base).json()["summary"]["needs_input"] == 1, "알림 숫자"
+    assert c.get(f"{base}/needs-input").json() == [{"student": "B", "question": "1",
+                                                    "unreadable": 1}]  # fmt: skip
+    a = c.get(f"{base}/students/A/grades/1").json()["grade"]
+    assert a["total"] == 4 and a["transcript_confirmed"] is False
+
+    # A는 파일까지, B는 아직 파일 없음. 반별 묶음은 B를 "입력 대기" 쪽으로 넣어 먼저 만든다
+    out = next((tmp_path / "ws" / "exports").iterdir())
+    assert out.name.endswith("_자동_채점")
+    assert sorted(p.name for p in out.iterdir()) == ["(반별)_반없음_1.hwpx", "반없음_A_1.hwpx"]
+    assert job["result"]["files"] == ["반없음_A_1.hwpx", "(반별)_반없음_1.hwpx"]
+    assert count_heads(out / "(반별)_반없음_1.hwpx") == 2
+    a_file = read_back(out / "반없음_A_1.hwpx")
+    assert a_file.head == "자동 채점 · 반없음 · A" and list(a_file.parts) == ["1"]
+    listed = c.get("/api/exports").json()
+    assert {e["name"] for e in listed} == {"(반별)_반없음_1.hwpx", "반없음_A_1.hwpx"}
+    assert {e["folder"] for e in listed} == {out.name}
+
+    path = f"{base}/students/B/transcripts/1"
+    got = c.get(path).json()
+    assert got["unreadable"] == 1 and got["needs_attention"] and got["page_images"] == []
+    r = c.put(path, json={"lines": unreadable, "confirm": True})
+    assert r.status_code == 400 and "[판독불가] 1곳" in r.json()["detail"]
+    assert not c.get(path).json()["transcript"]["confirmed"], "거부되면 저장하지 않는다"
+
+    # 강사가 원본을 보고 채워 확정 → B만 채점
+    t = c.put(path, json={"lines": lines, "confirm": True, "by": "김선생"}).json()
+    assert t["confirmed"]
+    auto = [j for j in c.get("/api/jobs").json() if j["params"].get("auto")]
+    assert [j["params"] for j in auto] == [
+        {"exam": exam["id"], "student": "B", "question": "1", "auto": True}
+    ]
+    done = _wait(c, auto[0])
+    assert done["status"] == "succeeded" and done["result"]["graded"] == 1, done
+    assert c.get(base).json()["summary"]["needs_input"] == 0
+    b = c.get(f"{base}/students/B/grades/1").json()["grade"]
+    assert b["total"] == 4 and b["transcript_confirmed"] is True
+    assert (out / "반없음_B_1.hwpx").is_file() and done["result"]["files"] == [
+        "반없음_B_1.hwpx", "(반별)_반없음_1.hwpx"
+    ]  # fmt: skip
+    assert read_back(out / "(반별)_반없음_1.hwpx").head.endswith("· A"), "묶음은 이름순"
+
+    # A를 고친 것 없이 확정: AI를 부르지 않고 (가짜 응답이 다 떨어졌다) 표시만 켠다
+    c.put(f"{base}/students/A/transcripts/1", json={"lines": lines, "confirm": True})
+    assert len([j for j in c.get("/api/jobs").json() if j["params"].get("auto")]) == 1
+    assert c.get(f"{base}/students/A/grades/1").json()["grade"]["transcript_confirmed"] is True
 
 
 def test_failed_job_reports_korean_message(

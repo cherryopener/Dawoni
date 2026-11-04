@@ -13,13 +13,17 @@
 
 결과는 `experiments/out/measure/`(git 제외 — 학생 이름·답안이 들어 있음). 같은 (역할, 모델, 대상)은
 결과 파일이 있으면 건너뛴다 (`--redo`로 다시). claude 모델은 이 실험에서 돌리지 않는다 (2026-11-04
-사용자 지시).
+사용자 지시). 예외는 손글씨 판독(read) 한 번: 강사들이 "claude는 한글 손글씨를 잘 못 읽는다"고 하므로
+체계적 판독에서는 어떤지 argon-low와 견준다 (2026-11-04 사용자 지시, claude 토큰을 아낌):
+
+    uv run python experiments/measure_agy.py read --models claude-sonnet-5-5 --sets 1-6
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import statistics
@@ -35,7 +39,7 @@ from typing import Any
 from rapidfuzz import fuzz
 
 from dawoai.agents import AgentClient
-from dawoai.config import TIER_NAMES, AppConfig, TierModel
+from dawoai.config import AGENT_NAMES, TIER_NAMES, AgentName, AppConfig, TierModel
 from dawoai.context import ContextEngine
 from dawoai.context.calllog import CallLog
 from dawoai.grading.pipeline import grade_answer
@@ -72,13 +76,18 @@ def say(*a: object) -> None:
 
 
 def engine_for(model: str) -> ContextEngine:
-    """agy만, 모든 등급이 이 모델. 한도에 걸려도 다른 AI로 넘어가지 않는다."""
+    """AI 하나만, 모든 등급이 이 모델. 한도에 걸려도 다른 AI로 넘어가지 않는다.
+    claude 모델은 앱의 standard 등급처럼 effort medium. 실행 파일은 자동 탐지, 또는 DAWOAI_CLAUDE_EXE."""
+    agent: AgentName = "claude" if model.startswith("claude") else "agy"
     cfg = AppConfig()
-    cfg.default_agent = "agy"
+    cfg.default_agent = agent
     cfg.auto_fallback = False
-    for name in ("claude", "codex", "local"):
-        cfg.agents[name].enabled = False  # pyright: ignore[reportArgumentType]
-    cfg.tiers["agy"] = {t: TierModel(model=model) for t in TIER_NAMES}
+    for name in AGENT_NAMES:
+        cfg.agents[name].enabled = name == agent
+    tier = TierModel(model=model, effort="medium" if agent == "claude" else None)
+    cfg.tiers[agent] = {t: tier for t in TIER_NAMES}
+    if agent == "claude" and (exe := os.environ.get("DAWOAI_CLAUDE_EXE")):
+        cfg.agents["claude"].executable = exe
     paths = AppPaths(OUT / "app")
     paths.ensure()
     return ContextEngine(AgentClient(cfg, paths), calllog=CallLog(CALLS))
@@ -486,10 +495,10 @@ def main(argv: list[str]) -> int:
         say(report())
         return 0
     models = [m.strip() for m in args.models.split(",") if m.strip()]
-    if not models or any(m.startswith("claude") for m in models):
-        raise SystemExit(
-            "--models에 agy의 gemini·gpt-oss 모델을 쉼표로 (claude 모델은 이 실험에서 제외)"
-        )
+    if not models:
+        raise SystemExit("--models에 모델 이름을 쉼표로")
+    if any(m.startswith("claude") for m in models) and args.task != "read":
+        raise SystemExit("claude 모델은 손글씨 판독(read)만 잰다 (claude 토큰을 아낌)")
     fn = TASKS.get(args.task)
     if args.task == "grade":
         if not args.transcripts:

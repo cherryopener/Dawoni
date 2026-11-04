@@ -17,6 +17,7 @@
     dawoai exam scan-batch <시험ID> 답안지.pdf --per-student 5 -q 2   # 2번 쪽만 (강사별 분담)
     dawoai exam compare <시험ID>                   # AI 채점 ↔ 표지의 강사 점수
     dawoai exam transcript <시험ID> --student 홍길동 -q 3 [--confirm] [--replace 고친답안.txt]
+    dawoai exam export <시험ID>                 # 채점 HWPX 다시 쓰기 (보통은 채점 때 저절로)
     dawoai exam grade <시험ID> [--student 홍길동] [-q 3] [--double] [--regrade]
     dawoai exam report <시험ID>
 
@@ -33,6 +34,7 @@ from typing import Any
 from dawoai.agents import AgentError
 from dawoai.config import AGENT_NAMES
 from dawoai.context import TaskFailed
+from dawoai.export.exam_files import ExportResult, write_all
 from dawoai.fsio import read_json
 from dawoai.grading import workflow
 from dawoai.grading.pipeline import (
@@ -44,6 +46,7 @@ from dawoai.grading.pipeline import (
 from dawoai.grading.render import key_text, rubric_text, solution_text
 from dawoai.grading.store import ExamStore, ScopeStore
 from dawoai.models.grading import (
+    UNREADABLE,
     CandidateMatches,
     Exam,
     ExamQuestion,
@@ -55,6 +58,7 @@ from dawoai.models.grading import (
 )
 from dawoai.models.scope import ScopeProfile
 from dawoai.ocr.pages import PageError
+from dawoai.ocr.review import confirm_problems
 from dawoai.services import Services, open_services
 from dawoai.workspace import WorkspaceError
 
@@ -373,6 +377,8 @@ def _print_transcript(t: Transcript) -> None:
     head = "확인됨" if t.confirmed else "미확인"
     agree = f", 교차 판독 일치 {t.agreement:.0%}" if t.agreement is not None else ""
     attention = " ⚠ 주의해서 확인" if t.needs_attention and not t.confirmed else ""
+    if t.unreadable:
+        attention += f" — {UNREADABLE} {t.unreadable}곳: 채워야 확정할 수 있음"
     _out(f"[{t.student_id} 문항 {t.question_number}] {head}{agree}{attention}")
     for n, line in enumerate(t.lines, start=1):
         mark = "~~" if line.struck else ""
@@ -410,8 +416,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         _out(f"  ? 문항을 알 수 없는 줄 ({line.page}쪽): {line.joined}")
     for note in res.notes:
         _out(f"  · {note}")
-    _out("원본과 비교해 확인한 뒤 `exam transcript … --confirm`으로 확정해야 채점할 수 있습니다.")
-    return 0
+    return _grade_ready(svc, store, [args.student] if res.saved else [])
 
 
 def _cmd_scan_batch(args: argparse.Namespace) -> int:
@@ -448,8 +453,25 @@ def _cmd_scan_batch(args: argparse.Namespace) -> int:
         _out(f"  ! {w}")
     for f in res.failed:
         _out(f"  ✗ {f.student}: {f.reason[:300]}")
-    _out(f"{len(res.students)}명 판독. 원본과 비교해 확인한 뒤 `exam transcript … --confirm`")
-    return 1 if res.failed else 0
+    _out(f"{len(res.students)}명 판독.")
+    graded = _grade_ready(svc, store, [r.student_id for r in res.students])
+    return 1 if res.failed else graded
+
+
+def _grade_ready(svc: Services, store: ExamStore, students: list[str]) -> int:
+    """판독이 끝난 학생은 바로 채점하고, [판독불가]가 남은 답안은 입력해 달라고 알린다."""
+    run = workflow.grade_ready(svc, store, students, progress=_cli_progress)
+    code = _print_grade_run(run) if run else 0
+    if run is None and students:
+        _out("루브릭이 승인되면 채점합니다 (`exam approve` 뒤 `exam grade`).")
+    waiting = [t for t in workflow.needs_input(store) if t.student_id in students]
+    if waiting:
+        _out(f"\n입력 필요 {len(waiting)}건 — 원본을 보고 {UNREADABLE}을 채운 뒤 확정하면 채점:")
+        for t in waiting:
+            where = f"--student {t.student_id} -q {t.question_number}"
+            _out(f"  - {t.student_id} 문항 {t.question_number}: {UNREADABLE} {t.unreadable}곳"
+                 f" (`exam transcript … {where}`)")  # fmt: skip
+    return code
 
 
 def _cmd_answer_pages(args: argparse.Namespace) -> int:
@@ -508,16 +530,20 @@ def _cmd_transcript(args: argparse.Namespace) -> int:
     t = store.transcript(args.student, args.q)
     if t is None:
         return _err(f"{args.student} 문항 {args.q}: 판독문이 없습니다.")
+    before = t
     if args.replace:
         lines = parse_answer_text(Path(args.replace).read_text(encoding="utf-8"))
         t = t.model_copy(update={"lines": lines, "confirmed": False})
         _out("판독문을 고친 내용으로 바꿨습니다.")
     if args.confirm:
+        if problems := confirm_problems(t):
+            return _err(" ".join(problems) + " (`--replace 고친답안.txt`)")
         t = t.model_copy(update={"confirmed": True, "confirmed_by": args.by})
     if args.replace or args.confirm:
         store.save_transcript(t)
     _print_transcript(t)
-    return 0
+    run = workflow.grade_after_confirm(svc, store, before, t, progress=_cli_progress)
+    return _print_grade_run(run) if run else 0
 
 
 def _cmd_grade(args: argparse.Namespace) -> int:
@@ -533,8 +559,12 @@ def _cmd_grade(args: argparse.Namespace) -> int:
         use_examples=not args.no_examples,
         progress=_cli_progress,
     )
+    return _print_grade_run(run)
+
+
+def _print_grade_run(run: workflow.GradeRun) -> int:
     for sk in run.skipped:
-        hint = " (`exam transcript … --confirm`)" if sk.reason.startswith("판독문") else ""
+        hint = " (`exam transcript … --confirm`)" if sk.reason.startswith(UNREADABLE) else ""
         _out(f"{sk.student} 문항 {sk.question}: {sk.reason} — 건너뜀{hint}")
     for g in run.graded:
         mark = "검토 필요" if g.status == "needs_review" else "자동"
@@ -543,12 +573,31 @@ def _cmd_grade(args: argparse.Namespace) -> int:
         _out(f"{g.student_id} 문항 {g.question_number}: {g.total:g}/{g.max_points:g}  [{mark}]")
         for f in g.flags:
             _out(f"   ! {f}")
+    _print_export(run.export)
     if run.failed:
         _out(f"\n실패 {len(run.failed)}건 (다시 실행하면 이 답안만 다시 채점합니다):")
         for f in run.failed:
             _out(f"  - {f.student} 문항 {f.question}: {f.reason}")
         return 1
     return 0
+
+
+def _print_export(res: ExportResult) -> None:
+    if res.written:
+        _out(f"HWPX {len(res.written)}개: {res.written[0].parent}")
+        for p in res.written:
+            _out(f"  · {p.name}")
+    for w in res.warnings:
+        _out(f"  ! {w}")
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    svc = _svc(args)
+    res = write_all(svc.workspace, ExamStore(svc.workspace, args.exam))
+    _print_export(res)
+    if not res.written:
+        _out("쓸 파일이 없습니다 (채점이 끝난 답안이 없음).")
+    return 1 if res.warnings else 0
 
 
 def _part_totals(store: ExamStore, q: ExamQuestion, g: GradeResult) -> str:
@@ -724,6 +773,10 @@ def register(sub: Any) -> None:
     r = es.add_parser("report", help="채점 결과")
     r.add_argument("exam")
     r.set_defaults(func=_wrap(_cmd_report))
+
+    ex = es.add_parser("export", help="채점 HWPX 모두 다시 쓰기 (채점할 때마다 저절로 씀)")
+    ex.add_argument("exam")
+    ex.set_defaults(func=_wrap(_cmd_export))
 
     from dawoai import cli_calibration
 

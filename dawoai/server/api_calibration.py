@@ -180,7 +180,7 @@ def manual_grade(
     exam_id: str, student: str, number: str, body: ManualBody, st: AppState = State
 ) -> GradeResult:
     """강사가 AI 없이 직접 채점 — 기준 예시가 된다."""
-    _, store = _store(st, exam_id)
+    svc, store = _store(st, exam_id)
     t = store.transcript(student, number)
     if t is None:
         raise KeyError(f"{student} 문항 {number}: 판독문 없음")
@@ -195,4 +195,5 @@ def manual_grade(
         by=body.by,
     )
     store.save_grade(g)
+    workflow.export_grades(svc, store, [g])
     return g

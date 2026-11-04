@@ -320,9 +320,11 @@ def test_grade_gates(engine_with: EngineWith, q1: ExamQuestion, scope: ScopeProf
     draft = Rubric(**RubricDraft.model_validate(RUBRIC_OK).model_dump(), question_number="1")
     with pytest.raises(PipelineError, match="승인되지 않았습니다"):
         grade_answer(engine, q1, draft, transcript_of("A_q1.txt"), scope)
-    unconfirmed = transcript_of("A_q1.txt").model_copy(update={"confirmed": False})
-    with pytest.raises(PipelineError, match="확인하지 않았습니다"):
-        grade_answer(engine, q1, approved_rubric(), unconfirmed, scope)
+    t = transcript_of("A_q1.txt")
+    lines = [*t.lines, TranscriptLine(text="[판독불가] 이다")]
+    unreadable = t.model_copy(update={"confirmed": False, "lines": lines})
+    with pytest.raises(PipelineError, match=r"\[판독불가\] 1곳을 강사가 채워야"):
+        grade_answer(engine, q1, approved_rubric(), unreadable, scope)
 
 
 def test_grade_repairs_fabricated_quote(
