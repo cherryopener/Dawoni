@@ -232,7 +232,7 @@ M3 판독문(학생 24명, 강사 확인 전)을 다워니 **초안** 루브릭(
 
 - 두 모델이 같은 점수를 준 것은 45건 중 33건. argon-low는 강사와 같은 수는 같지만 다를 때 더 크게, 언제나
   낮게 준다(13건 중 차이 2점 이상 9건) — 과정 점수를 짜게 보는 쪽이다. 보정(M5)의 기준 예시로 줄어드는지 볼 것.
-- 기본값은 바꾸지 않았다(채점 = standard = flash-medium). argon-low로 하려면 `role_tiers: {"grader": "strong"}`
+- 기본값은 flash-medium 그대로 (2026-11-05 사용자 결정, 채점 = standard). argon-low로 하려면 `role_tiers: {"grader": "strong"}`
   — argon 한도를 채점이 쓰게 되므로 강사가 정한다. argon-low 채점 결과는 실험 작업공간에 남아 있고,
   flash-medium 채점은 `experiments/out/m4/flash-medium-grades/`에 보관했다.
 
