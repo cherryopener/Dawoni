@@ -368,6 +368,9 @@ def test_blank_answer_is_not_read_again(
     pdf = _pdf(tmp_path / "answers.pdf", 2)
     first = workflow.scan_batch(svc, store, pdf, per_student=2)
     assert [r.transcribed for r in first.students] == [["1", "2"]]
-    assert store.transcript("가학생", "2") is None
+    blank = store.transcript("가학생", "2")
+    assert blank is not None and blank.is_blank and blank.pages, "빈 판독문 + 원본 쪽 (M4)"
+    path = student_file(svc.workspace, store, "가학생", "2")
+    assert list(read_back(path).parts) == ["2"], "판독본에 빈 표식 — 강사가 그 아래에 채운다"
     again = workflow.scan_batch(svc, store, pdf, per_student=2)
     assert again.skipped == ["가학생"] and len(fake_prompts(exe)) == 2

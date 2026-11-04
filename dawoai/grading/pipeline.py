@@ -164,7 +164,7 @@ class SecondOpinion:
     agent: AgentName | None = None
     model: str | None = None
     when: SecondWhen = "low"
-    """low = 확신도 낮음·수리·확인할 점이 있는 채점만 (기본), all = 모두."""
+    """low = 확신도 낮음·수리가 있었던 채점만 (기본), all = 모두."""
 
 
 # ---------------------------------------------------------------- 해설
@@ -872,12 +872,12 @@ def _grade_once(
 
 
 def needs_second(first: GradeOutput, attempts: int) -> bool:
-    """재채점할 채점 (PLAN.md §2-4 4번): 확신도가 낮거나, 수리했거나, AI가 확인할 점을 적음."""
-    return (
-        attempts > 1
-        or bool(first.flags)
-        or any(j.confidence < LOW_CONFIDENCE for j in first.judgements)
-    )
+    """재채점할 채점 (PLAN.md §2-4 4번): 확신도가 낮거나 검증 수리가 있었던 것만.
+
+    AI가 적은 확인할 점(`flags`)만으로는 다시 채점하지 않는다 — 검토 필요로 강사에게 간다.
+    M4 실측(24명, flash-medium): flags로 다시 채점한 27건 중 점수가 달라진 것은 5건, 강사 점수와
+    같은 비율은 오히려 낮았고(15/27, 안 한 것 17/18) 호출은 45 → 72번으로 늘었다."""
+    return attempts > 1 or any(j.confidence < LOW_CONFIDENCE for j in first.judgements)
 
 
 def grade_answer(

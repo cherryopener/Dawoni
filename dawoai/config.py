@@ -166,8 +166,8 @@ class AppConfig(_Settings):
     parallel_grading: int = Field(default=4, ge=1, le=6)
     """채점에서 동시에 부르는 AI 수 (학생 × 문항). 한도 신호를 보면 저절로 줄인다."""
     second_opinion: Literal["off", "low", "all"] = "low"
-    """재채점 (PLAN.md §2-4 4번): low = 확신도 낮음·수리·확인할 점이 있는 채점만 새 세션으로 한 번
-    더, all = 모두, off = 안 함. 두 번째 채점이 다르면 '검토 필요'."""
+    """재채점 (PLAN.md §2-4 4번): low = 확신도 낮음·수리가 있었던 채점만 새 세션으로 한 번 더,
+    all = 모두, off = 안 함. 두 번째 채점이 다르면 '검토 필요'."""
     second_agent: AgentName | None = None
     """재채점에 쓸 AI (None = 첫 채점과 같은 AI, 새 세션)."""
     second_model: str | None = None

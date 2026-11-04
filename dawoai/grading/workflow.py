@@ -192,6 +192,11 @@ def match_candidates(
 # ---------------------------------------------------------------- 손글씨 판독
 
 
+BLANK_NOTE = (
+    "판독한 글이 없음 — 빈 답안으로 보고 AI 없이 0점 (원본에 답이 있으면 판독본에 채우세요)"
+)
+
+
 @dataclass
 class ScanResult:
     saved: list[Transcript] = field(default_factory=lambda: list[Transcript]())
@@ -514,6 +519,20 @@ def scan_batch(
                 if prev is not None and prev.confirmed and not overwrite:
                     continue
                 store.save_transcript(t.model_copy(update={"notes": t.notes + outcome.notes}))
+            for q in qs:  # 빈 답안: 원본 쪽만 단 빈 판독문 — 코드 0점, 강사가 판독본에서 채운다
+                if q.number in outcome.transcripts or store.transcript(sid, q.number) is not None:
+                    continue
+                own = [pages[i] for i in q.answer_pages if i in pages] or answer
+                store.save_transcript(
+                    Transcript(
+                        student_id=sid,
+                        question_number=q.number,
+                        lines=[],
+                        source="ocr",
+                        pages=[x.relative_to(store.root).as_posix() for x in own],
+                        notes=[BLANK_NOTE],
+                    )
+                )
             # 빈 답안(판독문 없음)도 판독한 것으로 적어 둔다 — 다시 하면 건너뛰게
             done = sorted({*record.transcribed, *(q.number for q in qs)})
             job.record = record.model_copy(update={"transcribed": done})

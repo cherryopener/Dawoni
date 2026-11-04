@@ -514,6 +514,10 @@ def test_second_grading_only_when_unsure(
     t = transcript_of("A_q1.txt")
     g = grade_answer(engine, q1, approved_rubric(), t, scope, double=SecondOpinion())
     assert g.second_opinion is None and g.calls == 1 and len(fake_prompts(exe)) == 1
+    flagged = {**GRADE_A, "flags": ["(1) 판독 불확실 — 확인"]}
+    engine, exe = engine_with([flagged])
+    g = grade_answer(engine, q1, approved_rubric(), t, scope, double=SecondOpinion())
+    assert g.second_opinion is None and g.status == "needs_review", "확인할 점만으로는 재채점 안 함"
     low = copy.deepcopy(GRADE_A)
     low["judgements"][0]["confidence"] = 0.3
     engine, exe = engine_with([low, GRADE_A])

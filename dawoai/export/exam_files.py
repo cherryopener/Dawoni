@@ -129,6 +129,12 @@ class _Sheets:
             return Sheet(head=head, lines=[], waiting="답안 없음 (판독한 글이 없음)")
         scans = [s for p in t.pages if (s := self._scan(self.store.root / p)) is not None]
         reading = Sheet(head=head, lines=sheet_lines(q, t.lines), scans=scans)
+        if not t.lines:  # 빈 답안: 소문항 표식만 — 강사가 원본을 보고 그 아래에 채운다
+            parts = self.exam.question(q).parts
+            reading.empty_parts = [f"{q}-{p.label}" for p in parts] or [q]
+            reading.reading_notes.append(
+                "판독한 글이 없음 — 원본에 답이 있으면 표식 아래에 채우세요"
+            )
         if t.unreadable:
             reading.reading_notes.append(
                 f"입력 대기: {UNREADABLE} {t.unreadable}곳(분홍) — 원본을 보고 채워 저장한 뒤 "

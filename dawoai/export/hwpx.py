@@ -87,6 +87,8 @@ class Sheet:
     않으므로 판독문에 섞이지 않는다."""
     waiting: str | None = None
     """묶음에서 이 학생 대신 넣을 안내 ("입력 대기 …"). 있으면 판독·채점을 쓰지 않는다."""
+    empty_parts: list[str] = field(default_factory=lambda: list[str]())
+    """판독한 글이 없을 때(빈 답안) 쓸 소문항 표식 (`1-(1)` …) — 강사가 그 아래에 채워 확인 완료."""
 
 
 def sheet_lines(question: str, lines: list[TranscriptLine]) -> list[TranscriptLine]:
@@ -461,6 +463,9 @@ def write_reading(b: Builder, sheet: Sheet) -> HwpxOxmlParagraph:
         for line in part_lines:
             marks = [(u, YELLOW) for u in line.uncertain] + [(UNREADABLE, PINK)]
             write_line(b, line, highlights=marks)
+    if not sheet.lines:
+        for part in sheet.empty_parts:
+            b.para(f"{MARK} {part}", char=b.part, style=b.style_part)
     return head
 
 
