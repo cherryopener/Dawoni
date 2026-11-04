@@ -1,12 +1,13 @@
 """M4 실측: M3 판독문(학생 24명)을 다워니 초안 루브릭(1·2번)으로 채점하고 표지의 강사 점수와 비교.
 
     uv run python experiments/m4_grade.py grade [--parallel 4] [--regrade]
-    uv run python experiments/m4_grade.py report
+    uv run python experiments/m4_grade.py grade --regrade --model gemini-4-argon-low --label argon-low
+    uv run python experiments/m4_grade.py report [--label argon-low]
 
 - 판독문: M3 실측(`m3_batch.py scan`, flash-medium)이 만든 것. 강사 확인 전이다.
 - 루브릭: 다워니의 **초안**(보정 전) — 3번은 인쇄 해설지가 틀려(PLAN.md §1-3) 뺀다.
 - 기준: 표지의 빨간 펜 문항 점수 (표지 판독, 다워니 실측 68/72). 소문항 점수는 없다(M5에서 읽음).
-- 결과는 `experiments/out/m4/report.json`·`report.md`.
+- 결과는 `experiments/out/m4/[<label>/]report.json`·`report.md`. `--model`은 채점 역할(grader)만 바꾼다.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from m3_batch import DAWONI_EXAM, exam_store, services  # pyright: ignore[reportPrivateUsage]
 
+from dawoai.config import TierModel
 from dawoai.context.calllog import CallLog
 from dawoai.grading import workflow
 from dawoai.grading.pipeline import approve_rubric
@@ -35,9 +37,16 @@ def _progress(done: int, total: int, message: str) -> None:
     print(f"  [{done}/{total}] {message}", flush=True)
 
 
+def _out(args: argparse.Namespace) -> Path:
+    return OUT / args.label if args.label else OUT
+
+
 def cmd_grade(args: argparse.Namespace) -> int:
     svc = services(parallel=args.parallel)
     svc.config.parallel_grading = args.parallel
+    if args.model:  # 채점 역할만 strong 등급으로 올려 그 모델을 쓴다
+        svc.config.tiers["agy"]["strong"] = TierModel(model=args.model)
+        svc.config.role_tiers["grader"] = "strong"
     store = exam_store(svc)
     for q in QUESTIONS:
         r = store.rubric(q)
@@ -52,8 +61,9 @@ def cmd_grade(args: argparse.Namespace) -> int:
     )
     wall = time.monotonic() - t0
     calls = CallLog(svc.paths.logs / "calls.jsonl").read()[calls_before:]
-    OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "run.json").write_text(
+    out = _out(args)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "run.json").write_text(
         json.dumps(
             {
                 "wall_s": wall,
@@ -74,10 +84,11 @@ def cmd_grade(args: argparse.Namespace) -> int:
     return cmd_report(args)
 
 
-def cmd_report(_: argparse.Namespace) -> int:
+def cmd_report(args: argparse.Namespace) -> int:
     svc = services()
     store = exam_store(svc)
-    run: dict[str, Any] = json.loads((OUT / "run.json").read_text(encoding="utf-8"))
+    out = _out(args)
+    run: dict[str, Any] = json.loads((out / "run.json").read_text(encoding="utf-8"))
     rows: list[dict[str, Any]] = []
     for sid in store.students():
         rec = store.student_record(sid)
@@ -134,7 +145,7 @@ def cmd_report(_: argparse.Namespace) -> int:
         "rate_signals": run["rate_signals"],
         "failed": run["failed"],
     }
-    (OUT / "report.json").write_text(
+    (out / "report.json").write_text(
         json.dumps({"summary": summary, "rows": rows}, ensure_ascii=False, indent=1),
         encoding="utf-8",
     )
@@ -152,7 +163,7 @@ def cmd_report(_: argparse.Namespace) -> int:
             for r in rows
         ],
     ]
-    (OUT / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (out / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     for k, v in summary.items():
         print(f"{k}: {v}")
     return 0
@@ -164,8 +175,12 @@ def main(argv: list[str]) -> int:
     g = sub.add_parser("grade")
     g.add_argument("--parallel", type=int, default=4)
     g.add_argument("--regrade", action="store_true")
+    g.add_argument("--model", help="채점 역할에 쓸 모델 (strong 등급으로)")
+    g.add_argument("--label", help="결과 폴더 이름 (out/m4/<label>/)")
     g.set_defaults(func=cmd_grade)
-    sub.add_parser("report").set_defaults(func=cmd_report)
+    r = sub.add_parser("report")
+    r.add_argument("--label")
+    r.set_defaults(func=cmd_report)
     args = ap.parse_args(argv)
     return int(args.func(args))
 
