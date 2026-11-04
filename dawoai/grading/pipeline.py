@@ -144,7 +144,7 @@ MATCH: TaskDef[AnswerSideOutput] = TaskDef(
 )
 
 SUGGEST: TaskDef[RubricSuggestion] = TaskDef(
-    role="rubric_builder",
+    role="calibrator",
     name="suggest_rubric",
     template="suggest_rubric.md.j2",
     output=RubricSuggestion,
@@ -1195,7 +1195,13 @@ def teacher_grade(
 
 
 def check_suggestion(
-    s: RubricSuggestion, q: ExamQuestion, solution: SolutionDraft, case_students: set[str]
+    s: RubricSuggestion,
+    q: ExamQuestion,
+    solution: SolutionDraft | None,
+    case_students: set[str],
+    *,
+    key: AnswerKey | None = None,
+    scope: ScopeProfile | None = None,
 ) -> list[str]:
     problems: list[str] = []
     if bool(s.changes) != (s.revised is not None):
@@ -1209,6 +1215,8 @@ def check_suggestion(
     if s.revised is not None:
         # 소문항 배점 합은 지킨다 (해설지 부분 점수 구조는 강사 사례가 우선이라 보지 않음)
         problems += checks.check_rubric(s.revised, q, solution)
+        if scope is not None:  # 보정 제안도 해설지 범위 안에서만 (§4-2)
+            problems += checks.check_rubric_scope(s.revised, q, key, scope)
     return problems
 
 
@@ -1216,7 +1224,7 @@ def suggest_rubric(
     engine: ContextEngine,
     q: ExamQuestion,
     rubric: Rubric,
-    solution: SolutionDraft,
+    solution: SolutionDraft | None,
     scope: ScopeProfile,
     corrections: str,
     case_students: set[str],
@@ -1225,10 +1233,11 @@ def suggest_rubric(
     """강사 수정 사례 → 루브릭 개선 제안. 적용은 강사가 고른 뒤 `edit_rubric` (다시 승인 필요).
 
     해설지 비교 결과(`checks`)·정답 후보(강사 결정 포함)·해설지 기준 확인은 제안이 바꾸지 못한다.
+    해설지로 만든 루브릭(AI 풀이 없음)은 `solution=None`으로 해설지만 자료로 준다.
     """
 
     def check(v: RubricSuggestion) -> list[str]:
-        return check_suggestion(v, q, solution, case_students)
+        return check_suggestion(v, q, solution, case_students, key=key, scope=scope)
 
     task = dataclasses.replace(SUGGEST, validator=check)
     out = engine.run(
@@ -1240,7 +1249,11 @@ def suggest_rubric(
                 [
                     exam_question_text(q),
                     *([key_text(key, q)] if key else []),
-                    solution_text(solution, "[AI 풀이]" if key else "[모범 해설]"),
+                    *(
+                        [solution_text(solution, "[AI 풀이]" if key else "[모범 해설]")]
+                        if solution
+                        else []
+                    ),
                     rubric_text(rubric, q.parts),
                     "[강사가 확정한 채점 사례]\n" + corrections,
                 ]

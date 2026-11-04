@@ -55,6 +55,41 @@ class EvalCase(DawoaiModel):
     error: str | None = None
 
 
+class PartCase(DawoaiModel):
+    student_id: str
+    teacher: dict[str, float] = Field(description="소문항 → 강사 손채점 점수")
+    ai: dict[str, float] = Field(description="소문항 → AI 점수 (항목 점수의 합)")
+
+
+class PartAgreement(DawoaiModel):
+    """강사 손채점(빨간 펜 소문항 점수)과 AI 채점의 소문항 일치도 — 다워니 95%(182/192)와 같은 잣대.
+
+    강사가 고치기 전의 AI 점수와 비교한다 (강사 확정 채점이면 `ai_judgements`)."""
+
+    question_number: str | None = Field(default=None, description="None = 여러 문항 합계")
+    rubric_version: int | None = None
+    n: int = Field(default=0, description="비교한 학생 수")
+    parts: int = Field(default=0, description="비교한 소문항 수")
+    same: int = 0
+    within1: int = Field(default=0, description="차이 1점 이내 소문항 수")
+    ai_lower: int = Field(default=0, description="AI가 강사보다 낮게 준 소문항 수")
+    ai_higher: int = 0
+    diff_sum: float = Field(default=0.0, description="AI − 강사 (소문항 합)")
+    abs_diff_sum: float = 0.0
+    per_part: dict[str, int] = Field(
+        default_factory=lambda: dict[str, int](), description="소문항별 불일치 수"
+    )
+    stale: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="AI 채점이 지금 루브릭과 구조가 달라 비교하지 못한 학생",
+    )
+    cases: list[PartCase] = Field(default_factory=lambda: list[PartCase]())
+
+    @property
+    def rate(self) -> float | None:
+        return self.same / self.parts if self.parts else None
+
+
 class CalibrationEval(DawoaiModel):
     """보정 효과 측정: 강사가 확정한 답안을 예시 없이 / 예시와 함께(자기 답안은 빼고) 다시 채점."""
 

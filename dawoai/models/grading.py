@@ -459,6 +459,13 @@ class Rubric(RubricDraft):
     status: Literal["draft", "approved"] = "draft"
     approved_by: str | None = None
     approved_at: datetime | None = None
+    finalized_by: str | None = Field(
+        default=None, description="강사 손채점과 맞춰 보고 확정한 사람 (PLAN.md §6-5)"
+    )
+    finalized_at: datetime | None = None
+    finalized_note: str | None = Field(
+        default=None, description="확정할 때의 소문항 일치도 (강사 손채점 대비)"
+    )
     created_by: str | None = None
     created_at: datetime | None = Field(
         default=None, description="AI 초안을 만든 때 (강사 편집은 판만 올림)"
@@ -514,6 +521,19 @@ class StudentRecord(DawoaiModel):
         description="같은 반에 같은 이름의 시험지가 또 있음 — 강사가 김다원A·김다원B처럼 이름을 "
         "바꾸기 전에는 HWPX를 만들지 않는다 (PLAN.md §5-1 3단계)",
     )
+    teacher_marks: dict[str, dict[str, float | None]] = Field(
+        default_factory=lambda: dict[str, dict[str, float | None]](),
+        description="답안 쪽 점수 칸에 강사가 (빨간 펜으로) 적은 소문항 점수: 문항 → 소문항 → 점수 "
+        "(소문항이 없으면 빈 글자, None = 읽지 못함). 손채점한 답안지를 넣었을 때 (PLAN.md §6)",
+    )
+    marks_uncertain: list[str] = Field(
+        default_factory=lambda: list[str](), description="점수 칸에서 애매했던 숫자"
+    )
+    marks_confirmed: bool = Field(
+        default=False,
+        description="강사가 읽은 점수를 확인함 — 확인한 점수만 강사 채점(보정 사례)이 된다",
+    )
+    marks_confirmed_by: str | None = None
 
 
 # ---------------------------------------------------------------- 판독문

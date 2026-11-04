@@ -1,4 +1,5 @@
-"""강사 보정 API (M8): 기준 예시·일치도·보정 효과 측정·루브릭 개선 제안·강사 직접 채점."""
+"""강사 보정 API: 기준 예시·일치도·보정 효과 측정·루브릭 개선 제안·강사 직접 채점,
+손채점 답안지의 빨간 펜 소문항 점수 읽기·확인·소문항 일치도·루브릭 확정 (M5)."""
 
 from __future__ import annotations
 
@@ -7,10 +8,10 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from dawoai.grading import calibration, workflow
+from dawoai.grading import calibration, marks, workflow
 from dawoai.grading.pipeline import PipelineError, edit_rubric, teacher_grade
-from dawoai.models.calibration import CalibrationEval, CalibrationSettings
-from dawoai.models.grading import GradeResult, Rubric, RubricDraft, Transcript
+from dawoai.models.calibration import CalibrationEval, CalibrationSettings, PartAgreement
+from dawoai.models.grading import GradeResult, Rubric, RubricDraft, StudentRecord, Transcript
 from dawoai.models.job import Job
 from dawoai.server.api_exams import _store  # pyright: ignore[reportPrivateUsage]
 from dawoai.server.api_setup import State
@@ -197,3 +198,115 @@ def manual_grade(
     store.save_grade(g)
     workflow.export_grades(svc, store, [g])
     return g
+
+
+# ---------------------------------------------------------------- 손채점 답안지 (M5)
+
+
+def _marks_row(r: StudentRecord, exam: Any) -> dict[str, Any]:
+    from dawoai.ocr.marks import problems
+
+    return {
+        "student_id": r.student_id,
+        "marks": r.teacher_marks,
+        "cover_scores": r.teacher_scores,
+        "uncertain": r.marks_uncertain,
+        "confirmed": r.marks_confirmed,
+        "confirmed_by": r.marks_confirmed_by,
+        "problems": problems(r, exam),
+    }
+
+
+class ReadMarksBody(BaseModel):
+    students: list[str] | None = None
+    overwrite: bool = False
+
+
+@router.post("/{exam_id}/marks/read")
+def read_marks(exam_id: str, body: ReadMarksBody, st: AppState = State) -> Job:
+    """손채점 답안지의 빨간 펜 소문항 점수 읽기 (판독해 둔 학생의 답안 쪽)."""
+    svc, store = _store(st, exam_id)
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        res = marks.read_teacher_marks(
+            svc, store, students=body.students, overwrite=body.overwrite, progress=ctx.progress
+        )
+        return {
+            "read": [r.student_id for r in res.read],
+            "skipped": [vars(k) for k in res.skipped],
+            "failed": [vars(f) for f in res.failed],
+        }
+
+    return st.jobs.submit("read_marks", run, {"exam": exam_id})
+
+
+@router.get("/{exam_id}/marks")
+def list_marks(exam_id: str, st: AppState = State) -> list[dict[str, Any]]:
+    _, store = _store(st, exam_id)
+    exam = store.exam()
+    return [_marks_row(r, exam) for r in store.student_records() if r.teacher_marks]
+
+
+class MarksBody(BaseModel):
+    parts: dict[str, float | None]
+
+
+@router.put("/{exam_id}/students/{student}/marks/{number}")
+def put_marks(
+    exam_id: str, student: str, number: str, body: MarksBody, st: AppState = State
+) -> dict[str, Any]:
+    """강사가 읽은 점수를 고친다 (확인 표시가 풀림)."""
+    _, store = _store(st, exam_id)
+    r = marks.set_marks(store, student, number, body.parts)
+    return _marks_row(r, store.exam())
+
+
+class ConfirmMarksBody(BaseModel):
+    students: list[str]
+    by: str | None = None
+    force: bool = False
+
+
+@router.post("/{exam_id}/marks/confirm")
+def confirm_marks(exam_id: str, body: ConfirmMarksBody, st: AppState = State) -> Job:
+    """확인한 강사 점수 → 강사 확정 채점 (AI 채점이 없으면 먼저 채점하므로 작업으로)."""
+    svc, store = _store(st, exam_id)
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        res = marks.confirm_marks(
+            svc, store, body.students, by=body.by, force=body.force, progress=ctx.progress
+        )
+        imp = res.imported
+        return {
+            "confirmed": res.confirmed,
+            "blocked": [vars(b) for b in res.blocked],
+            "left_out": res.left_out,
+            "failed": [vars(f) for f in imp.failed] if imp else [],
+        }
+
+    return st.jobs.submit("confirm_marks", run, {"exam": exam_id})
+
+
+@router.get("/{exam_id}/compare")
+def compare(exam_id: str, students: str | None = None, st: AppState = State) -> dict[str, Any]:
+    """강사 손채점(빨간 펜 소문항 점수) ↔ AI 채점 소문항 일치도. `students`: 쉼표로."""
+    _, store = _store(st, exam_id)
+    only = [s for s in students.split(",") if s] if students else None
+    per_q = [marks.part_agreement(store, q.number, students=only) for q in store.exam().questions]
+    total = marks.combine(per_q)
+
+    def dump(s: PartAgreement) -> dict[str, Any]:
+        return {**s.model_dump(mode="json"), "rate": s.rate}
+
+    return {"overall": dump(total), "questions": {s.question_number: dump(s) for s in per_q}}
+
+
+class FinalizeBody(BaseModel):
+    by: str | None = None
+
+
+@router.post("/{exam_id}/calibration/{number}/finalize")
+def finalize(exam_id: str, number: str, body: FinalizeBody, st: AppState = State) -> Rubric:
+    """강사 손채점과 맞춰 본 루브릭 확정."""
+    _, store = _store(st, exam_id)
+    return marks.finalize_rubric(store, number, by=body.by)

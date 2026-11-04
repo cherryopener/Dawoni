@@ -1197,8 +1197,9 @@ def suggest_rubric_changes(svc: Services, store: ExamStore, q_number: str) -> Su
     q = exam.question(q_number)
     rubric = store.rubric(q_number)
     sol = store.solution(q_number)
-    if rubric is None or sol is None:
-        raise PipelineError(f"문항 {q_number}: 해설·루브릭이 필요합니다.")
+    key = store.answer_key(q_number)
+    if rubric is None or (sol is None and not (rubric.based_on_key and key)):
+        raise PipelineError(f"문항 {q_number}: 해설(또는 해설지)·루브릭이 필요합니다.")
     cases = [
         c
         for c in calibration.candidates(store, q_number, rubric)
@@ -1217,6 +1218,6 @@ def suggest_rubric_changes(svc: Services, store: ExamStore, q_number: str) -> Su
         scope,
         calibration.corrections_text(cases, rubric),
         {c.student for c in cases},
-        key=store.answer_key(q_number),
+        key=key,
     )
     return SuggestionRun(s, [c.student for c in cases])

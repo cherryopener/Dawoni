@@ -30,6 +30,7 @@ RoleName = Literal[
     "rubric_builder",
     "grader",
     "solver_verifier",
+    "calibrator",
     "light_helper",
 ]
 
@@ -67,13 +68,15 @@ ROLES: dict[RoleName, Role] = {
         Role("handwriting_reader", "손글씨 판독", "standard", 2, 900, 20_000,
              ("transcribe_answer",)),
         Role("cover_reader", "표지 판독", "fast", 1, 300, 8_000,
-             ("read_cover",), image_max_px=1568),
+             ("read_cover", "read_marks"), image_max_px=1568),
         Role("rubric_builder", "루브릭", "standard", 2, 600, 30_000,
-             ("expand_key_rubric", "derive_rubric", "audit_rubric", "suggest_rubric")),
+             ("expand_key_rubric", "derive_rubric", "audit_rubric")),
         Role("grader", "채점", "standard", 2, 600, 24_000,
              ("grade_answer",)),
         Role("solver_verifier", "풀이·검산", "strong", 2, 600, 16_000,
              ("solve_question", "check_answer")),
+        Role("calibrator", "보정", "strong", 2, 600, 30_000,
+             ("suggest_rubric",)),
         Role("light_helper", "가벼운 도우미", "fast", 1, 600, 24_000,
              ("match_candidates", "check_short_answers", "refine_rule", "learn_lesson")),
     )

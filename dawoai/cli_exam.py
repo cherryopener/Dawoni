@@ -523,7 +523,7 @@ def _cmd_answer_pages(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_compare(args: argparse.Namespace) -> int:
+def cover_compare(args: argparse.Namespace) -> int:
     """AI 채점과 표지에 강사가 적은 문항별 점수 비교 (채점이 끝난 답안지를 넣었을 때)."""
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
@@ -893,10 +893,6 @@ def register(sub: Any) -> None:
     ap.add_argument("exam")
     ap.add_argument("map", nargs="*", help="문항=쪽 (예: 1=2 2=3 3=4 4=5)")
     ap.set_defaults(func=_wrap(_cmd_answer_pages))
-    cp = es.add_parser("compare", help="AI 채점 ↔ 표지의 강사 점수 비교")
-    cp.add_argument("exam")
-    cp.set_defaults(func=_wrap(_cmd_compare))
-
     tr = es.add_parser("transcript", help="판독문 보기·고치기·확정")
     tr.add_argument("exam")
     tr.add_argument("--student", required=True)
