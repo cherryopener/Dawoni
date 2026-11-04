@@ -77,6 +77,7 @@ ignore = [
 "tests/test_server.py" = ["E501"]
 "tests/test_real_layouts.py" = ["E501"]  # 실제 자료 기대값 표
 "tests/test_grading.py" = ["E501"]
+"tests/test_document.py" = ["E501"]  # 문서 XML·응답 픽스처
 
 [tool.pyright]
 include = ["dawoai", "tests"]

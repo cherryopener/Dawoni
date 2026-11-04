@@ -51,6 +51,11 @@ class KeyPart(DawoaiModel):
         default=None,
         description="해설지의 부분 점수 표기 원문 그대로 (예: '[부분 점수: 과정 4점/ 답 2점]')",
     )
+    concepts: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="이 소문항의 해설이 쓴 개념·법칙·기법의 짧은 이름 (예: 옴의 법칙). "
+        "채점 기준의 범위가 된다 (PLAN.md §4-2)",
+    )
 
     @model_validator(mode="after")
     def _policy(self) -> KeyPart:
@@ -111,3 +116,8 @@ class AnswerKey(DawoaiModel):
 
     def part(self, label: str | None) -> KeyPart | None:
         return next((p for p in self.parts if p.label == (label or "")), None)
+
+    @property
+    def concepts(self) -> list[str]:
+        """해설지 개념 목록: 소문항들의 개념을 처음 나온 순서로, 겹치지 않게."""
+        return list(dict.fromkeys(c for p in self.parts for c in p.concepts))

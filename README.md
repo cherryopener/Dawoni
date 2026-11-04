@@ -20,6 +20,7 @@ uv run pyright
 - Python 3.13 (`.python-version`). 다워니(3.15)에서 낮췄다 — PLAN.md §12
 - 실제 AI CLI를 호출하는 테스트는 기본 제외: `uv run pytest -m agent`
 - 실제 자료 회귀 테스트는 `real_data/`(git 제외, 다워니 실측 시험·답안)가 있을 때만 돈다.
+  `real_data/docs/`에는 학원 시험지 원본(HWP 3개를 한글로 HWPX·PDF로 저장한 것, DOCX 1개)을 둔다.
 - Windows에서 한글·Word COM을 쓰는 기능(선택): `uv sync --extra windows`
   (그 뒤 `uv run`은 `uv run --extra windows`로 — 그냥 `uv run`은 pywin32를 지운다)
 - 가짜 AI CLI(`tests/fake_agy.py`)는 macOS·Linux에서 셸 스크립트, Windows에서 `.cmd`로 만든다.
@@ -116,6 +117,28 @@ uv run --extra windows python experiments/hwpx_probe.py --hancom
 flash와 argon은 구독 한도가 따로다. 정확도가 같으므로 대부분의 호출은 flash-medium에 두고, strong 역할만
 argon-low로 보내 두 한도를 나눠 쓴다. flash-low는 쓰지 않는다. 앞으로의 실측도 flash-medium으로 한다
 (`measure_agy.py`의 기본 모델).
+
+## 시험 읽기 실측 (M1, 2026-11-04, agy 1.4.12, 전부 flash-medium)
+
+```bash
+uv run python -m dawoai ingest exam 시험지.hwpx --title 주말반 --level "고1 물리"
+uv run python -m dawoai ingest layout 시험지.hwpx     # AI 없이: 문항·그림·미주 해설 나누기만
+```
+
+| 시험지 | 결과 | 호출 (시간·토큰) | 전체 |
+|---|---|---|---|
+| 학원 주말반 전기2 (HWP → 한글로 HWPX) | 7문항, 그림 13개(3번 선지 그림 ①~⑤ 짝 맞음), 미주 해설 7문항 + 개념 목록 | 문항 2회(274초 10만, 516초 13만), 해설 2회(143초 5만, 333초 9만), 재요청 0 | 851초 |
+| 학원 1월 월례 (DOCX, 자동 번호·Word 수식) | 3문항, 미주 해설 3문항 + 개념 목록 | 문항 2회(209초 8만, 226초 8만), 해설 1회(189초 4만), 재요청 0 | 415초 |
+| 다워니 실측 `test.pdf` (해설지 6쪽 합본) | 소문항 8개·배점이 다워니와 같음 (1: 5/5, 2: 2/2/2/4, 3: 4/6), 부분 점수 표기 θ 2/T₂ 3, (가) 2/(나) 2, 과정 4/답 2 | 문항 3회(174~301초, 5~11만), 해설 2회(두 번 읽기, 196·175초) | 675초 |
+
+- 문서는 해설을 **한 번만** 읽는다 (PDF는 두 번 — 세 문항 모두 (2)의 숫자가 두 번 사이에 달라 '원본과 비교' 표시).
+- 실측에서 고친 것 (뒤 판에 들어감, AI 다시 돌리지 않고 캐시로 확인): 배점 표시가 없는 문서는 AI가 배점을
+  지어내거나(4번 1+1점) 소문항을 빼먹었다(5·7번). 이제 배점은 자리값(소문항마다 2점)으로 두고 강사 확인으로
+  넘기며, 소문항은 본문의 `(1)`·`1)` 줄에서 가져온다 — 주말반 4·5·7번 (1)(2), 월례 1)~8)이 답안지 표와 같다.
+  해설 답에 `[그림]` 자리표가 섞이던 것(주말반 2번 "[그림] ①")은 지시문으로 막았다.
+- 느리다: flash-medium은 문서 한 묶음에도 3~9분을 생각한다 (보낸 프롬프트 약 4천 토큰, 쓴 토큰 8~13만).
+  M0 실측대로 exam_reader·key_reader를 argon-low로 옮기면 3~7배 빨라질 것이다 — §15 결정("실측은 flash-medium")
+  때문에 바꾸지 않았다.
 
 ## 나중에 할 일
 

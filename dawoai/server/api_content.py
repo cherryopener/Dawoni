@@ -219,6 +219,18 @@ def list_scopes(st: AppState = State) -> list[dict[str, Any]]:
     ]
 
 
+@router.get("/levels")
+def list_levels() -> list[dict[str, Any]]:
+    """시험을 만들 때 고르는 수준 프리셋 (학년 × 과목) — 고르면 범위 프로필이 생긴다."""
+    from dawoai.levels import all_levels
+
+    return [
+        {"id": f"{lv.grade}_{lv.subject}", "label": lv.label, "scope_id": lv.scope_id,
+         "forbidden": list(lv.forbidden())}
+        for lv in all_levels()
+    ]  # fmt: skip
+
+
 @router.get("/scopes/{scope_id}")
 def get_scope(scope_id: str, st: AppState = State) -> ScopeProfile:
     return ScopeStore(st.services().workspace).get(scope_id)

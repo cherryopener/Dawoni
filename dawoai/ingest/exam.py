@@ -1,4 +1,4 @@
-"""시험지 PDF → 시험(문항 + 그림). 레이아웃은 코드가, 문장 구조화는 AI가.
+"""시험지 PDF·DOCX·HWPX → 시험(문항 + 그림). 레이아웃은 코드가, 문장 구조화는 AI가.
 
     레이아웃 분석(결정적) → 문항 영역 이미지·그림 크롭 → 쪽 단위 AI 구조화 → 코드 검증 → Exam
 
@@ -26,6 +26,7 @@ from dawoai.context import ContextEngine, TaskDef, TaskFailed, TaskInput
 from dawoai.context.extract import describe_validation_error
 from dawoai.grading.render import blocks_text, runs_text
 from dawoai.grading.store import safe_name
+from dawoai.ingest.document import IMAGE_MARK, region_call
 from dawoai.ingest.grounding import (
     UNGROUNDED,
     accept_ungrounded,
@@ -112,25 +113,26 @@ def prepare_regions(
             for k, (page, box) in enumerate(r.boxes, start=1)
         ]
         figs = {
-            f.id: render_clip(layout.path, f.page, f.rect, d / f"{f.id}.png", dpi=300)
+            f.id: f.file or render_clip(layout.path, f.page, f.rect, d / f"{f.id}.png", dpi=300)
             for f in r.figures
-        }
+        }  # 문서(DOCX·HWPX) 그림은 이미 꺼낸 파일, PDF 그림은 쪽에서 잘라 낸다
         out.append(PreparedRegion(r, images, figs))
     return out
 
 
-def _region_material(r: Region) -> str:
-    lines = [f"[문항 {r.label}]", "PDF 글자:", r.text]
+def _region_material(r: Region, *, doc: bool = False) -> str:
+    lines = [f"[문항 {r.label}]", "문서 글자:" if doc else "PDF 글자:", r.text]
     if r.points:
         lines.append(f"(배점 표시: {r.points:g}점)")
     if r.textboxes:
         lines.append(f"(테두리 글 상자 {len(r.textboxes)}개 — <보기>·조건 등, 그림 아님)")
     if r.figures:
         lines.append("그림:")
-        for f in r.figures:
+        for k, f in enumerate(r.figures, start=1):
             pos = f" — 레이아웃상 {f.near_choice}번 선지 기호 옆" if f.near_choice else ""
             kind = "이미지" if f.kind == "image" else "선 그림"
-            lines.append(f"- {f.id} ({kind}, {f.page}쪽){pos}")
+            where = f"글의 {k}번째 {IMAGE_MARK} 자리" if doc else f"{f.page}쪽"
+            lines.append(f"- {f.id} ({kind}, {where}){pos}")
     else:
         lines.append("그림: 없음")
     return "\n".join(lines)
@@ -166,6 +168,41 @@ def to_item(q: ExtractedQuestion, region: Region, subject: str | None) -> ItemCo
         choices_figure_id=q.choices_figure_id,
         figures=figures,
     )
+
+
+PART_POINTS = 2.0
+"""배점 표시가 없는 문서 문항의 소문항 하나 배점 (강사 확인 전 자리값)."""
+_SUB_LABELS = (
+    (re.compile(r"(?m)^\s*(\(\d{1,2}\))"), "({})"),
+    (re.compile(r"(?m)^\s*(\d{1,2}\))"), "{})"),  # Word 자동 번호 "1)" (실측 월례 시험지)
+)
+
+
+def sub_labels(text: str) -> list[str]:
+    """줄 맨 앞의 (1), (2) … 또는 1), 2) … 가 1부터 이어지면 그 표시들 (둘 이상일 때만)."""
+    for pattern, form in _SUB_LABELS:
+        found = list(dict.fromkeys(pattern.findall(text)))
+        if len(found) >= 2 and found == [form.format(i) for i in range(1, len(found) + 1)]:
+            return found
+    return []
+
+
+def unmarked_points(
+    q: ExtractedQuestion, r: Region, default: float
+) -> tuple[float, list[ExamPart], str]:
+    """문서에 배점 표시가 없는 문항: (배점, 소문항, 경고).
+
+    문서 글이 전부이므로 AI가 적은 배점은 지어낸 것이고, 배점을 못 정하면 소문항을 빼먹는다
+    (실측 2026-11-04 주말반 시험: 4번은 1+1점을 지어내고, (1)(2)가 있는 5·7번은 소문항 없이 옮김).
+    소문항은 AI 것이 없으면 본문의 (1)(2) 줄에서 가져온다."""
+    parts = [p.model_copy(update={"points": PART_POINTS}) for p in q.parts] or [
+        ExamPart(label=label, points=PART_POINTS) for label in sub_labels(r.text)
+    ]
+    if not parts:
+        return default, [], f"배점 표시가 없어 {default:g}점으로 둠 — 확인 필요"
+    total = PART_POINTS * len(parts)
+    why = f"배점 표시가 없어 소문항마다 {PART_POINTS:g}점(합 {total:g}점)으로 둠 — 확인 필요"
+    return total, parts, why
 
 
 def _check_parts(q: ExtractedQuestion, r: Region) -> list[str]:
@@ -276,9 +313,10 @@ def extract_exam(
     from dawoai.parallel import each_in_parallel
 
     prepared = prepare_regions(layout, work_dir)
+    doc = not layout.pages  # DOCX·HWPX: 쪽 대신 문항 묶음, 영역 그림 대신 문서 속 그림
     by_page: dict[int, list[PreparedRegion]] = {}
     for pr in prepared:
-        by_page.setdefault(pr.region.boxes[0][0], []).append(pr)
+        by_page.setdefault(region_call(pr.region), []).append(pr)
 
     cache_dir = work_dir / "pages"
     failed: dict[int, list[str]] = {}
@@ -327,10 +365,12 @@ def extract_exam(
             value = engine.run(
                 dataclasses.replace(EXTRACT, name=f"extract_questions_p{page}", validator=check),
                 TaskInput(
-                    variables={},
-                    material="\n\n".join(_region_material(r) for r in regions)
+                    variables={"doc": doc},
+                    material="\n\n".join(_region_material(r, doc=doc) for r in regions)
                     + (f"\n\n학생 수준: {level}" if level else ""),
-                    attachments=tuple(img for pr in group for img in pr.images),
+                    attachments=tuple(
+                        img for pr in group for img in (pr.images or pr.figure_files.values())
+                    ),
                 ),
             ).value
         except TaskFailed as e:
@@ -371,6 +411,14 @@ def extract_exam(
                 notes[pr.region.label] = f"본문: {review_note(share)}"
                 warnings.append(f"문항 {pr.region.label}: {notes[pr.region.label]}")
             item = to_item(q, pr.region, subject)
+            if doc and pr.region.points is None:
+                points, parts, why = unmarked_points(q, pr.region, default_points)
+                item = item.model_copy(update={"points": points})
+                warnings.append(f"문항 {pr.region.label}: {why}")
+                questions.append(
+                    ExamQuestion(number=pr.region.label, points=points, item=item, parts=parts)
+                )
+                continue
             points = item.points
             if points is None and q.parts:
                 points = sum(p.points for p in q.parts)

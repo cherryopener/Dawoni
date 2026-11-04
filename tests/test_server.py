@@ -518,6 +518,22 @@ def test_same_pdf_opens_existing_exam(app_paths: AppPaths, tmp_path: Path) -> No
     assert existing_exam(svc, pdf) is None, "시험 폴더가 지워졌으면 다시 만들 수 있다"
 
 
+def test_levels_and_from_file_needs_scope_or_level(app_paths: AppPaths, tmp_path: Path) -> None:
+    c = _client(app_paths)
+    c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
+    levels = c.get("/api/levels").json()
+    h1 = next(lv for lv in levels if lv["id"] == "h1_phys")
+    assert h1["label"] == "고1 물리" and "미분" in h1["forbidden"]
+    assert len(levels) == 30
+
+    def upload(**data: str) -> Any:
+        return c.post("/api/exams/from-file", files={"file": ("t.hwpx", b"x")},
+                      data={"title": "주말반", **data})  # fmt: skip
+
+    assert upload().status_code == 400
+    assert upload(level="대학 물리").status_code == 400
+
+
 def test_rubric_with_key_is_one_call_and_ai_solve_keeps_old_path(
     app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path
 ) -> None:

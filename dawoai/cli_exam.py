@@ -706,7 +706,7 @@ def register(sub: Any) -> None:
     c.set_defaults(func=_wrap(_cmd_candidates))
     k = es.add_parser("key", help="강사 해설지(모범 답안·부분 점수) 붙이기")
     k.add_argument("exam")
-    k.add_argument("file", help="해설지 PDF (시험지 PDF의 해설 쪽이어도 됨)")
+    k.add_argument("file", help="해설지 PDF·DOCX·HWPX·HWP (시험지 파일의 해설 부분이어도 됨)")
     k.add_argument("--pages", help="해설 쪽 (예: 6 또는 5-6). 없으면 '부분 점수' 표시로 찾음")
     k.set_defaults(func=_wrap(_cmd_key))
     kc = with_q(es.add_parser("key-confirm", help="해설지 판독 확인 (원본과 비교한 뒤)"))

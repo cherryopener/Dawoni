@@ -124,6 +124,8 @@ class Figure:
     """vector | image"""
     id: str = ""
     near_choice: int | None = None
+    file: Path | None = None
+    """문서(DOCX·HWPX)에서 꺼낸 그림 파일 — PDF 그림은 None (쪽에서 잘라 낸다)."""
 
 
 @dataclass

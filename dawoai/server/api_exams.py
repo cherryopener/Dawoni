@@ -172,34 +172,40 @@ def create_exam(body: CreateExamBody, st: AppState = State) -> Exam:
     return exam
 
 
-@router.post("/from-pdf")
-def exam_from_pdf(
+@router.post("/from-file")
+@router.post("/from-pdf")  # 예전 이름 (PDF만 받던 때)
+def exam_from_file(
     file: Annotated[UploadFile, File()],
     title: Annotated[str, Form()],
-    scope_id: Annotated[str, Form()],
+    scope_id: Annotated[str | None, Form()] = None,
+    level: Annotated[str | None, Form()] = None,
     subject: Annotated[str | None, Form()] = None,
     force: Annotated[bool, Form()] = False,
     key_pages: Annotated[str | None, Form()] = None,
     st: AppState = State,
 ) -> Job:
-    """`key_pages`: 해설지 쪽 ("6", "5-6"). 비우면 자동으로 찾고, "none"이면 해설지 없음."""
-    from dawoai.cli_ingest import parse_key_pages
-    from dawoai.ingest.workflow import existing_exam, ingest_exam_pdf
+    """시험지 PDF·DOCX·HWPX·HWP. 범위는 `scope_id` 또는 수준 프리셋 `level` ("고1 물리", "h1_phys").
+
+    `key_pages`: PDF 해설지 쪽 ("6", "5-6"). 비우면 자동으로 찾고, "none"이면 해설지 없음.
+    문서는 미주·"정답 및 해설" 구간을 해설로 읽는다 ("none"이면 읽지 않음)."""
+    from dawoai.cli_ingest import parse_key_pages, resolve_scope
+    from dawoai.ingest.workflow import existing_exam, ingest_exam
 
     svc = st.services()
-    ScopeStore(svc.workspace).get(scope_id)
+    scope_id = resolve_scope(svc, scope_id, level)
     path = save_upload(file, upload_dir(st))
     if not force and (refused := existing_exam(svc, path)) is not None:
         raise refused  # 작업을 띄우기 전에 알려 기존 시험을 바로 열 수 있게
     pages = parse_key_pages(key_pages if key_pages and key_pages.strip() else None)
 
     def run(ctx: JobContext) -> dict[str, Any]:
-        res = ingest_exam_pdf(
+        res = ingest_exam(
             svc, path, title=title, scope_id=scope_id, subject=subject, force=force,
             key_pages=pages, progress=ctx.progress,
         )  # fmt: skip
         return {
             "exam_id": res.exam.id,
+            "key_source": res.key_source,
             "key_pages": res.key_pages,
             "keys": len(res.keys),
             "warnings": res.warnings + res.layout.warnings,
@@ -215,7 +221,9 @@ def answer_key_from_pdf(
     pages: Annotated[str | None, Form()] = None,
     st: AppState = State,
 ) -> Job:
-    """강사 해설지 PDF 붙이기 (시험지 PDF의 해설 쪽이어도 됨). 쪽을 비우면 자동으로 찾는다."""
+    """강사 해설지 붙이기 (PDF·DOCX·HWPX·HWP, 시험지 파일의 해설 부분이어도 됨).
+
+    PDF 쪽을 비우면 자동으로 찾고, 문서는 미주·해설 구간(없으면 문서 전체)을 문항별로 읽는다."""
     from dawoai.cli_ingest import parse_pages
     from dawoai.ingest.workflow import attach_answer_key
 

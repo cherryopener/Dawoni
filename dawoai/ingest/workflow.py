@@ -1,4 +1,4 @@
-"""PDF 자료 DB화를 끝까지: 시험지 → 시험, 교재 → 범위 프로필 초안. 명령줄·서버 공용."""
+"""시험지 DB화를 끝까지: PDF·DOCX·HWPX(·HWP) → 시험 + 해설지. 명령줄·서버 공용."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 
 from dawoai.context import situation
 from dawoai.grading.store import ExamStore, ScopeStore, safe_name
+from dawoai.ingest.document import DocAnalysis, KeyPiece, analyze_document, is_document
 from dawoai.ingest.layout import DocumentLayout, analyze, find_key_pages, page_count
 from dawoai.ingest.sources import find_source, register_source, update_source
 from dawoai.models.answer_key import AnswerKey
@@ -18,6 +19,8 @@ from dawoai.models.source import SourceIngestState
 from dawoai.services import Services
 
 Progress = Callable[[int, int, str], None]
+
+EXAM_SUFFIXES = (".pdf", ".docx", ".hwpx", ".hwp")
 
 
 def _noop(done: int, total: int, message: str) -> None:
@@ -37,7 +40,7 @@ class AlreadyIngested(IngestRefused):
 
 
 def existing_exam(svc: Services, path: Path) -> AlreadyIngested | None:
-    """같은 PDF로 이미 시험을 만들었으면 그 안내 (시험 폴더가 지워졌으면 None)."""
+    """같은 파일로 이미 시험을 만들었으면 그 안내 (시험 폴더가 지워졌으면 None)."""
     src = find_source(svc.workspace, path)
     if src is None or src.ingest.status != "ingested":
         return None
@@ -52,6 +55,21 @@ def existing_exam(svc: Services, path: Path) -> AlreadyIngested | None:
     )
 
 
+def readable_copy(path: Path, work_dir: Path) -> Path:
+    """앱이 직접 읽는 형식으로: `.hwp`는 설치된 한글로 HWPX를 만든다 (나머지는 그대로)."""
+    suffix = path.suffix.lower()
+    if suffix not in EXAM_SUFFIXES:
+        raise IngestRefused(f"PDF·DOCX·HWPX·HWP 파일만 읽습니다: {path.name}")
+    if suffix != ".hwp":
+        return path
+    from dawoai.ingest.convert import ConvertUnavailable, hwp_to_hwpx
+
+    try:
+        return hwp_to_hwpx(path, work_dir / f"{safe_name(path.stem)}.hwpx")
+    except ConvertUnavailable as e:
+        raise IngestRefused(str(e)) from e
+
+
 @dataclass
 class ExamIngest:
     exam: Exam
@@ -59,12 +77,23 @@ class ExamIngest:
     warnings: list[str] = field(default_factory=lambda: list[str]())
     key_pages: list[int] = field(default_factory=lambda: list[int]())
     keys: list[AnswerKey] = field(default_factory=lambda: list[AnswerKey]())
+    key_source: str | None = None
+    """해설지를 어디서 읽었나 ("6쪽", "문항별 미주") — 없으면 None."""
 
 
 @dataclass
 class KeyAttach:
     keys: list[AnswerKey]
     warnings: list[str]
+
+
+def _doc_key_pieces(analysis: DocAnalysis, numbers: set[str]) -> dict[str, KeyPiece]:
+    """문서의 문항별 해설. 미주·해설 구간이 없으면 문서 전체를 해설지로 본다 (따로 온 해설 파일)."""
+    pieces = analysis.keys or {
+        r.label: KeyPiece(r.text, [f.file for f in r.figures if f.file is not None])
+        for r in analysis.layout.regions
+    }
+    return {n: p for n, p in pieces.items() if n in numbers}
 
 
 def attach_answer_key(
@@ -75,30 +104,39 @@ def attach_answer_key(
     *,
     progress: Progress = _noop,
 ) -> KeyAttach:
-    """해설지 PDF(또는 시험지 PDF의 해설 쪽)를 읽어 문항별 모범 답안으로 저장.
+    """해설지 파일(또는 시험지 파일의 해설 부분)을 읽어 문항별 모범 답안으로 저장.
 
-    `pages`가 없으면 "부분 점수"·"정답 및 해설" 표시가 있는 쪽, 그것도 없으면 전체 쪽.
+    PDF는 `pages`가 없으면 "부분 점수"·"정답 및 해설" 표시가 있는 쪽, 그것도 없으면 전체 쪽.
+    DOCX·HWPX는 미주·해설 구간, 없으면 문서 전체를 문항 번호로 나눠 읽는다.
     이미 만든 루브릭은 그대로 둔다 — 해설지를 반영하려면 루브릭을 다시 만든다.
     """
-    from dawoai.ingest.answer_key import extract_answer_key
+    from dawoai.ingest.answer_key import DocKey, extract_answer_key
 
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
-    if not pages:
-        pages = find_key_pages(path)
-    if not pages:
-        pages = list(range(1, page_count(path) + 1))
-    progress(0, 1, f"해설지 {', '.join(map(str, pages))}쪽 읽기")
-    res = extract_answer_key(
-        svc.engine, path, pages, exam, store.root / "key_work", level=scope.level
-    )
+    work = store.root / "key_work"
+    path = readable_copy(path, work)
+    if is_document(path):
+        pieces = _doc_key_pieces(analyze_document(path, work), {q.number for q in exam.questions})
+        if not pieces:
+            raise IngestRefused(f"{path.name}에서 이 시험 문항 번호의 해설을 찾지 못했습니다")
+        progress(0, 1, f"해설 읽기 ({len(pieces)}문항)")
+        res = extract_answer_key(svc.engine, DocKey(path, pieces), None, exam, work,
+                                 level=scope.level)  # fmt: skip
+    else:
+        if not pages:
+            pages = find_key_pages(path)
+        if not pages:
+            pages = list(range(1, page_count(path) + 1))
+        progress(0, 1, f"해설지 {', '.join(map(str, pages))}쪽 읽기")
+        res = extract_answer_key(svc.engine, path, pages, exam, work, level=scope.level)
     for k in res.keys:
         store.save_key(k)
     progress(1, 1, f"해설지 저장 ({len(res.keys)}문항)")
     return KeyAttach(res.keys, res.warnings)
 
 
-def ingest_exam_pdf(
+def ingest_exam(
     svc: Services,
     path: Path,
     *,
@@ -109,26 +147,45 @@ def ingest_exam_pdf(
     key_pages: list[int] | None = None,
     progress: Progress = _noop,
 ) -> ExamIngest:
-    """`key_pages`: 해설지 쪽. None이면 자동으로 찾고("부분 점수" 등), []이면 해설지 없음."""
+    """`key_pages`: PDF의 해설지 쪽. None이면 자동으로 찾고("부분 점수" 등), []이면 해설지 없음.
+
+    DOCX·HWPX(·HWP)는 쪽이 없다: 미주와 "정답 및 해설" 뒤 문단을 문항별 해설로 읽는다
+    (`key_pages=[]`이면 읽지 않음)."""
+    from dawoai.ingest.answer_key import DocKey, KeySource, PdfKey, extract_answer_key
     from dawoai.ingest.exam import extract_exam
 
     scope = ScopeStore(svc.workspace).get(scope_id)
     if not force and (refused := existing_exam(svc, path)) is not None:
         raise refused
-    if key_pages is None:
-        key_pages = find_key_pages(path)
-    steps = 3 if key_pages else 2
-    progress(0, steps, "레이아웃 분석 (문항 영역·그림)")
-    layout = analyze(path, exclude=key_pages)
     exam_id = new_id("exam")
     exam_dir = svc.workspace.exams / exam_id
-    if layout.scanned:
-        from dawoai.ocr.local import INSTALL_HINT, analyze_scanned
+    readable = readable_copy(path, exam_dir / "ingest")
+    key: KeySource | None = None
+    if is_document(readable):
+        progress(0, 3, "문서 읽기 (문항·그림·미주)")
+        analysis = analyze_document(readable, exam_dir / "ingest")
+        layout = analysis.layout
+        if not layout.regions:
+            raise IngestRefused(f"{path.name}에서 문항 번호(1. 2. …)를 찾지 못했습니다")
+        if key_pages != []:
+            labels = {r.label for r in layout.regions}
+            if pieces := _doc_key_pieces_from(analysis, labels):
+                key = DocKey(readable, pieces)
+    else:
+        if key_pages is None:
+            key_pages = find_key_pages(path)
+        progress(0, 3, "레이아웃 분석 (문항 영역·그림)")
+        layout = analyze(path, exclude=key_pages)
+        if layout.scanned:
+            from dawoai.ocr.local import INSTALL_HINT, analyze_scanned
 
-        ocr = analyze_scanned(path, layout, exam_dir / "ingest", exclude=key_pages)
-        if ocr is None:
-            raise IngestRefused(f"글자 정보가 없는 스캔 PDF입니다. {INSTALL_HINT}")
-        layout = ocr
+            ocr = analyze_scanned(path, layout, exam_dir / "ingest", exclude=key_pages)
+            if ocr is None:
+                raise IngestRefused(f"글자 정보가 없는 스캔 PDF입니다. {INSTALL_HINT}")
+            layout = ocr
+        if key_pages:
+            key = PdfKey(path, key_pages)
+    steps = 3 if key else 2
     src = register_source(svc.workspace, path, "exam", title=title)
     progress(1, steps, f"문항 {len(layout.regions)}개 구조화")
     with situation(path.name, title, subject or scope.subject):
@@ -147,19 +204,27 @@ def ingest_exam_pdf(
         status="ingested", item_count=len(exam.questions), message=exam_id
     )
     update_source(svc.workspace, src)
-    out = ExamIngest(exam, layout, result.warnings, key_pages=list(key_pages))
-    if key_pages:
-        from dawoai.ingest.answer_key import extract_answer_key
-
-        progress(2, steps, f"해설지 {', '.join(map(str, key_pages))}쪽 읽기")
+    out = ExamIngest(exam, layout, result.warnings, key_pages=list(key_pages or []))
+    if isinstance(key, DocKey):  # 구조화하지 못한 문항의 해설은 빼고 (시험에 없는 번호)
+        numbers = {q.number for q in exam.questions}
+        key = DocKey(readable, {n: p for n, p in key.pieces.items() if n in numbers})
+    if key is not None and key.pages:
+        where = f"{', '.join(map(str, key_pages or []))}쪽" if not key.doc else "문항별 미주·해설"
+        progress(2, steps, f"해설지 읽기 ({where})")
         with situation(path.name, title, subject or scope.subject):
-            key = extract_answer_key(
-                svc.engine, path, key_pages, exam, exam_dir / "key_work", level=scope.level,
+            keys = extract_answer_key(
+                svc.engine, key, key_pages, exam, exam_dir / "key_work", level=scope.level,
                 workers=svc.config.parallel_questions,
             )  # fmt: skip
-        for k in key.keys:
+        for k in keys.keys:
             store.save_key(k)
-        out.keys = key.keys
-        out.warnings += key.warnings
+        out.keys = keys.keys
+        out.warnings += keys.warnings
+        out.key_source = where
     progress(steps, steps, f"시험 등록 ({len(exam.questions)}문항)")
     return out
+
+
+def _doc_key_pieces_from(analysis: DocAnalysis, labels: set[str]) -> dict[str, KeyPiece]:
+    """시험지 문서 안의 해설만 (미주·해설 구간). 없으면 해설지 없음 — 본문을 해설로 보지 않는다."""
+    return {n: p for n, p in analysis.keys.items() if n in labels}

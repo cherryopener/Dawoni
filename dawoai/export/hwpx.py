@@ -179,8 +179,48 @@ def to_eqedit(latex: str) -> str:
     return script
 
 
+_GLUE_WORDS = sorted(
+    {"over", "atop", "sqrt", "times", "cdot", "DEG", "LEFT", "RIGHT", "sin", "cos", "tan", "log",
+     "ln", "THEREFORE", "alpha", "beta", "gamma", "delta", "epsilon", "theta", "lambda", "mu",
+     "pi", "rho", "sigma", "tau", "phi", "omega", "Delta", "Omega", "Sigma", "Phi", "Gamma",
+     "OMEGA", "DELTA"},
+    key=len, reverse=True,
+)  # fmt: skip
+_GLUE_RUN = re.compile(r'"[^"]*"|[A-Za-z]+')
+_OVER_SCRIPT = re.compile(
+    r"\b(over|atop)\s+((?:[A-Za-z]+|[0-9.]+)(?:\s*[_^]\s*(?:\{[^{}]*\}|[A-Za-z0-9.]+))+)"
+)
+"""`L over v_0`: 한글은 분모에 첨자까지 넣는데 변환기는 `\\frac{L}{v}_0`으로 바꾼다
+— 묶어 넘긴다."""
+
+
+def _unglue(script: str) -> str:
+    """한글 수식 편집기는 붙여 쓴 명령을 앞에서부터 알아본다: `v^2 overg`, `2 pim overBq`,
+    `Deltax_1` (실측 학원 시험지 2026-11-04). 변환기는 글자 덩어리 전체를 한 낱말로 보므로
+    띄워 준다."""
+
+    def split(m: re.Match[str]) -> str:
+        run = m.group(0)
+        if run.startswith('"') or run in _GLUE_WORDS:
+            return run.upper() if run in ("Delta", "Omega", "Sigma", "Phi", "Gamma") else run
+        out: list[str] = []
+        while run:
+            word = next((w for w in _GLUE_WORDS if run.startswith(w) and len(run) > len(w)), None)
+            if word is None:
+                break
+            out.append(word)
+            run = run[len(word) :]
+        return " ".join([*out, run]).strip() if out else m.group(0)
+
+    script = _GLUE_RUN.sub(split, script)
+    script = re.sub(r"(?<![A-Za-z])(Delta|Omega|Sigma|Phi|Gamma)(?![A-Za-z])",
+                    lambda m: m.group(1).upper(), script)  # fmt: skip
+    return _OVER_SCRIPT.sub(lambda m: f"{m.group(1)} {{{m.group(2)}}}", script)
+
+
 def from_eqedit(script: str) -> str:
-    latex = eqedit_to_latex(script)
+    latex = eqedit_to_latex(_unglue(script))
+    latex = re.sub(r"(?<![\\A-Za-z])DEG(?![A-Za-z])", r"^{\\circ}", latex)
     for cmd, word in _EQ_WORDS.items():
         latex = re.sub(rf"(?<![\\A-Za-z]){word}(?![A-Za-z])", lambda _, c=cmd: c, latex)
     return latex

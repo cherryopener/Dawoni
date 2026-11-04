@@ -137,7 +137,9 @@ def scope_layer(scope: ScopeProfile, *, with_extensions: bool = False) -> Shrink
     """범위 프로필: 자세한 판본(요약 포함)과 짧은 판본(이름만)."""
 
     def build(detail: bool) -> str:
-        lines = [f"수준: {scope.level}", "", "허용 개념:"]
+        lines = [f"수준: {scope.level}"]
+        if scope.concepts:  # 수준 프리셋은 비어 있다 — 해설지 개념 목록이 범위
+            lines += ["", "허용 개념:"]
         for c in scope.concepts:
             lines.append(f"- {c.id} {c.name}" + (f": {c.summary}" if detail else ""))
         if scope.skills:

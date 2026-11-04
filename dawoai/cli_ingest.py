@@ -1,7 +1,8 @@
-"""`dawoai ingest …` — 시험지 PDF 읽기.
+"""`dawoai ingest …` — 시험지 PDF·DOCX·HWPX·HWP 읽기.
 
-dawoai ingest layout 시험지.pdf [--overlay 폴더]   # AI 없이 레이아웃만 (영역·그림 표시)
-dawoai ingest exam 시험지.pdf --title 중간고사 --scope <범위ID> [--force] [--key-pages 6|none]
+dawoai ingest layout 시험지.pdf [--overlay 폴더]   # AI 없이 레이아웃만 (영역·그림·문서 미주 표시)
+dawoai ingest exam 시험지.hwpx --title 중간고사 --level "고1 물리" [--force] [--key-pages 6|none]
+dawoai ingest exam 시험지.pdf --title 중간고사 --scope <범위ID>   # 범위 프로필을 직접 고를 때
 """
 
 from __future__ import annotations
@@ -14,8 +15,9 @@ from typing import Any
 from dawoai.agents import AgentError
 from dawoai.config import AGENT_NAMES
 from dawoai.context import TaskFailed
+from dawoai.ingest.document import analyze_document, is_document, region_call
 from dawoai.ingest.layout import DocumentLayout, analyze
-from dawoai.ingest.workflow import ingest_exam_pdf
+from dawoai.ingest.workflow import ingest_exam
 from dawoai.services import Services, open_services
 from dawoai.workspace import WorkspaceError
 
@@ -59,11 +61,12 @@ def print_layout(layout: DocumentLayout) -> None:
         figs: list[str] = []
         for f in r.figures:
             near = f" ←{f.near_choice}번 선지" if f.near_choice else ""
-            figs.append(f"{f.id}({'이미지' if f.kind == 'image' else '선'}, {f.page}쪽{near})")
+            at = f", {f.page}쪽" if f.file is None else ""
+            figs.append(f"{f.id}({'이미지' if f.kind == 'image' else '선'}{at}{near})")
         pts = f" [{r.points:g}점]" if r.points else ""
         boxes = f", 글 상자 {len(r.textboxes)}" if r.textboxes else ""
-        pages = "·".join(str(p) for p in r.pages)
-        _out(f"- 문항 {r.label}{pts}: {pages}쪽, 그림 {len(r.figures)}{boxes}  {' '.join(figs)}")
+        where = f"{'·'.join(str(p) for p in r.pages)}쪽" if r.boxes else f"묶음 {region_call(r)}"
+        _out(f"- 문항 {r.label}{pts}: {where}, 그림 {len(r.figures)}{boxes}  {' '.join(figs)}")
     for w in layout.warnings:
         _out(f"  ! {w}")
 
@@ -104,7 +107,20 @@ def save_overlay(layout: DocumentLayout, out_dir: Path) -> list[Path]:
 
 
 def _cmd_layout(args: argparse.Namespace) -> int:
-    layout = analyze(Path(args.file))
+    path = Path(args.file)
+    if is_document(path):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = analyze_document(path, Path(tmp))
+        print_layout(doc.layout)
+        for label, piece in doc.keys.items():
+            first = piece.text.splitlines()[0] if piece.text else ""
+            _out(f"  해설 {label}: {len(piece.text)}자, 그림 {len(piece.images)}  {first[:60]}")
+        if not doc.keys:
+            _out("  해설: 미주·'정답 및 해설' 구간 없음")
+        return 0
+    layout = analyze(path)
     print_layout(layout)
     if args.overlay:
         for p in save_overlay(layout, Path(args.overlay)):
@@ -125,13 +141,26 @@ def parse_key_pages(spec: str | None) -> list[int] | None:
     return parse_pages(spec)
 
 
+def resolve_scope(svc: Services, scope_id: str | None, level: str | None) -> str:
+    """범위 프로필: `scope_id`가 있으면 그것, 없으면 수준 프리셋(`level`, 없으면 만든다)."""
+    from dawoai.grading.store import ScopeStore
+    from dawoai.levels import ensure_preset, parse_level
+
+    store = ScopeStore(svc.workspace)
+    if scope_id:
+        return store.get(scope_id).id
+    if not level:
+        raise ValueError("범위를 정해 주세요: 수준(예: '고1 물리') 또는 범위 프로필 ID")
+    return ensure_preset(store, parse_level(level)).id
+
+
 def _cmd_exam(args: argparse.Namespace) -> int:
     svc = _svc(args)
-    res = ingest_exam_pdf(
+    res = ingest_exam(
         svc,
         Path(args.file),
         title=args.title,
-        scope_id=args.scope,
+        scope_id=resolve_scope(svc, args.scope, args.level),
         subject=args.subject,
         force=args.force,
         key_pages=parse_key_pages(args.key_pages),
@@ -148,10 +177,10 @@ def _cmd_exam(args: argparse.Namespace) -> int:
             "  소문항 " + ", ".join(f"{p.label} {p.points:g}점" for p in q.parts) if q.parts else ""
         )
         _out(f"- {q.number} [{kind}, {q.points:g}점] 그림 {len(q.item.figures)}개{parts}")
-    if res.key_pages:
+    if res.key_source:
         _out(
-            f"해설지: {', '.join(map(str, res.key_pages))}쪽 → {len(res.keys)}문항 "
-            "(모범 답안·부분 점수, `exam show`로 확인)"
+            f"해설지: {res.key_source} → {len(res.keys)}문항 "
+            "(모범 답안·부분 점수·개념, `exam show`로 확인)"
         )
     else:
         _out(
@@ -178,7 +207,7 @@ def _wrap(fn: Any) -> Any:
 
 
 def register(sub: Any) -> None:
-    ip = sub.add_parser("ingest", help="시험지 PDF 읽기")
+    ip = sub.add_parser("ingest", help="시험지 PDF·DOCX·HWPX·HWP 읽기")
     ip.add_argument("--workspace")
     ip.add_argument("--cli", choices=AGENT_NAMES)
     isub = ip.add_subparsers(dest="ingest_command", required=True)
@@ -188,14 +217,19 @@ def register(sub: Any) -> None:
     lay.add_argument("--overlay", help="영역·그림을 표시한 페이지 이미지를 저장할 폴더")
     lay.set_defaults(func=_wrap(_cmd_layout))
 
-    ex = isub.add_parser("exam", help="시험지 PDF → 시험")
+    ex = isub.add_parser("exam", help="시험지 PDF·DOCX·HWPX·HWP → 시험")
     ex.add_argument("file")
     ex.add_argument("--title", required=True)
-    ex.add_argument("--scope", required=True)
+    rng = ex.add_mutually_exclusive_group(required=True)
+    rng.add_argument(
+        "--level", help="수준 프리셋 (예: '고1 물리', '중3 수학') — 범위 프로필을 만든다"
+    )
+    rng.add_argument("--scope", help="범위 프로필 ID")
     ex.add_argument("--subject")
     ex.add_argument("--force", action="store_true", help="이미 DB화한 자료도 다시")
     ex.add_argument(
         "--key-pages",
-        help="해설지 쪽 (예: 6). 없으면 '부분 점수' 표시로 자동으로 찾고, 'none'이면 해설지 없음",
+        help="PDF 해설지 쪽 (예: 6). 없으면 '부분 점수' 표시로 자동으로 찾고, 'none'이면 해설지 "
+        "없음. DOCX·HWPX는 미주·'정답 및 해설' 구간을 읽는다 ('none'이면 읽지 않음)",
     )
     ex.set_defaults(func=_wrap(_cmd_exam))

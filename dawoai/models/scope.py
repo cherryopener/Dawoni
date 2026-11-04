@@ -47,7 +47,10 @@ class ScopeProfile(DawoaiModel):
     title: str
     subject: str | None = None
     level: str = Field(description="학년·과정 (예: 중학교 3학년, 고등학교 물리학 I)")
-    concepts: list[Concept] = Field(min_length=1)
+    concepts: list[Concept] = Field(
+        default_factory=lambda: list[Concept](),
+        description="허용 개념. 수준 프리셋(levels.py)은 비워 두고 해설지 개념 목록을 범위로 쓴다",
+    )
     skills: list[Skill] = Field(default_factory=lambda: list[Skill]())
     forbidden: list[ForbiddenTechnique] = Field(default_factory=lambda: list[ForbiddenTechnique]())
     conventions: list[str] = Field(default_factory=lambda: list[str]())

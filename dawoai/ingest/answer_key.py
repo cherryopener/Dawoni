@@ -11,6 +11,9 @@
 - 두 번(새 세션) 읽어 답·해설의 **숫자**를 비교 — 다르면 그 소문항을 '원본과 확인'으로 표시.
   (실측: 한글 문장은 그대로 옮기면서 "전체 전압이, … 1/2"을 "2/3, 1/3"로 바꿔 읽었다.
   수식이 글꼴 문자라 코드가 PDF 글자와 숫자를 맞춰 볼 수 없다.)
+
+DOCX·HWPX 해설(미주, "정답 및 해설" 구간)은 `DocKey`로 넘긴다: 문항마다 이미 나뉘어 있고 식이 LaTeX
+글이라 이미지 대신 글을 읽히며, 두 번 읽지 않는다 (숫자가 깨질 일이 없다 — 토큰 ↓).
 """
 
 from __future__ import annotations
@@ -21,11 +24,13 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
 import pymupdf
 
 from dawoai.context import ContextEngine, TaskDef, TaskInput
 from dawoai.grading.render import blocks_text
+from dawoai.ingest.document import KeyPiece
 from dawoai.ingest.grounding import (
     UNGROUNDED,
     accept_ungrounded,
@@ -92,6 +97,95 @@ def text_beyond_pdf(pdf: Path, pages: list[int], text: str) -> bool:
         return True
     with pymupdf.open(pdf) as doc:
         return any(doc.load_page(p - 1).get_images() for p in pages)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+
+
+class KeySource(Protocol):
+    """해설지 읽을거리: 묶음 번호(`pages`)마다 글·이미지."""
+
+    @property
+    def doc(self) -> bool: ...
+    @property
+    def pages(self) -> list[int]: ...
+
+    def text(self, group: list[int]) -> str: ...
+    def images(self, group: list[int], work_dir: Path) -> tuple[Path, ...]: ...
+    def beyond_text(self, group: list[int], text: str) -> bool: ...
+    def expected(self, group: list[int], text: str, numbers: set[str]) -> set[str]: ...
+    def source(self) -> str: ...
+
+
+@dataclass
+class PdfKey:
+    """해설지 PDF 쪽 (시험지 뒤에 붙었거나 따로 온 것)."""
+
+    pdf: Path
+    pages: list[int]
+    doc: bool = False
+
+    def text(self, group: list[int]) -> str:
+        return page_text(self.pdf, group)
+
+    def images(self, group: list[int], work_dir: Path) -> tuple[Path, ...]:
+        return tuple(render_page(self.pdf, p, work_dir / f"key_p{p}.png", dpi=170) for p in group)
+
+    def beyond_text(self, group: list[int], text: str) -> bool:
+        return text_beyond_pdf(self.pdf, group, text)
+
+    def expected(self, group: list[int], text: str, numbers: set[str]) -> set[str]:
+        return numbered_on_page(text, numbers)
+
+    def source(self) -> str:
+        return f"{self.pdf.name} {', '.join(map(str, self.pages))}쪽"
+
+
+KEY_PIECES_PER_CALL = 5
+KEY_CHARS_PER_CALL = 6000
+
+
+@dataclass
+class DocKey:
+    """DOCX·HWPX에서 문항마다 떼어 낸 해설 (`document.analyze_document`의 `keys`)."""
+
+    path: Path
+    pieces: dict[str, KeyPiece]
+    doc: bool = True
+    groups: list[list[str]] = field(default_factory=lambda: list[list[str]]())
+
+    def __post_init__(self) -> None:
+        group: list[str] = []
+        chars = 0
+        for label, piece in self.pieces.items():
+            if group and (
+                len(group) >= KEY_PIECES_PER_CALL or chars + len(piece.text) > KEY_CHARS_PER_CALL
+            ):
+                self.groups.append(group)
+                group, chars = [], 0
+            group.append(label)
+            chars += len(piece.text)
+        if group:
+            self.groups.append(group)
+
+    @property
+    def pages(self) -> list[int]:
+        return list(range(1, len(self.groups) + 1))
+
+    def _labels(self, group: list[int]) -> list[str]:
+        return [label for g in group for label in self.groups[g - 1]]
+
+    def text(self, group: list[int]) -> str:
+        return "\n\n".join(f"[문항 {n} 해설]\n{self.pieces[n].text}" for n in self._labels(group))
+
+    def images(self, group: list[int], work_dir: Path) -> tuple[Path, ...]:
+        return tuple(img for n in self._labels(group) for img in self.pieces[n].images)
+
+    def beyond_text(self, group: list[int], text: str) -> bool:
+        return bool(self.images(group, Path()))  # 해설 속 그림 안의 글
+
+    def expected(self, group: list[int], text: str, numbers: set[str]) -> set[str]:
+        return set(self._labels(group)) & numbers
+
+    def source(self) -> str:
+        return f"{self.path.name} 문항별 해설(미주·해설 구간)"
 
 
 _LONE_NUMBER = re.compile(r"(?m)^\s*0?(\d{2,3})\s*\.?\s*$")
@@ -230,7 +324,10 @@ def _merge(a: KeyQuestion, b: KeyQuestion) -> KeyQuestion:
             parts[p.label] = p
         elif p.solution or p.answer:
             parts[p.label] = old.model_copy(
-                update={"solution": "\n".join(x for x in (old.solution, p.solution) if x)}
+                update={
+                    "solution": "\n".join(x for x in (old.solution, p.solution) if x),
+                    "concepts": list(dict.fromkeys(old.concepts + p.concepts)),
+                }
             )
     return KeyQuestion(number=a.number, parts=list(parts.values()), notes=a.notes + b.notes)
 
@@ -241,8 +338,8 @@ type _Read = tuple[list[Path], list[KeyQuestion], dict[str, list[str]], dict[str
 
 def extract_answer_key(
     engine: ContextEngine,
-    pdf: Path,
-    pages: list[int],
+    pdf: Path | KeySource,
+    pages: list[int] | None,
     exam: Exam,
     work_dir: Path,
     *,
@@ -254,9 +351,12 @@ def extract_answer_key(
     pages_per_call: int = PAGES_PER_CALL,
     for_rubric: bool = True,
 ) -> KeyIngest:
-    """`for_rubric`: 부분 점수 표기도 옮긴다 (시험지). 문제은행은 답·해설만.
+    """`pdf`: 해설지 PDF(`pages`쪽) 또는 `DocKey` (`pages`는 무시 — 묶음 전체).
 
-    `cross`: 새 세션에서 한 번 더 읽어 숫자를 비교한다 (읽기 1번 더).
+    `for_rubric`: 부분 점수 표기도 옮긴다 (시험지). 문제은행은 답·해설만.
+
+    `cross`: 새 세션에서 한 번 더 읽어 숫자를 비교한다 (읽기 1번 더). 문서 해설은 글이 정확하므로
+    읽지 않는다.
 
     `ignore_other_numbers`: 해설 쪽에 다른 문항(옆 챕터)의 해설이 함께 있을 때 — 그 번호는
     수리 요청 없이 버린다. `workers`: 쪽 묶음 여러 개를 동시에 읽는다.
@@ -265,6 +365,9 @@ def extract_answer_key(
     from dawoai.context import TaskFailed
     from dawoai.parallel import each_in_parallel
 
+    src: KeySource = PdfKey(pdf, pages or []) if isinstance(pdf, Path) else pdf
+    pages = src.pages
+    cross = cross and not src.doc
     work_dir.mkdir(parents=True, exist_ok=True)
     found: dict[str, KeyQuestion] = {}
     doubtful: dict[str, list[str]] = {}
@@ -294,15 +397,15 @@ def extract_answer_key(
             out.append(kq)
         return out
 
-    step = max(1, pages_per_call)
+    step = 1 if src.doc else max(1, pages_per_call)  # 문서는 묶음 하나가 이미 문항 여러 개
     groups = [pages[i : i + step] for i in range(0, len(pages), step)]
     cache_dir = work_dir / "reads"
 
     def read(group: list[int]) -> _Read:
-        images = tuple(render_page(pdf, p, work_dir / f"key_p{p}.png", dpi=170) for p in group)
-        text = page_text(pdf, group)
+        images = src.images(group, work_dir)
+        text = src.text(group)
 
-        on_page = numbered_on_page(text, numbers)
+        on_page = src.expected(group, text, numbers)
 
         def check(out: KeyExtraction, text: str = text) -> list[str]:
             if ignore_other_numbers:
@@ -313,12 +416,21 @@ def extract_answer_key(
             EXTRACT_KEY, name=f"extract_answer_key_p{group[0]}", validator=check
         )
         inp = TaskInput(
-            variables={"pages": ", ".join(map(str, group)), "for_rubric": for_rubric},
+            variables={
+                "pages": ", ".join(map(str, group)),
+                "for_rubric": for_rubric,
+                "doc": src.doc,
+            },
             material="시험 문항:\n"
             + "\n".join(_question_line(q) for q in exam.questions)
             + (f"\n\n학생 수준: {level}" if level else "")
-            + "\n\n해설지 PDF 글자 "
-            "(수식은 글꼴 문자라 깨져 있을 수 있음 — 수식은 이미지로 읽을 것):\n" + text,
+            + (
+                "\n\n해설 글 (문서에서 문항마다 떼어 냄, 식은 LaTeX):\n"
+                if src.doc
+                else "\n\n해설지 PDF 글자 "
+                "(수식은 글꼴 문자라 깨져 있을 수 있음 — 수식은 이미지로 읽을 것):\n"
+            )
+            + text,
             attachments=images,
         )
         cached = cache_dir / f"p{group[0]}-{group[-1]}.json"
@@ -335,7 +447,7 @@ def extract_answer_key(
                 raw = engine.run(task, inp).value
             except TaskFailed as e:
                 accepted = accept_ungrounded(e, KeyExtraction)
-                if accepted is None or not text_beyond_pdf(pdf, group, text):
+                if accepted is None or not src.beyond_text(group, text):
                     raise
                 log.warning("해설 %s쪽: 근거 검사만 남아 받아들임 (강사 확인): %s", group,
                             e.errors[:3])  # fmt: skip
@@ -388,7 +500,7 @@ def extract_answer_key(
             if odd:
                 odd_found.add(n)
 
-    source = f"{pdf.name} {', '.join(map(str, pages))}쪽"
+    source = src.source()
     out = KeyIngest()
     out.warnings += [
         f"해설지 {g[0]}~{g[-1]}쪽을 읽지 못함 — 다시 하면 다시 읽습니다" for g in failed
@@ -409,7 +521,11 @@ def extract_answer_key(
             question_number=q.number,
             parts=sorted(kq.parts, key=lambda p: order.get(p.label, 99)),
             source=source,
-            pages=[img.relative_to(work_dir.parent).as_posix() for img in images_all],
+            pages=[
+                img.relative_to(work_dir.parent).as_posix()
+                for img in images_all
+                if img.is_relative_to(work_dir.parent)
+            ],
             notes=kq.notes,
             doubtful=sorted(set(doubtful.get(q.number, [])), key=lambda x: order.get(x, 99)),
         )
