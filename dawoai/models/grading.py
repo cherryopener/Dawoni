@@ -684,6 +684,14 @@ class GradeResult(DawoaiModel):
     examples_used: list[str] = Field(
         default_factory=lambda: list[str](), description="채점에 넣은 기준 예시 (학생 ID)"
     )
+    code_items: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="AI 없이 코드가 정한 항목 (빈 소문항·답이 분명한 단답형, M4)",
+    )
+    calls: int = Field(default=0, description="이 채점에 쓴 AI 호출 수 (수리·재채점 포함)")
+    repairs: int = Field(default=0, description="그중 검증 실패로 다시 물은 수")
+    tokens: int | None = Field(default=None, description="AI가 알려 준 토큰 합")
+    duration_s: float = Field(default=0.0, description="AI 호출 시간 합 (동시 실행이면 겹침)")
     item_points: dict[str, float] = Field(
         default_factory=lambda: dict[str, float](),
         description="채점할 때 루브릭 항목별 배점 (루브릭이 바뀐 뒤 예시로 쓸 수 있는지 판단)",

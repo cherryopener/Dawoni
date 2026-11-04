@@ -13,7 +13,7 @@ from dawoai.context.engine import (
 from dawoai.context.memory import MemoryNote, MemoryStore
 from dawoai.context.rules import GlobalRule, RuleStore
 from dawoai.context.skills import Skill, SkillStore
-from dawoai.context.tasks import RuleTarget, TaskDef
+from dawoai.context.tasks import PartialRepair, RuleTarget, TaskDef
 
 __all__ = [
     "ContextBudgetError",
@@ -21,6 +21,7 @@ __all__ = [
     "GlobalRule",
     "MemoryNote",
     "MemoryStore",
+    "PartialRepair",
     "RuleStore",
     "RuleTarget",
     "Shrinkable",

@@ -85,3 +85,26 @@ def transcript_correction(before: Transcript, after: Transcript, situation: str)
 
     b, a = diff_text(view(before), view(after))
     return Correction(before=b, after=a, target="transcribe", situation=situation)
+
+
+def confirmed_files_correction(
+    pairs: list[tuple[Transcript, Transcript]], situation: str
+) -> Correction:
+    """한글에서 고쳐 확인 완료한 판독본들 → 배우기 한 번 (학생·문항마다 호출하지 않는다).
+    고친 줄만 학생·문항 표시와 함께 모은다 (M3에서 남긴 것: HWPX 확인 완료에서 배우기)."""
+    b: list[str] = []
+    a: list[str] = []
+    for before, after in pairs:
+        c = transcript_correction(before, after, situation)
+        if not c.after.strip() and not c.before.strip():
+            continue
+        head = f"[{after.student_id} 문항 {after.question_number}]"
+        b.append(f"{head}\n{c.before}")
+        a.append(f"{head}\n{c.after}")
+    return Correction(
+        note="강사가 한글(HWPX)에서 판독문을 고쳐 확인 완료함",
+        before="\n".join(b),
+        after="\n".join(a),
+        target="transcribe",
+        situation=situation,
+    )

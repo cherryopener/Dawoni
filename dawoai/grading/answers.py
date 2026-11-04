@@ -5,7 +5,8 @@
 - 채점: 객관식은 선지 번호 비교, 단답형은 정규화한 글·sympy 값 비교. 코드로 정할 수 없는 단답만
   모아 **문항당 한 번** 가벼운 도우미에게 묻는다 (같은 답은 한 번만). 도우미가 실패해도 채점은
   끝난다 — 그 답은 '검토 필요'로 남는다.
-- 서술형 소문항이 하나라도 있는 문항은 AI 채점 그대로 (코드 선수리는 M4).
+- 서술형 소문항이 섞인 문항은 AI 채점이지만, 빈 소문항과 답이 분명한 단답형 소문항은 코드가
+  먼저 정하고 나머지 항목만 AI에게 보낸다 (`pre_grade`, M4).
 """
 
 from __future__ import annotations
@@ -519,3 +520,78 @@ def _ask_helper(
     )
     by_id = {v.id: v for v in res.value.answers}
     return {labels[i]: by_id[i] for i in ids if i in by_id}, (res.agent, res.model)
+
+
+# ---------------------------------------------------------------- 서술형 문항의 코드 선채점 (M4)
+
+
+@dataclass
+class PreGraded:
+    """서술형 문항에서 AI 없이 정한 항목 (나머지 항목만 AI가 채점한다)."""
+
+    judgements: dict[str, ItemJudgement] = dataclasses.field(
+        default_factory=lambda: dict[str, ItemJudgement]()
+    )
+    notes: list[str] = dataclasses.field(default_factory=lambda: list[str]())
+    """AI에게 알릴 말 ("소문항 (2)는 답이 없어 코드가 0점")."""
+
+
+def pre_grade(q: ExamQuestion, rubric: Rubric, t: Transcript) -> PreGraded:
+    """AI에게 보내기 전에 코드가 분명히 정할 수 있는 소문항을 채점한다 (PLAN.md §2-4 2번).
+
+    - **빈 소문항**: 판독문에 소문항 표시가 있는데 그 소문항 줄이 하나도 없으면 그 항목 모두 0점.
+      (표시가 아예 없는 판독문은 어느 줄이 어느 소문항인지 모르므로 하지 않는다.)
+    - **단답형 소문항**: 그 소문항의 항목이 하나뿐이고 해설지 답(`checks`)이 있으면 결론 줄을
+      `judge_value`로 비교 — 분명히 같으면 만점, 분명히 다르면 0점. 메모가 붙거나(단위 없음 등)
+      정하지 못한 답, 강사 미확인 정답 후보가 있는 소문항은 AI에게 둔다."""
+    out = PreGraded()
+    if rubric.code_graded or not t.lines:
+        return out
+    labelled = any(x.part for x in t.lines if not x.struck)
+    keys = {c.part: c.key_answer for c in rubric.checks if c.verdict != "key_doubt"}
+    proposed = {c.part for c in rubric.candidates if c.status == "proposed"}
+    accepted: dict[str, list[str]] = {}
+    for c in rubric.candidates:
+        if c.status == "accepted":
+            accepted.setdefault(c.part, []).append(c.answer)
+    by_part: dict[str, list[RubricItem]] = {}
+    for item in rubric.items:
+        if item.part:
+            by_part.setdefault(item.part, []).append(item)
+    for part, items in by_part.items():
+        lines = [x for x in part_lines(t, part) if x.joined.strip()]
+        if labelled and not lines:
+            for item in items:
+                out.judgements[item.id] = ItemJudgement(
+                    rubric_item_id=item.id, awarded=0, evidence_quote=None,
+                    reason="답 없음 (판독문에 이 소문항 줄이 없음)",
+                    deduction_reason="답을 쓰지 않음", confidence=1.0,
+                )  # fmt: skip
+            out.notes.append(f"소문항 {part}: 답이 없어 코드가 0점 처리함")
+            continue
+        p = q.part(part)
+        key = keys.get(part)
+        if (
+            p is None or p.kind != "short_answer" or len(items) != 1 or not key
+            or part in proposed or not labelled or not lines
+        ):  # fmt: skip
+            continue
+        item = items[0]
+        final = lines[-1].joined.strip()
+        verdicts = [judge_value(final, a) for a in [key, *accepted.get(part, [])]]
+        if any(v == "same" and note is None for v, note in verdicts):
+            j = ItemJudgement(
+                rubric_item_id=item.id, awarded=item.points, evidence_quote=final,
+                reason=f"정답 {key}와 같음 (코드 비교)", confidence=1.0,
+            )  # fmt: skip
+        elif all(v == "different" for v, _ in verdicts):
+            j = ItemJudgement(
+                rubric_item_id=item.id, awarded=0, evidence_quote=final,
+                reason=f"정답({key})과 다름 (코드 비교)", deduction_reason=f"정답은 {key}",
+                confidence=1.0,
+            )  # fmt: skip
+        else:
+            continue
+        out.judgements[item.id] = j
+        out.notes.append(f"소문항 {part}: 단답형이라 코드가 채점함 ({j.awarded:g}점)")
+    return out

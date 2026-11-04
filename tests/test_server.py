@@ -137,8 +137,22 @@ def test_exam_end_to_end(
     t = c.post(f"{base}/students/A/answers", json={"question": "1", "text": text}).json()
     assert t["confirmed"] and len(t["lines"]) == 2
 
-    job = _wait(c, c.post(f"{base}/grade", json={}).json())
+    # 문항 맡기 (§8): 다른 강사가 맡은 문항은 채점이 잠기고, 가져오기로 넘겨받는다
+    assert c.put(f"{base}/assign/1", json={"by": "이선생"}).json()["teacher"] == "이선생"
+    taken = c.put(f"{base}/assign/1", json={"by": "김선생"})
+    assert taken.status_code == 400 and "가져오기" in taken.json()["detail"]
+    locked = _wait(c, c.post(f"{base}/grade", json={"by": "김선생"}).json())
+    assert locked["result"]["graded"] == 0 and "이선생" in locked["result"]["skipped"][0]["reason"]
+    took = c.put(f"{base}/assign/1", json={"by": "김선생", "take": True}).json()
+    assert took["teacher"] == "김선생" and took["history"][-1]["previous"] == "이선생"
+    assert c.get(f"{base}/board").json()[0]["ungraded"] == 1
+
+    job = _wait(c, c.post(f"{base}/grade", json={"by": "김선생"}).json())
     assert job["status"] == "succeeded" and job["result"]["graded"] == 1, job
+    assert job["result"]["calls"] == 1 and job["result"]["repairs"] == 0
+    board = c.get(f"{base}/board").json()[0]
+    assert (board["teacher"], board["graded"], board["ungraded"]) == ("김선생", 1, 0)
+    assert c.delete(f"{base}/assign/1", params={"by": "김선생"}).json()["teacher"] is None
     again = _wait(c, c.post(f"{base}/grade", json={}).json())
     assert (
         again["result"]["graded"] == 0 and "이미 채점됨" in again["result"]["skipped"][0]["reason"]

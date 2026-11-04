@@ -22,15 +22,23 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Literal
 
 from rapidfuzz import fuzz
 
 from dawoai.config import AgentName
-from dawoai.context import ContextEngine, Shrinkable, TaskDef, TaskInput
+from dawoai.context import ContextEngine, PartialRepair, Shrinkable, TaskDef, TaskInput
 from dawoai.grading import checks
-from dawoai.grading.answers import grade_by_code, missing_answers, part_lines
+from dawoai.grading.answers import (
+    CODE_AGENT,
+    grade_by_code,
+    missing_answers,
+    part_lines,
+    pre_grade,
+)
 from dawoai.grading.render import (
     exam_question_text,
     key_text,
@@ -146,6 +154,8 @@ SUGGEST: TaskDef[RubricSuggestion] = TaskDef(
 
 LOW_CONFIDENCE = 0.6
 
+SecondWhen = Literal["low", "all"]
+
 
 @dataclass(frozen=True)
 class SecondOpinion:
@@ -153,6 +163,8 @@ class SecondOpinion:
 
     agent: AgentName | None = None
     model: str | None = None
+    when: SecondWhen = "low"
+    """low = 확신도 낮음·수리·확인할 점이 있는 채점만 (기본), all = 모두."""
 
 
 # ---------------------------------------------------------------- 해설
@@ -718,6 +730,100 @@ def answer_sides(
 # ---------------------------------------------------------------- 채점
 
 
+_QUOTE_WRAP = "\"'“”‘’「」『』`"
+_ITEM_ERROR = re.compile(r"^(R[1-9][0-9]*): ")
+_MISSING_ITEMS = re.compile(r"^루브릭 항목 \[(.*?)\]에 대한 판정이 없다")
+
+
+def fix_grade(o: GradeOutput, rubric: RubricDraft) -> tuple[GradeOutput, list[str]]:
+    """코드 선수리 (PLAN.md §2-5): AI에게 다시 묻기 전에 형식만 틀린 것을 고친다. 점수·근거의
+    판단은 바꾸지 않는다 — 판단이 걸린 오류(인용이 답안에 없음, 배점 초과 등)는 그대로 둔다.
+
+    - 항목 ID 대소문자·띄어쓰기 (`r1 ` → `R1`)
+    - 같은 항목·같은 점수를 두 번 판정 → 하나 (점수가 다르면 그대로 — AI가 정해야 함)
+    - 배점을 소수 끝자리만큼 넘은 점수 (2.0000001 → 2)
+    - 인용을 감싼 따옴표 (`"V=IR"` → `V=IR`)
+    - 루브릭에 없는 정답 후보 ID (대소문자는 고치고, 없는 것은 뺀다)"""
+    ids = {i.id.casefold(): i for i in rubric.items}
+    cands = {c.id.casefold(): c.id for c in rubric.candidates}
+    fixes: list[str] = []
+    out: list[ItemJudgement] = []
+    for j in o.judgements:
+        item = ids.get(j.rubric_item_id.strip().casefold())
+        if item is not None and item.id != j.rubric_item_id:
+            fixes.append(f"항목 ID '{j.rubric_item_id}' → {item.id}")
+            j = j.model_copy(update={"rubric_item_id": item.id})
+        if item is not None and item.points < j.awarded <= item.points + 0.01:
+            fixes.append(f"{item.id}: 점수 {j.awarded} → {item.points:g}")
+            j = j.model_copy(update={"awarded": item.points})
+        prev = next((x for x in out if x.rubric_item_id == j.rubric_item_id), None)
+        if prev is not None and abs(prev.awarded - j.awarded) < 1e-9:
+            fixes.append(f"{j.rubric_item_id}: 같은 판정 두 번 → 하나")
+            continue
+        if j.evidence_quote:
+            q = j.evidence_quote.strip()
+            while len(q) > 1 and q[0] in _QUOTE_WRAP and q[-1] in _QUOTE_WRAP:
+                q = q[1:-1].strip()
+            if q != j.evidence_quote.strip():
+                fixes.append(f"{j.rubric_item_id}: 인용의 따옴표 뺌")
+            if q != j.evidence_quote:
+                j = j.model_copy(update={"evidence_quote": q or None})
+        out.append(j)
+    matched: list[str] = []
+    for c in o.matched_candidates:
+        cid = cands.get(c.strip().casefold())
+        if cid is None:
+            fixes.append(f"루브릭에 없는 정답 후보 '{c}' 뺌")
+        elif cid not in matched:
+            matched.append(cid)
+    if not fixes:
+        return o, []
+    return o.model_copy(update={"judgements": out, "matched_candidates": matched}), fixes
+
+
+def grade_repair_items(o: GradeOutput, errors: list[str]) -> list[str] | None:
+    """검증 오류가 모두 항목 하나하나의 것이면 그 항목 ID들 (부분 재요청). 아니면 None."""
+    keys: list[str] = []
+    for e in errors:
+        if m := _ITEM_ERROR.match(e):
+            keys.append(m.group(1))
+        elif m := _MISSING_ITEMS.match(e):
+            keys += re.findall(r"R[1-9][0-9]*", m.group(1))
+        else:
+            return None
+    return list(dict.fromkeys(keys)) or None
+
+
+def merge_grade(order: list[str]) -> Callable[[GradeOutput, GradeOutput, list[str]], GradeOutput]:
+    def merge(base: GradeOutput, patch: GradeOutput, keys: list[str]) -> GradeOutput:
+        new = {j.rubric_item_id: j for j in patch.judgements if j.rubric_item_id in keys}
+        old = {j.rubric_item_id: j for j in base.judgements}
+        rank = {k: i for i, k in enumerate(order)}
+        ids = sorted({*old, *new}, key=lambda k: rank.get(k, len(rank)))
+        return base.model_copy(
+            update={
+                "judgements": [new.get(k) or old[k] for k in ids],
+                "comment": base.comment or patch.comment,
+                "flags": list(dict.fromkeys([*base.flags, *patch.flags])),
+                "matched_candidates": list(
+                    dict.fromkeys([*base.matched_candidates, *patch.matched_candidates])
+                ),
+            }
+        )
+
+    return merge
+
+
+@dataclass
+class _Graded:
+    out: GradeOutput
+    agent: AgentName
+    model: str | None
+    attempts: int
+    tokens: int | None
+    duration_s: float
+
+
 def _grade_once(
     engine: ContextEngine,
     q: ExamQuestion,
@@ -727,24 +833,51 @@ def _grade_once(
     agent: AgentName | None,
     model: str | None,
     examples: Shrinkable | None = None,
-) -> tuple[GradeOutput, AgentName, str | None]:
+    notes: list[str] | None = None,
+) -> _Graded:
     def check(o: GradeOutput) -> list[str]:
         return checks.check_grade(o, rubric, transcript, scope)
 
-    task = dataclasses.replace(GRADE, validator=check)
+    def fix(o: GradeOutput) -> tuple[GradeOutput, list[str]]:
+        return fix_grade(o, rubric)
+
+    task = dataclasses.replace(
+        GRADE,
+        validator=check,
+        fix=fix,
+        partial=PartialRepair(
+            select=grade_repair_items,
+            merge=merge_grade([i.id for i in rubric.items]),
+            noun="채점 항목",
+        ),
+    )
+    material = exam_question_text(q) + "\n\n" + rubric_text(rubric, q.parts)
+    if notes:
+        material += "\n\n[코드가 이미 채점한 소문항 — 판정하지 말 것]\n" + "\n".join(
+            f"- {n}" for n in notes
+        )
     res = engine.run(
         task,
         TaskInput(
             variables={"level": scope.level},
             scope=scope_layer(scope),
-            material=exam_question_text(q) + "\n\n" + rubric_text(rubric, q.parts),
+            material=material,
             examples=examples,
             target=transcript_text(transcript),
         ),
         agent=agent,
         model=model,
     )
-    return res.value, res.agent, res.model
+    return _Graded(res.value, res.agent, res.model, res.attempts, res.total_tokens, res.duration_s)
+
+
+def needs_second(first: GradeOutput, attempts: int) -> bool:
+    """재채점할 채점 (PLAN.md §2-4 4번): 확신도가 낮거나, 수리했거나, AI가 확인할 점을 적음."""
+    return (
+        attempts > 1
+        or bool(first.flags)
+        or any(j.confidence < LOW_CONFIDENCE for j in first.judgements)
+    )
 
 
 def grade_answer(
@@ -762,7 +895,10 @@ def grade_answer(
 ) -> GradeResult:
     """`examples`: 강사 보정 기준 예시 (`calibration.pick_for`).
 
-    대상 학생 자신의 답안은 예시로 넣지 않는다.
+    대상 학생 자신의 답안은 예시로 넣지 않는다. 빈 답안·빈 소문항·답이 분명한 단답형 소문항은
+    코드가 먼저 정하고(`pre_grade`) 나머지 항목만 AI가 채점한다 — 모두 정해지면 AI를 부르지
+    않는다. `double`이 있으면 `needs_second`인 채점만 다른 세션(·AI)으로 한 번 더 본다
+    (`double.when == "all"`이면 모두).
     """
     if example_students and transcript.student_id in example_students:
         raise PipelineError("채점 대상 학생의 답안을 기준 예시로 넣을 수 없습니다.")
@@ -776,46 +912,113 @@ def grade_answer(
         )
     if rubric.code_graded:  # 객관식·단답형: 코드로 (애매한 단답만 가벼운 도우미)
         return grade_by_code(engine, q, rubric, [transcript], scope)[0]
-    first, used_agent, used_model = _grade_once(
-        engine, q, rubric, transcript, scope, agent, model, examples
-    )
-    flags = list(first.flags)
+    item_points = {i.id: i.points for i in rubric.items}
+    if transcript.is_blank:
+        return blank_grade(q, rubric, transcript)
+    pre = pre_grade(q, rubric, transcript)
+    ai_items = [i for i in rubric.items if i.id not in pre.judgements]
+    flags: list[str] = []
     second: GradeOutput | None = None
     diff: list[str] = []
-    if double is not None:
-        second, _, _ = _grade_once(
-            engine, q, rubric, transcript, scope, double.agent, double.model, examples
+    calls = repairs = 0
+    tokens: int | None = None
+    duration = 0.0
+    used_agent: str = CODE_AGENT
+    used_model: str | None = None
+    comment = ""
+    first_flags: list[str] = []
+    matched_ids: list[str] = []
+    ai_judgements: list[ItemJudgement] = []
+    if ai_items:
+        ai_rubric = rubric.model_copy(update={"items": ai_items}) if pre.judgements else rubric
+        first = _grade_once(
+            engine, q, ai_rubric, transcript, scope, agent, model, examples, pre.notes
         )
-        diff = checks.disagreements(first, second)
-        if diff:
-            flags.append(f"이중 채점 불일치: {', '.join(diff)}")
-    low = [j.rubric_item_id for j in first.judgements if j.confidence < LOW_CONFIDENCE]
+        runs = [first]
+        flags += first.out.flags
+        if double is not None and (double.when == "all" or needs_second(first.out, first.attempts)):
+            again = _grade_once(
+                engine, q, ai_rubric, transcript, scope, double.agent, double.model, examples,
+                pre.notes,
+            )  # fmt: skip
+            runs.append(again)
+            second = again.out
+            diff = checks.disagreements(first.out, second)
+            if diff:
+                flags.append(f"이중 채점 불일치: {', '.join(diff)}")
+        calls = sum(r.attempts for r in runs)
+        repairs = sum(r.attempts - 1 for r in runs)
+        if any(r.tokens is not None for r in runs):
+            tokens = sum(r.tokens or 0 for r in runs)
+        duration = sum(r.duration_s for r in runs)
+        used_agent, used_model = first.agent, first.model
+        comment = first.out.comment
+        first_flags = first.out.flags
+        matched_ids = first.out.matched_candidates
+        ai_judgements = first.out.judgements
+    by_id = {**pre.judgements, **{j.rubric_item_id: j for j in ai_judgements}}
+    judgements = [by_id[i.id] for i in rubric.items if i.id in by_id]
+    low = [j.rubric_item_id for j in judgements if j.confidence < LOW_CONFIDENCE]
     if low:
         flags.append(f"확신도 낮음: {', '.join(low)}")
     pending = {c.id: c for c in rubric.candidates if c.status == "proposed"}
-    matched = [pending[c] for c in first.matched_candidates if c in pending]
+    matched = [pending[c] for c in matched_ids if c in pending]
     flags += [
         f"학생 답이 강사 미확인 정답 후보 {c.id}({c.answer})와 같음 — 인정하면 "
         f"{', '.join(c.item_ids) or '해당 항목'} 점수를 주세요"
         for c in matched
     ]
-    needs_review = bool(diff or low or first.flags or matched)
+    needs_review = bool(diff or low or first_flags or matched)
     return GradeResult(
         student_id=transcript.student_id,
         question_number=q.number,
         rubric_version=rubric.version,
-        judgements=first.judgements,
-        comment=first.comment,
+        judgements=judgements,
+        comment=comment,
         flags=flags,
-        total=checks.total_points(first),
+        total=sum(j.awarded for j in judgements),
         max_points=rubric.total,
         status="needs_review" if needs_review else "auto",
         second_opinion=second.judgements if second else None,
         disagreements=diff,
         agent=used_agent,
         model=used_model,
-        examples_used=list(example_students or []),
+        examples_used=list(example_students or []) if ai_items else [],
+        item_points=item_points,
+        code_items=list(pre.judgements),
+        calls=calls,
+        repairs=repairs,
+        tokens=tokens,
+        duration_s=duration,
+    )
+
+
+def blank_grade(q: ExamQuestion, rubric: Rubric, transcript: Transcript) -> GradeResult:
+    """빈 답안(판독문에 글이 없음): AI 없이 0점. 판독이 놓쳤을 수 있으므로 강사가 판독본(원본
+    그림)으로 확인하게 '검토 필요'로 둔다 (M3에서 남긴 것)."""
+    return GradeResult(
+        student_id=transcript.student_id,
+        question_number=q.number,
+        rubric_version=rubric.version,
+        judgements=[
+            ItemJudgement(
+                rubric_item_id=i.id,
+                awarded=0,
+                evidence_quote=None,
+                reason="답 없음",
+                deduction_reason="답을 쓰지 않음",
+                confidence=1.0,
+            )
+            for i in rubric.items
+        ],
+        comment="",
+        flags=["빈 답안 — AI 없이 0점. 원본 그림에 답이 있으면 판독문을 채워 확정하세요"],
+        total=0,
+        max_points=rubric.total,
+        status="needs_review",
+        agent=CODE_AGENT,
         item_points={i.id: i.points for i in rubric.items},
+        code_items=[i.id for i in rubric.items],
     )
 
 

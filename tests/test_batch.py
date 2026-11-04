@@ -99,6 +99,7 @@ def test_cli_scan_batch(
     cfg = AppConfig()
     cfg.agents["agy"].executable = str(exe)
     cfg.ocr.cross_check = False
+    cfg.parallel_students = 1  # 가짜 CLI가 정해진 순서로 답한다
     save_config(app_paths, cfg)
     w = ["--workspace", str(ws.root)]
     assert main(["scope", *w, "import", str(FIX / "scope.json")]) == 0

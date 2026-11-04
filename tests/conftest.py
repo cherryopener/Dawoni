@@ -21,6 +21,22 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DAWOAI_ACCESS_FILE", str(tmp_path / "no-access.json"))
 
 
+@pytest.fixture(autouse=True)
+def _sequential_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """가짜 CLI(script)는 호출 순서대로 답하므로 테스트의 기본 설정은 학생·채점을 차례로 부른다.
+    동시 실행을 시험하는 테스트는 설정에 수를 직접 넣는다."""
+    from dawoai.config import AppConfig
+
+    original = AppConfig.__init__
+
+    def init(self: AppConfig, **kw: Any) -> None:
+        kw.setdefault("parallel_students", 1)
+        kw.setdefault("parallel_grading", 1)
+        original(self, **kw)
+
+    monkeypatch.setattr(AppConfig, "__init__", init)
+
+
 @pytest.fixture
 def app_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> AppPaths:
     """테스트마다 독립된 앱 데이터 폴더 (실제 사용자 설정을 건드리지 않음)."""

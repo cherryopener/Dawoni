@@ -22,7 +22,9 @@
     dawoai exam students <시험ID>                 # 표지에서 읽은 학생 (명부 연결·이름 확인 대기)
     dawoai exam student <시험ID> 김다원#5 --name 김다원B [--class 2반] [--roster S0012]
     dawoai exam export <시험ID>                 # 채점 HWPX 다시 쓰기 (보통은 채점 때 저절로)
-    dawoai exam grade <시험ID> [--student 홍길동] [-q 3] [--double] [--regrade]
+    dawoai exam grade <시험ID> [--student 홍길동] [-q 3] [--by 김선생] [--double] [--regrade]
+    dawoai exam assign <시험ID> -q 3 --by 김선생 [--take | --release]  # 문항 맡기 (§8)
+    dawoai exam board <시험ID>                   # 진행판: 문항마다 맡은 강사·채점 현황
     dawoai exam report <시험ID>
 
 답안 파일: 한 줄 = 답안 한 줄. `식:`으로 시작하면 수식(LaTeX) 줄, `~~`로 시작하면 지운 흔적.
@@ -583,12 +585,40 @@ def _cmd_grade(args: argparse.Namespace) -> int:
         store,
         students=[args.student] if args.student else None,
         only=args.q,
-        double=SecondOpinion(model=args.double_model) if args.double else None,
+        double=SecondOpinion(model=args.double_model, when="all") if args.double else None,
         regrade=args.regrade,
         use_examples=not args.no_examples,
+        by=args.by,
         progress=_cli_progress,
     )
     return _print_grade_run(run)
+
+
+def _cmd_assign(args: argparse.Namespace) -> int:
+    from dawoai.grading import assign
+
+    store = ExamStore(_svc(args).workspace, args.exam)
+    try:
+        if args.release:
+            assign.release(store, args.q, args.by)
+            _out(f"문항 {args.q}: 맡은 강사 없음")
+            return 0
+        a = assign.assign(store, args.q, args.by, take=args.take)
+    except assign.AssignError as e:
+        return _err(str(e))
+    _out(f"문항 {args.q}: {a.teacher} 선생님이 맡음")
+    return 0
+
+
+def _cmd_board(args: argparse.Namespace) -> int:
+    from dawoai.grading import assign
+
+    store = ExamStore(_svc(args).workspace, args.exam)
+    _out("문항  맡은 강사      학생  완료  검토 필요  입력 대기  채점 전")
+    for b in assign.board(store):
+        _out(f"{b.question:<5} {b.teacher or '-':<12} {b.students:>4}  {b.graded:>4}  "
+             f"{b.needs_review:>9}  {b.waiting_input:>9}  {b.ungraded:>7}")  # fmt: skip
+    return 0
 
 
 def _print_grade_run(run: workflow.GradeRun) -> int:
@@ -602,6 +632,13 @@ def _print_grade_run(run: workflow.GradeRun) -> int:
         _out(f"{g.student_id} 문항 {g.question_number}: {g.total:g}/{g.max_points:g}  [{mark}]")
         for f in g.flags:
             _out(f"   ! {f}")
+    if run.graded:
+        code = sum(1 for g in run.graded if g.calls == 0)
+        _out(
+            f"AI 호출 {run.calls}번 (수리 {run.repairs}번), 토큰 {run.tokens:,}, "
+            f"{run.wall_s:.0f}초 · 동시 {run.workers}개, AI 없이 {code}건"
+            + (f" · 한도 신호 {run.rate_signals}번" if run.rate_signals else "")
+        )
     _print_export(run.export)
     if run.failed:
         _out(f"\n실패 {len(run.failed)}건 (다시 실행하면 이 답안만 다시 채점합니다):")
@@ -871,11 +908,28 @@ def register(sub: Any) -> None:
 
     g = with_q(es.add_parser("grade", help="채점"))
     g.add_argument("--student")
-    g.add_argument("--double", action="store_true", help="이중 채점")
+    g.add_argument("--by", help="채점하는 강사 — 다른 강사가 맡은 문항은 건너뜀")
+    g.add_argument(
+        "--double",
+        action="store_true",
+        help="모든 답안 이중 채점 (기본은 확신도 낮은 것만 — 설정 second_opinion)",
+    )
     g.add_argument("--double-model", help="두 번째 채점에 쓸 모델")
     g.add_argument("--regrade", action="store_true", help="이미 채점한 답안도 다시 채점")
     g.add_argument("--no-examples", action="store_true", help="강사 기준 예시 없이 채점")
     g.set_defaults(func=_wrap(_cmd_grade))
+
+    asg = es.add_parser("assign", help="문항 맡기 (다른 강사가 맡은 문항은 채점이 잠김)")
+    asg.add_argument("exam")
+    asg.add_argument("-q", required=True, help="문항 번호")
+    asg.add_argument("--by", required=True, help="맡을 강사")
+    mode = asg.add_mutually_exclusive_group()
+    mode.add_argument("--take", action="store_true", help="다른 강사가 맡은 문항 가져오기")
+    mode.add_argument("--release", action="store_true", help="맡은 문항 놓기")
+    asg.set_defaults(func=_wrap(_cmd_assign))
+    bd = es.add_parser("board", help="진행판: 문항마다 맡은 강사·채점 현황")
+    bd.add_argument("exam")
+    bd.set_defaults(func=_wrap(_cmd_board))
 
     r = es.add_parser("report", help="채점 결과")
     r.add_argument("exam")

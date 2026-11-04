@@ -21,7 +21,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from dawoai.agents import AgentClient, AgentError, AgentErrorCode, AgentRequest, AgentResult
-from dawoai.agents.base import as_dict
+from dawoai.agents.base import RATE_LIMIT_WARNING, as_dict
 from dawoai.agents.runner import ProgressCallback
 from dawoai.config import AgentName, TierName
 from dawoai.context.assembler import (
@@ -37,6 +37,7 @@ from dawoai.context.rules import GlobalRule, RuleStore
 from dawoai.context.schema import agent_schema
 from dawoai.context.skills import Skill, SkillStore
 from dawoai.context.tasks import RuleTarget, TaskDef
+from dawoai.parallel import RATE_SIGNAL
 from dawoai.roles import ROLES, Role, instructions
 from dawoai.roles import version as role_version
 
@@ -134,6 +135,18 @@ class TaskFailed(Exception):
         self.last_response = last_response
         summary = "; ".join(errors[:3])
         super().__init__(f"{task}: {attempts}회 시도 후에도 검증 실패 — {summary}")
+
+
+def _patched[T: BaseModel](
+    task: TaskDef[T], parsed: T, base: T | None, only: list[str] | None
+) -> tuple[T, list[str]]:
+    """부분 재요청이면 앞 결과에 합치고, 코드 선수리를 한다 → (결과, 고친 것)."""
+    value = parsed
+    if only and base is not None and task.partial is not None:
+        value = task.partial.merge(base, parsed, only)
+    if task.fix is None:
+        return value, []
+    return task.fix(value)
 
 
 @dataclass(frozen=True)
@@ -280,13 +293,21 @@ class ContextEngine:
         pinned: AgentName | None = agent
         attempts = 0
         transient_left = self.transient_retries
+        base: T | None = None
+        """검증에서 떨어진 앞 결과 — 부분 재요청이면 새 응답의 조각을 여기에 합친다."""
+        only: list[str] | None = None
 
         for attempt in range(1, max_repairs + 2):
             attempts = attempt
             repair = None
             if errors:
                 repair = self.templates.render(
-                    "repair.md.j2", attempt=attempt - 1, errors=errors, previous=_clip(previous)
+                    "repair.md.j2",
+                    attempt=attempt - 1,
+                    errors=errors,
+                    previous=_clip(previous),
+                    only=only,
+                    noun=task.partial.noun if task.partial else "",
                 )
                 if on_progress:
                     on_progress(f"응답 수리 요청 ({attempt - 1}/{max_repairs})")
@@ -302,6 +323,7 @@ class ContextEngine:
                 skill_ids=prompt.skill_ids,
                 memory_ids=prompt.memory_ids,
                 est_prompt_tokens=prompt.est_tokens,
+                partial=only if errors else None,
             )
 
             req = AgentRequest(
@@ -345,6 +367,8 @@ class ContextEngine:
             if res.usage.total_tokens is not None:
                 total_tokens = (total_tokens or 0) + res.usage.total_tokens
             warnings += res.warnings
+            if RATE_LIMIT_WARNING in res.warnings and (signal := RATE_SIGNAL.get()) is not None:
+                signal()
 
             raw = as_dict(res.structured) or None
             data = raw if raw is not None else extract_json_object(res.text)
@@ -353,11 +377,15 @@ class ContextEngine:
                 errors = ["응답에서 JSON 객체를 찾지 못했다. 설명 없이 JSON 객체 하나만 출력할 것."]
             else:
                 try:
-                    value = task.output.model_validate(data)
+                    parsed: T = task.output.model_validate(data)
                 except ValidationError as e:
                     errors = describe_validation_error(e)
                 else:
+                    value, rec.fixes = _patched(task, parsed, base, only)
                     errors = task.validator(value) if task.validator else []
+                    if errors:
+                        base = value
+                        only = task.partial.select(value, errors) if task.partial else None
                     if not errors:
                         rec.ok = True
                         self._log(rec)

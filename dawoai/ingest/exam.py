@@ -42,6 +42,11 @@ from dawoai.models.grading import ExamPart, ExamQuestion
 from dawoai.models.item import Choice, ItemContent, ItemType
 from dawoai.parallel import Progress
 
+
+def _quiet(done: int, total: int, message: str) -> None:
+    pass
+
+
 log = logging.getLogger(__name__)
 
 DEFAULT_POINTS = 4.0
@@ -391,7 +396,7 @@ def extract_exam(
     pages = sorted(by_page)
     reads = each_in_parallel(
         pages, read_page, name=lambda p: f"{p}쪽", what="문항 구조화", workers=workers,
-        **({"progress": progress} if progress else {}),
+        progress=progress or _quiet,
     )  # fmt: skip
     questions: list[ExamQuestion] = []
     warnings: list[str] = list(layout.warnings)

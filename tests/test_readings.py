@@ -114,6 +114,7 @@ def test_cli_students(
 def _services(app_paths: AppPaths, tmp_path: Path, exe: Path | None = None) -> Services:
     ws = create_workspace(tmp_path / "ws")
     cfg = AppConfig()
+    cfg.parallel_students = 1  # 가짜 CLI가 정해진 순서로 답한다
     if exe is not None:
         cfg.agents["agy"].executable = str(exe)
     cfg.ocr.cross_check = False

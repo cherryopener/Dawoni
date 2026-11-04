@@ -145,6 +145,12 @@ class ParsedLine:
     """JSON이 아닌 줄 등 참고 메시지."""
     model: str | None = None
     """CLI가 실제로 쓴 모델 (시작 이벤트에서)."""
+    rate_limited: bool = False
+    """CLI가 사용 한도에 가깝다고 알림 (claude `rate_limit_event`) — 동시 실행을 줄이는 신호."""
+
+
+RATE_LIMIT_WARNING = "사용 한도에 가까움"
+"""`AgentResult.warnings`에 이 글이 있으면 부른 쪽이 동시 호출 수를 줄인다 (`parallel.Throttle`)."""
 
 
 def reported_model(lines: list[ParsedLine]) -> str | None:

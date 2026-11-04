@@ -338,6 +338,8 @@ def test_grade_repairs_fabricated_quote(
     first, second = fake_prompts(exe)
     assert "[학생 답안]" in first and "[루브릭]" in first and "감점하지 말 것" in first
     assert "학생 답안에 없다" in second
+    assert "R1만" in second, "틀린 항목만 다시 묻는다 (부분 재요청)"
+    assert g.calls == 2 and g.repairs == 1
 
 
 def test_grade_double_disagreement_needs_review(
@@ -347,8 +349,9 @@ def test_grade_double_disagreement_needs_review(
     other["judgements"][1].update(awarded=1, deduction_reason="x값을 함께 쓰지 않음")
     engine, _ = engine_with([GRADE_A, other])
     g = grade_answer(
-        engine, q1, approved_rubric(), transcript_of("A_q1.txt"), scope, double=SecondOpinion()
-    )
+        engine, q1, approved_rubric(), transcript_of("A_q1.txt"), scope,
+        double=SecondOpinion(when="all"),
+    )  # fmt: skip
     assert g.disagreements == ["R2"] and g.status == "needs_review"
     assert g.total == 4 and g.second_opinion is not None
 
@@ -461,3 +464,113 @@ def test_quote_with_part_labels_and_lines() -> None:
     assert checks.quote_in_transcript("(1)① 만약 ㉡으로가는 전류량이 더적다면", t)
     assert checks.quote_in_transcript("(2) (가) 2Ω", t)
     assert not checks.quote_in_transcript("밝기가 다르다", t)
+
+
+# ---------------------------------------------------------------- M4: 선수리·부분 재요청·선채점
+
+
+def test_fix_grade_repairs_format_only() -> None:
+    """형식 오류는 코드가 고치고, 판단이 걸린 것(점수 차이)은 그대로 둔다."""
+    from dawoai.grading.pipeline import fix_grade
+
+    rubric = approved_rubric()
+    o = _grade(
+        {
+            "judgements": [
+                {"rubric_item_id": "r1 ", "awarded": 2.000001, "evidence_quote": '"(x-2)^2+3"',
+                 "reason": "a", "confidence": 0.9},
+                {"rubric_item_id": "R1", "awarded": 2.000001, "reason": "a", "confidence": 0.9},
+                {"rubric_item_id": "R2", "awarded": 1, "reason": "b", "deduction_reason": "c",
+                 "confidence": 0.9},
+            ],
+            "comment": "",
+            "matched_candidates": ["A9"],
+        }
+    )  # fmt: skip
+    fixed, fixes = fix_grade(o, rubric)
+    assert [j.rubric_item_id for j in fixed.judgements] == ["R1", "R2"]
+    assert fixed.judgements[0].awarded == 2 and fixed.judgements[0].evidence_quote == "(x-2)^2+3"
+    assert fixed.matched_candidates == [] and len(fixes) == 6
+    assert fix_grade(_grade(GRADE_A), rubric) == (_grade(GRADE_A), [])
+
+
+def test_grade_repair_items() -> None:
+    from dawoai.grading.pipeline import grade_repair_items
+
+    o = _grade(GRADE_A)
+    assert grade_repair_items(o, ["R2: 인용 'x'가 학생 답안에 없다."]) == ["R2"]
+    assert grade_repair_items(o, ["루브릭 항목 ['R3', 'R4']에 대한 판정이 없다. …"]) == [
+        "R3",
+        "R4",
+    ]
+    assert grade_repair_items(o, ["R2: x", "항목 ['R1']을 두 번 이상 판정했다"]) is None
+
+
+def test_second_grading_only_when_unsure(
+    engine_with: EngineWith, q1: ExamQuestion, scope: ScopeProfile
+) -> None:
+    """기본(low): 확신 있는 채점은 한 번만, 확신도가 낮으면 다른 세션으로 한 번 더."""
+    engine, exe = engine_with([GRADE_A])
+    t = transcript_of("A_q1.txt")
+    g = grade_answer(engine, q1, approved_rubric(), t, scope, double=SecondOpinion())
+    assert g.second_opinion is None and g.calls == 1 and len(fake_prompts(exe)) == 1
+    low = copy.deepcopy(GRADE_A)
+    low["judgements"][0]["confidence"] = 0.3
+    engine, exe = engine_with([low, GRADE_A])
+    g = grade_answer(engine, q1, approved_rubric(), t, scope, double=SecondOpinion())
+    assert g.second_opinion is not None and g.calls == 2 and g.status == "needs_review"
+
+
+def _parted() -> tuple[ExamQuestion, Rubric]:
+    from dawoai.models.grading import ExamPart, PartCheck
+
+    q = ExamQuestion.model_validate(read_json(FIX / "questions.json")[0])
+    q = q.model_copy(
+        update={
+            "parts": [
+                ExamPart(label="(1)", points=2, kind="essay"),
+                ExamPart(label="(2)", points=2, kind="short_answer"),
+            ]
+        }
+    )
+    draft = copy.deepcopy(RUBRIC_OK)
+    draft["items"][0]["part"] = "(1)"
+    draft["items"][1]["part"] = "(2)"
+    draft["partial"] = []
+    r = approved_rubric(draft).model_copy(
+        update={"checks": [PartCheck(part="(2)", key_answer="3", ai_answer="3", verdict="same")]}
+    )
+    return q, r
+
+
+def test_short_answer_part_is_graded_by_code(engine_with: EngineWith, scope: ScopeProfile) -> None:
+    """서술형 문항 속 단답형 소문항: 답이 분명하면 코드가 정하고 AI는 나머지 항목만 본다."""
+    q, rubric = _parted()
+    t = Transcript(
+        student_id="학생", question_number="1", confirmed=True,
+        lines=[TranscriptLine(part="(1)", text="y=x^2-4x+7=(x-2)^2+3"),
+               TranscriptLine(part="(2)", math="3")],
+    )  # fmt: skip
+    only_r1 = {"judgements": [GRADE_A["judgements"][0]], "comment": "좋음"}
+    engine, exe = engine_with([only_r1])
+    g = grade_answer(engine, q, rubric, t, scope)
+    assert g.code_items == ["R2"] and g.total == 4 and g.calls == 1
+    prompt = fake_prompts(exe)[0]
+    assert "코드가 이미 채점한 소문항" in prompt and "R2" not in prompt.split("[루브릭]")[1]
+
+
+def test_blank_part_and_blank_answer_need_no_ai(
+    engine_with: EngineWith, scope: ScopeProfile
+) -> None:
+    q, rubric = _parted()
+    engine, exe = engine_with([])
+    wrong_and_blank = Transcript(
+        student_id="학생", question_number="1", confirmed=True,
+        lines=[TranscriptLine(part="(2)", math="5")],
+    )  # fmt: skip
+    g = grade_answer(engine, q, rubric, wrong_and_blank, scope)
+    assert g.total == 0 and sorted(g.code_items) == ["R1", "R2"] and g.calls == 0
+    blank = Transcript(student_id="학생", question_number="1", confirmed=True, lines=[])
+    g = grade_answer(engine, q, rubric, blank, scope)
+    assert g.total == 0 and g.status == "needs_review" and g.agent == "code"
+    assert not fake_prompts(exe)

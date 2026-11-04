@@ -160,9 +160,17 @@ class AppConfig(_Settings):
     """동시에 돌리는 AI 호출 수. 구독 한도 소모 속도를 조절한다."""
     parallel_questions: int = Field(default=3, ge=1, le=6)
     """한 작업 안에서 동시에 부르는 AI 수 (해설·루브릭 문항, PDF 쪽). 1이면 차례로."""
-    parallel_students: int = Field(default=1, ge=1, le=6)
-    """답안지 묶음 판독에서 동시에 읽는 학생 수 (표지·손글씨). 기본은 차례로 — 동시 실행의 기본값은
-    구독 한도를 재어 M4에서 정한다."""
+    parallel_students: int = Field(default=4, ge=1, le=6)
+    """답안지 묶음 판독에서 동시에 읽는 학생 수 (표지·손글씨). M3 실측(24명, agy flash-medium)에서
+    4명씩 한도 오류 없이 돌았다 (M4에서 기본값으로)."""
+    parallel_grading: int = Field(default=4, ge=1, le=6)
+    """채점에서 동시에 부르는 AI 수 (학생 × 문항). 한도 신호를 보면 저절로 줄인다."""
+    second_opinion: Literal["off", "low", "all"] = "low"
+    """재채점 (PLAN.md §2-4 4번): low = 확신도 낮음·수리·확인할 점이 있는 채점만 새 세션으로 한 번
+    더, all = 모두, off = 안 함. 두 번째 채점이 다르면 '검토 필요'."""
+    second_agent: AgentName | None = None
+    """재채점에 쓸 AI (None = 첫 채점과 같은 AI, 새 세션)."""
+    second_model: str | None = None
 
     @field_validator("agents", mode="after")
     @classmethod

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from dawoai import sharing
 from dawoai.cli_exam import parse_answer_text
 from dawoai.export.exam_files import write_all
-from dawoai.grading import workflow
+from dawoai.grading import assign, workflow
 from dawoai.grading.answers import set_answers
 from dawoai.grading.pipeline import (
     PipelineError,
@@ -541,7 +541,7 @@ def export(exam_id: str, body: ExportBody | None = None, st: AppState = State) -
     return st.jobs.submit("export", run, {"exam": exam_id})
 
 
-class ConfirmFilesBody(BaseModel):
+class ConfirmFilesBody(learning.LearnFields):
     students: list[str] | None = None
     questions: list[str] | None = None
     by: str | None = None
@@ -558,6 +558,10 @@ def confirm_files(exam_id: str, body: ConfirmFilesBody, st: AppState = State) ->
             svc, store, students=body.students, only=body.questions, by=body.by,
             progress=ctx.progress,
         )  # fmt: skip
+        pairs = [(c.before, c.transcript) for c in res.confirmed if c.changed and c.before]
+        if pairs:  # 고친 줄을 모아 배우기 한 번 (learn을 켰을 때만)
+            c = learning.confirmed_files_correction(pairs, store.exam().title)
+            learning.from_edit(st, body, c, body.by)
         return {
             "confirmed": [
                 {"student": c.transcript.student_id, "question": c.transcript.question_number,
@@ -652,9 +656,12 @@ class GradeBody(BaseModel):
     students: list[str] | None = None
     questions: list[str] | None = None
     double: bool = False
+    """모든 답안 이중 채점 (기본은 설정 `second_opinion` — 확신도 낮은 것만)."""
     double_model: str | None = None
     regrade: bool = False
     use_examples: bool = True
+    by: str | None = None
+    """채점하는 강사 — 다른 강사가 맡은 문항은 건너뛴다 (§8)."""
 
 
 @router.post("/{exam_id}/grade")
@@ -672,9 +679,10 @@ def grade(exam_id: str, body: GradeBody, st: AppState = State) -> Job:
             store,
             students=body.students,
             only=body.questions,
-            double=SecondOpinion(model=body.double_model) if body.double else None,
+            double=SecondOpinion(model=body.double_model, when="all") if body.double else None,
             regrade=body.regrade,
             use_examples=body.use_examples,
+            by=body.by,
             progress=ctx.progress,
         )
         return _grade_summary(res)
@@ -691,7 +699,49 @@ def _grade_summary(res: workflow.GradeRun) -> dict[str, Any]:
         "failed": [vars(s) for s in res.failed],
         "files": [p.name for p in res.export.written],
         "file_warnings": res.export.warnings,
+        "calls": res.calls,
+        "repairs": res.repairs,
+        "tokens": res.tokens,
+        "seconds": round(res.wall_s, 1),
+        "workers": res.workers,
+        "without_ai": sum(1 for g in res.graded if g.calls == 0),
     }
+
+
+# ---------------------------------------------------------------- 문항 맡기 (§8)
+
+
+class AssignBody(BaseModel):
+    by: str = Field(min_length=1)
+    take: bool = False
+    """다른 강사가 맡은 문항 가져오기 (기록이 남음)."""
+
+
+@router.get("/{exam_id}/assign")
+def list_assignments(exam_id: str, st: AppState = State) -> dict[str, assign.Assignment]:
+    _, store = _store(st, exam_id)
+    return assign.all_assignments(store)
+
+
+@router.put("/{exam_id}/assign/{number}")
+def assign_question(
+    exam_id: str, number: str, body: AssignBody, st: AppState = State
+) -> assign.Assignment:
+    _, store = _store(st, exam_id)
+    return assign.assign(store, number, body.by, take=body.take)
+
+
+@router.delete("/{exam_id}/assign/{number}")
+def release_question(exam_id: str, number: str, by: str, st: AppState = State) -> assign.Assignment:
+    _, store = _store(st, exam_id)
+    return assign.release(store, number, by)
+
+
+@router.get("/{exam_id}/board")
+def board(exam_id: str, st: AppState = State) -> list[dict[str, Any]]:
+    """진행판: 문항마다 맡은 강사, 채점 완료·검토 필요·입력 대기·채점 전 학생 수."""
+    _, store = _store(st, exam_id)
+    return [vars(b) for b in assign.board(store)]
 
 
 _ORDER = {"needs_review": 0, "auto": 1, "teacher_confirmed": 2}

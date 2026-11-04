@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from dawoai.agents.base import (
+    RATE_LIMIT_WARNING,
     AgentError,
     AgentErrorCode,
     AgentUsage,
@@ -111,6 +112,10 @@ class ClaudeAdapter:
             return ParsedLine(progress=progress, text_delta="".join(texts))
         if kind == "result":
             return ParsedLine(final=obj)
+        if kind == "rate_limit_event":
+            status = as_dict(obj.get("rate_limit_info")).get("status")
+            if status not in (None, "allowed"):  # allowed_warning, rejected …
+                return ParsedLine(progress=RATE_LIMIT_WARNING, rate_limited=True)
         return ParsedLine()
 
     def finish(
@@ -137,6 +142,8 @@ class ClaudeAdapter:
             str(as_dict(d).get("tool_name", "?")) for d in as_list(res.get("permission_denials"))
         ]
         warnings = [f"차단된 작업: {', '.join(denials)}"] if denials else []
+        if any(p.rate_limited for p in lines):
+            warnings.append(RATE_LIMIT_WARNING)
         structured = res.get("structured_output") if schema_requested else None
         if not text.strip() and structured is None:
             if denials:

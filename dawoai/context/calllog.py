@@ -36,6 +36,10 @@ class CallRecord:
     schema_enforced: bool | None = None
     errors: list[str] = field(default_factory=lambda: list[str]())
     error_code: str | None = None
+    fixes: list[str] = field(default_factory=lambda: list[str]())
+    """코드 선수리로 고친 것 (AI에게 다시 묻지 않음)."""
+    partial: list[str] | None = None
+    """부분 재요청이면 다시 물은 조각 키 (None = 전체)."""
     at: datetime = field(default_factory=utcnow)
 
 

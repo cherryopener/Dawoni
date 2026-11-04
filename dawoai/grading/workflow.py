@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
+import time
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -18,7 +19,7 @@ from dawoai import sharing
 from dawoai.agents import AgentError, AgentErrorCode
 from dawoai.context import TaskFailed, situation
 from dawoai.export.exam_files import ExportResult, write_files
-from dawoai.grading import calibration
+from dawoai.grading import assign, calibration
 from dawoai.grading.answers import code_gradable, code_rubric, grade_by_code
 from dawoai.grading.pipeline import (
     PipelineError,
@@ -47,7 +48,7 @@ from dawoai.models.grading import (
 )
 from dawoai.ocr.batch import CoverRead, SetPlan
 from dawoai.ocr.pages import PageError
-from dawoai.parallel import each_in_parallel
+from dawoai.parallel import Throttle, each_in_parallel, stops_all
 from dawoai.services import Services
 from dawoai.students import Roster, same_class, same_name
 
@@ -569,6 +570,23 @@ class GradeRun:
     failed: list[Skipped] = field(default_factory=lambda: list[Skipped]())
     export: ExportResult = field(default_factory=ExportResult)
     """채점한 학생의 HWPX와 그 반 묶음 (채점이 끝날 때 한 번에 쓴다)."""
+    wall_s: float = 0.0
+    """AI 채점에 걸린 실제 시간 (동시 실행 포함)."""
+    workers: int = 1
+    """끝날 때의 동시 호출 수 (한도 신호로 줄었으면 줄어든 값)."""
+    rate_signals: int = 0
+
+    @property
+    def calls(self) -> int:
+        return sum(g.calls for g in self.graded)
+
+    @property
+    def repairs(self) -> int:
+        return sum(g.repairs for g in self.graded)
+
+    @property
+    def tokens(self) -> int:
+        return sum(g.tokens or 0 for g in self.graded)
 
 
 def export_grades(svc: Services, store: ExamStore, grades: list[GradeResult]) -> ExportResult:
@@ -580,6 +598,14 @@ def export_grades(svc: Services, store: ExamStore, grades: list[GradeResult]) ->
     return res
 
 
+def second_from_config(svc: Services) -> SecondOpinion | None:
+    """설정의 재채점 (기본: 확신도 낮음·수리·확인할 점이 있는 채점만, 같은 AI 새 세션)."""
+    c = svc.config
+    if c.second_opinion == "off":
+        return None
+    return SecondOpinion(agent=c.second_agent, model=c.second_model, when=c.second_opinion)
+
+
 def grade_exam(
     svc: Services,
     store: ExamStore,
@@ -589,22 +615,36 @@ def grade_exam(
     double: SecondOpinion | None = None,
     regrade: bool = False,
     use_examples: bool = True,
+    by: str | None = None,
     progress: Progress = _noop,
 ) -> GradeRun:
     """승인된 루브릭으로 채점. 한 학생의 실패·입력 대기가 나머지를 멈추지 않는다.
 
     `[판독불가]`가 남은 판독문만 강사 입력을 기다린다 (2026-11-04 사용자 결정: 판독이 끝난 학생은
-    강사 확인 전에도 채점까지 간다. 강사는 결과를 보며 판독문을 고치고, 고쳐 확정하면 다시 채점)."""
+    강사 확인 전에도 채점까지 간다. 강사는 결과를 보며 판독문을 고치고, 고쳐 확정하면 다시 채점).
+
+    M4: AI 채점은 `parallel_grading`개씩 동시에(한도 신호를 보면 줄임). 한도 초과·로그인 필요는
+    남은 채점을 시작하지 않고 멈춘다 — 끝난 채점은 저장돼 있어 다시 실행하면 남은 것만 한다.
+    `double`이 없으면 설정의 재채점(`second_opinion`). `by`를 주면 다른 강사가 맡은 문항은
+    건너뛴다 (§8 문항 맡기)."""
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
     qs = select_questions(exam, only)
     for q in qs:
         if store.rubric(q.number) is None:
             raise PipelineError(f"문항 {q.number}: 루브릭이 없습니다.")
+    double = double or second_from_config(svc)
     roster = students or store.students()
     run = GradeRun()
     todo: list[tuple[ExamQuestion, Rubric, Transcript]] = []
     for q in qs:
+        if owner := assign.locked_for(store, q.number, by):
+            run.skipped += [
+                Skipped(st, q.number, f"{owner} 선생님이 맡은 문항 — 가져오기로 넘겨받으세요")
+                for st in roster
+                if store.transcript(st, q.number) is not None
+            ]
+            continue
         rubric = store.rubric(q.number)
         assert rubric is not None
         for st in roster:
@@ -640,8 +680,10 @@ def grade_exam(
             g = g.model_copy(update={"transcript_confirmed": by_student[g.student_id].confirmed})
             store.save_grade(g)
             run.graded.append(g)
-    for k, (q, rubric, t) in enumerate(todo):
-        progress(k, len(todo), f"{t.student_id} 문항 {q.number} 채점")
+    lock = threading.Lock()
+
+    def one(job: tuple[ExamQuestion, Rubric, Transcript]) -> None:
+        q, rubric, t = job
         pick = calibration.pick_for(store, q.number, rubric, t) if use_examples else None
         try:
             with situation(exam.title):
@@ -656,15 +698,30 @@ def grade_exam(
                     example_students=pick.students if pick else None,
                 )
         except (AgentError, TaskFailed) as e:
-            if isinstance(e, AgentError) and e.code == AgentErrorCode.CANCELLED:
+            if isinstance(e, AgentError) and stops_all(e):
                 raise
-            run.failed.append(Skipped(t.student_id, q.number, str(e)))
-            continue
+            with lock:
+                run.failed.append(Skipped(t.student_id, q.number, str(e)))
+            return
         g = g.model_copy(update={"transcript_confirmed": t.confirmed})
         store.save_grade(g)
-        run.graded.append(g)
+        with lock:
+            run.graded.append(g)
+
+    started = time.monotonic()
+    throttle = Throttle(svc.config.parallel_grading)
+    try:
+        each_in_parallel(
+            todo, one, name=lambda j: f"{j[2].student_id}·{j[0].number}", what="채점",
+            workers=svc.config.parallel_grading, progress=progress, throttle=throttle,
+        )  # fmt: skip
+    finally:
+        run.wall_s = time.monotonic() - started
+        run.rate_signals = throttle.signals
+        run.workers = throttle.limit
+        if run.graded:  # 한도로 멈춰도 끝난 채점의 파일은 쓴다
+            run.export = export_grades(svc, store, run.graded)
     progress(len(todo), len(todo), f"채점 {len(run.graded)}건 완료")
-    run.export = export_grades(svc, store, run.graded)
     return run
 
 
@@ -702,6 +759,8 @@ class ConfirmedFile:
     path: Path
     changed: int
     """강사가 고친 줄 수."""
+    before: Transcript | None = None
+    """고치기 전 앱 판독문 (배우기에 고친 줄만 넘긴다)."""
 
 
 @dataclass
@@ -787,7 +846,7 @@ def confirm_from_files(
         if rec.changed:
             note = f"한글에서 {rec.changed}줄 고침 ({by or '강사'})"
             t = t.model_copy(update={"notes": [*t.notes, note]})
-        item = ConfirmedFile(t, path, rec.changed)
+        item = ConfirmedFile(t, path, rec.changed, before)
         if t.unreadable:
             store.save_transcript(t.model_copy(update={"confirmed": False, "confirmed_by": None}))
             accept_file(store, path)
