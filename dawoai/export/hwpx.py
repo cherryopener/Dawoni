@@ -82,6 +82,9 @@ class Sheet:
     comment: str = ""
     notes: list[str] = field(default_factory=lambda: list[str]())
     """채점 머리 아래 회색 글씨 (예: 판독문 확인 전 채점)."""
+    reading_notes: list[str] = field(default_factory=lambda: list[str]())
+    """판독본 머리 아래 빨간 글씨 (예: 입력 대기, 확인 전). 다시 읽기는 소문항 표식 전 문단을 보지
+    않으므로 판독문에 섞이지 않는다."""
     waiting: str | None = None
     """묶음에서 이 학생 대신 넣을 안내 ("입력 대기 …"). 있으면 판독·채점을 쓰지 않는다."""
 
@@ -144,7 +147,7 @@ _SPACING = re.compile(r"\\(qquad|quad|[ ;:!])")
 _SPACES = {"qquad": "~" * 8, "quad": "~" * 4, " ": "~", ";": "~", ":": "~", "!": ""}
 """변환기가 모르는 LaTeX 띄우기 → `~`(한글 수식 띄어쓰기, 약 1/4 em). `\\,`은 변환기가 `` ` ``로
 바꾼다. 공백으로만 바꾸면 한글 수식이 공백을 무시해 `R=6\\Omega \\quad R=…`가 붙어 버린다."""
-_EQ_WORDS = {r"\uparrow": "uparrow", r"\downarrow": "downarrow"}
+_EQ_WORDS = {r"\uparrow": "uparrow", r"\downarrow": "downarrow", r"\Leftrightarrow": "LRARROW"}
 """python-hwpx 변환기가 모르는 LaTeX 명령 → 한글 수식 낱말 (실제 판독문에서 나옴)."""
 _NON_ASCII = re.compile(r"\\text\{([^{}]*[^\x00-\x7f][^{}]*)\}|[^\x00-\x7f]+")
 _INLINE = re.compile(r"\\\((.+?)\\\)")
@@ -180,8 +183,9 @@ def to_eqedit(latex: str) -> str:
 
 
 _GLUE_WORDS = sorted(
-    {"over", "atop", "sqrt", "times", "cdot", "DEG", "LEFT", "RIGHT", "sin", "cos", "tan", "log",
-     "ln", "THEREFORE", "alpha", "beta", "gamma", "delta", "epsilon", "theta", "lambda", "mu",
+    {"over", "overline", "underline", "atop", "sqrt", "times", "cdot", "DEG", "LEFT", "RIGHT",
+     "sin", "cos", "tan", "log", "ln", "THEREFORE", "alpha", "beta", "gamma", "delta", "epsilon",
+     "theta", "lambda", "mu",
      "pi", "rho", "sigma", "tau", "phi", "omega", "Delta", "Omega", "Sigma", "Phi", "Gamma",
      "OMEGA", "DELTA"},
     key=len, reverse=True,
@@ -365,6 +369,8 @@ def write_line(
 def write_reading(b: Builder, sheet: Sheet) -> HwpxOxmlParagraph:
     """원본 그림 → 학생이 쓴 글 그대로(글자·수식)를 쓰고 머리 문단을 돌려준다."""
     head = b.para(sheet.head, char=b.bold, style=b.style_head)
+    for note in sheet.reading_notes:
+        b.para(note, char=b.red)
     for i, png in enumerate(sheet.scans, start=1):
         b.para(f"[원본] 답안 {i}쪽", char=b.small_gray)
         b.doc.add_picture(png, "png", width_mm=150, style_id_ref=NORMAL)
@@ -454,6 +460,10 @@ class ReadBack:
     pictures: int
 
 
+_FAILED_EQ = re.compile(r"\[식: (.+?)\]")
+"""한글 수식으로 못 바꿔 글자로 넣은 식 (`Builder.equation`) — 다시 읽을 때 식으로 되돌린다."""
+
+
 def _paragraph_text(p: etree._Element) -> str:  # pyright: ignore[reportPrivateUsage]
     out: list[str] = []
     for el in p.iter(f"{HP}t", f"{HP}script"):
@@ -461,7 +471,7 @@ def _paragraph_text(p: etree._Element) -> str:  # pyright: ignore[reportPrivateU
             out.append("".join(el.itertext()))
         else:
             out.append(f"\\({from_eqedit(el.text or '')}\\)")
-    return "".join(out).strip()
+    return _FAILED_EQ.sub(lambda m: f"\\({m.group(1)}\\)", "".join(out)).strip()
 
 
 def read_back(path: Path) -> ReadBack:
@@ -514,8 +524,15 @@ def expected_text(lines: list[TranscriptLine]) -> dict[str, list[str]]:
     return out
 
 
+_TEXT_WRAP = re.compile(r"\\(?:text|mathrm)\s*\{([^{}]*)\}")
+"""식 안의 한글·㉠은 한글 수식으로 넣을 때 `\\text{}`에 싸여 돌아온다 (`i_ㄱ` → `i_{\\text{ㄱ}}`).
+"""
+
+
 def _canon_math(s: str) -> str:
-    s = re.sub(r"\{([^{}\\]|\\[A-Za-z]+)\}", lambda m: m.group(1), normalize_latex(_preclean(s)))
+    s = re.sub(r"\\neq(?![A-Za-z])", r"\\ne", _preclean(s))  # 띄어쓰기를 지우기 전에
+    s = _TEXT_WRAP.sub(lambda m: m.group(1), normalize_latex(s))
+    s = re.sub(r"\{([^{}\\]|\\[A-Za-z]+)\}", lambda m: m.group(1), s)
     s = s.replace("\\geq", "\\ge").replace("\\leq", "\\le")
     return re.sub(r"\s+", "", s)  # 식 안의 띄어쓰기는 한글 수식이 다시 정한다
 
@@ -524,3 +541,82 @@ def canon(s: str) -> str:
     """다시 읽은 줄과 쓴 줄을 견줄 꼴: 식 안의 띄어쓰기·중괄호만 무시하고 글은 그대로."""
     pieces = _INLINE.split(s.strip())
     return "".join(f"\\({_canon_math(x)}\\)" if i % 2 else x for i, x in enumerate(pieces))
+
+
+# ---------------------------------------------------------------- 다시 읽은 판독본 → 판독문
+
+
+@dataclass
+class Reconciled:
+    """강사가 한글에서 고친 판독본을 앱 판독문으로 되돌린 것."""
+
+    lines: list[TranscriptLine]
+    changed: int
+    """강사가 고치거나 넣거나 지운 줄 수 (0이면 고친 것 없음)."""
+    problems: list[str] = field(default_factory=lambda: list[str]())
+    """있으면 확정하지 않는다 (소문항 표식이 없어짐 등 — 그 문항만 강사에게 묻는다)."""
+
+
+_STRUCK = "[지움]"
+_WHOLE_MATH = re.compile(r"\\((.+)\\)")
+
+
+def _part_of(question: str, label: str) -> tuple[bool, str | None]:
+    """표식 글 → (이 문항의 표식인가, 판독문의 소문항): `2-(1)` → `(1)`, `2` → None."""
+    if label in (question, UNASSIGNED):
+        return True, None
+    if label.startswith(f"{question}-") and len(label) > len(question) + 1:
+        return True, label[len(question) + 1 :]
+    return False, None
+
+
+def _parse_line(text: str, part: str | None) -> TranscriptLine:
+    struck = text.startswith(_STRUCK)
+    if struck:
+        text = text[len(_STRUCK) :].strip()
+    m = _WHOLE_MATH.fullmatch(text)
+    if m and r"\(" not in m.group(1):
+        return TranscriptLine(part=part, math=m.group(1).strip(), struck=struck)
+    return TranscriptLine(part=part, text=text, struck=struck)
+
+
+def reconcile(question: str, parts: dict[str, list[str]], old: list[TranscriptLine]) -> Reconciled:
+    """다시 읽은 소문항별 줄(`read_back`) → 판독문 줄. 강사가 고치지 않은 줄은 앱에 둔 원래 줄을
+    그대로 쓴다 — 한글 수식을 거치면 LaTeX 표기가 조금 바뀌므로(`^2` → `^{2}`). 고친 줄만 새로
+    만든다 (확신도 1, 불확실 표시 없음). 소문항 표식이 없어진 소문항이 있으면 고치지 않고 문제로
+    돌려준다 (PLAN.md §14 — 표식을 못 찾으면 그 소문항만 확인을 요청)."""
+    import difflib
+
+    prefixed = sheet_lines(question, old)
+    want = expected_text(prefixed)
+    index: dict[str, list[int]] = {}
+    for i, line in enumerate(prefixed):
+        index.setdefault(line.part or UNASSIGNED, []).append(i)
+    problems = [
+        f"'{MARK} {label}' 표식이 없어 그 소문항을 읽을 수 없습니다 — 표식 줄을 되살려 저장하세요"
+        for label in want
+        if label not in parts
+    ]
+    problems += [
+        f"'{MARK} {label}'은(는) 이 문항({question})의 표식이 아닙니다 — '{MARK} {question}-(1)'"
+        " 꼴로 고치세요"
+        for label in parts
+        if not _part_of(question, label)[0]
+    ]
+    if problems:
+        return Reconciled(lines=list(old), changed=0, problems=problems)
+    out: list[TranscriptLine] = []
+    changed = 0
+    for label, got in parts.items():
+        _, part = _part_of(question, label)
+        before = [canon(x) for x in want.get(label, [])]
+        after = [canon(x) for x in got]
+        olds = index.get(label, [])
+        sm = difflib.SequenceMatcher(None, before, after, autojunk=False)
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "equal":
+                out += [old[olds[k]] for k in range(i1, i2)]
+                continue
+            changed += max(i2 - i1, j2 - j1)
+            out += [_parse_line(got[j], part) for j in range(j1, j2)]
+    return Reconciled(lines=out, changed=changed)

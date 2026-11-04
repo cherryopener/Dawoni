@@ -52,8 +52,12 @@ def _sheet(head: str = "10월 시험 · TSS1 · 김다원 · 구룡중") -> Shee
 
 @pytest.mark.parametrize(
     "latex",
-    [r"I_{\text{㉠}}", r"a \uparrow b \downarrow", r"\frac{3R}{3+R} : 6 \quad R=6\Omega", "2:1"],
-)
+    [r"I_{\text{㉠}}", r"a \uparrow b \downarrow", r"\frac{3R}{3+R} : 6 \quad R=6\Omega", "2:1",
+     # M3 실측(학생 24명): overline이 over + line으로 갈라지고, \Leftrightarrow를 변환기가 몰랐다
+     r"\overline{op_1}=\overline{op_2}", r"(\Leftrightarrow 2\sin\alpha=\sin3\alpha)",
+     # 식 안의 한글은 \text{}에 싸여, \ne는 \neq로 돌아온다 — 같은 식으로 본다
+     r"i_ㄱ \ne i_{앞}", r"P_{병렬} > P_{직렬}", "「\\frac{1}{\\infty}」"],
+)  # fmt: skip
 def test_equation_round_trip(latex: str) -> None:
     """변환기가 받지 않는 ㉠·화살표·\\quad도 한글 수식이 되고, 다시 읽으면 같은 식이다."""
     assert canon(f"\\({from_eqedit(to_eqedit(latex))}\\)") == canon(f"\\({latex}\\)")
@@ -80,3 +84,13 @@ def test_bundle_keeps_waiting_students(tmp_path: Path) -> None:
     assert not HwpxDocument.open(path).validate().issues
     assert count_heads(path) == 2
     assert "입력 대기" in HwpxDocument.open(path).text.plain()
+
+
+def test_equation_left_as_text_reads_back_as_equation(tmp_path: Path) -> None:
+    """한글 수식으로 못 바꾼 식은 `[식: …]` 글자로 넣는다 — 다시 읽으면 식으로 되돌려, 강사가 고치지
+    않았는데 고친 줄로 보이지 않게 한다."""
+    lines = sheet_lines("1", [TranscriptLine(part="(1)", text=r"따라서 \(L \over v\)이다")])
+    path = build_student(tmp_path / "x.hwpx", Sheet(head="t · 2반 · 김다원", lines=lines))
+    assert "[식:" in "".join(p.text or "" for p in HwpxDocument.open(path).paragraphs)
+    got = read_back(path).parts["1-(1)"]
+    assert [canon(x) for x in got] == [canon(r"따라서 \(L \over v\)이다")]

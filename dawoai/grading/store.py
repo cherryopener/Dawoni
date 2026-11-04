@@ -8,16 +8,18 @@ exams/<시험ID>/exam.json
               /students/<학생>.json         (표지에서 읽은 이름·반·학교, 강사 점수)
               /transcripts/<학생>/<문항>.json
               /grades/<학생>/<문항>.json
+              /exports.json                 (앱이 쓴 HWPX의 해시 — 강사가 고쳤는지 알아본다)
 """
 
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 from pydantic import BaseModel
 
-from dawoai.fsio import read_json, write_model_atomic
+from dawoai.fsio import read_json, write_json_atomic, write_model_atomic
 from dawoai.models.answer_key import AnswerKey
 from dawoai.models.grading import (
     CandidateMatches,
@@ -160,3 +162,43 @@ class ExamStore:
 
     def grade(self, student: str, q: str) -> GradeResult | None:
         return _load(self._sq("grades", student, q), GradeResult)
+
+    # ---------------------------------------------------------------- 내보낸 파일
+
+    def export_hashes(self) -> dict[str, str]:
+        """파일 이름 → 앱이 마지막으로 쓴(또는 강사가 고친 것을 읽어 들인) 내용의 sha256."""
+        p = self.root / "exports.json"
+        data: dict[str, str] = read_json(p) if p.exists() else {}
+        return {str(k): str(v) for k, v in data.items()}
+
+    def save_export_hashes(self, hashes: dict[str, str]) -> None:
+        write_json_atomic(self.root / "exports.json", dict(sorted(hashes.items())))
+
+    # ---------------------------------------------------------------- 학생 이름 바꾸기
+
+    def rename_student(self, old: str, new: str) -> None:
+        """학생 ID를 바꾼다: 판독문·채점·스캔 폴더와 그 안의 학생 ID·원본 경로를 옮긴다.
+        학생 기록(students/)은 부르는 쪽이 새 ID로 저장한다 (이름·명부 연결도 함께 바뀌므로)."""
+        if old == new:
+            return
+        if (self.root / "transcripts" / safe_name(new)).exists() or self.student_record(new):
+            raise ValueError(f"'{new}'은(는) 이 시험에 이미 있습니다")
+        for kind in ("transcripts", "grades", "scans"):
+            src = self.root / kind / safe_name(old)
+            if src.is_dir():
+                shutil.move(src, self.root / kind / safe_name(new))
+        old_scans = f"scans/{safe_name(old)}/"
+        new_scans = f"scans/{safe_name(new)}/"
+        d = self.root / "transcripts" / safe_name(new)
+        for path in sorted(d.glob("*.json")) if d.is_dir() else []:
+            t = Transcript.model_validate(read_json(path))
+            pages = [new_scans + x[len(old_scans) :] if x.startswith(old_scans) else x
+                     for x in t.pages]  # fmt: skip
+            write_model_atomic(path, t.model_copy(update={"student_id": new, "pages": pages}))
+        d = self.root / "grades" / safe_name(new)
+        for path in sorted(d.glob("*.json")) if d.is_dir() else []:
+            g = GradeResult.model_validate(read_json(path))
+            write_model_atomic(path, g.model_copy(update={"student_id": new}))
+        rec = self.root / "students" / f"{safe_name(old)}.json"
+        if rec.exists():
+            rec.unlink()

@@ -160,6 +160,9 @@ class AppConfig(_Settings):
     """동시에 돌리는 AI 호출 수. 구독 한도 소모 속도를 조절한다."""
     parallel_questions: int = Field(default=3, ge=1, le=6)
     """한 작업 안에서 동시에 부르는 AI 수 (해설·루브릭 문항, PDF 쪽). 1이면 차례로."""
+    parallel_students: int = Field(default=1, ge=1, le=6)
+    """답안지 묶음 판독에서 동시에 읽는 학생 수 (표지·손글씨). 기본은 차례로 — 동시 실행의 기본값은
+    구독 한도를 재어 M4에서 정한다."""
 
     @field_validator("agents", mode="after")
     @classmethod

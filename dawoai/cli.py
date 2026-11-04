@@ -213,11 +213,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ui.set_defaults(func=_cmd_ui)
 
-    from dawoai import cli_exam, cli_ingest, cli_rules
+    from dawoai import cli_exam, cli_ingest, cli_rules, cli_students
 
     cli_rules.register(sub)
     cli_exam.register(sub)
     cli_ingest.register(sub)
+    cli_students.register(sub)
     return p
 
 

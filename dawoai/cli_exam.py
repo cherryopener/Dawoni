@@ -17,6 +17,10 @@
     dawoai exam scan-batch <시험ID> 답안지.pdf --per-student 5 -q 2   # 2번 쪽만 (강사별 분담)
     dawoai exam compare <시험ID>                   # AI 채점 ↔ 표지의 강사 점수
     dawoai exam transcript <시험ID> --student 홍길동 -q 3 [--confirm] [--replace 고친답안.txt]
+    dawoai exam confirm <시험ID> [--student 홍길동] [-q 3] --by 김선생  # 확인 완료: 한글에서 고친
+                                                   # 판독본 HWPX 다시 읽기 → 확정 판독문
+    dawoai exam students <시험ID>                 # 표지에서 읽은 학생 (명부 연결·이름 확인 대기)
+    dawoai exam student <시험ID> 김다원#5 --name 김다원B [--class 2반] [--roster S0012]
     dawoai exam export <시험ID>                 # 채점 HWPX 다시 쓰기 (보통은 채점 때 저절로)
     dawoai exam grade <시험ID> [--student 홍길동] [-q 3] [--double] [--regrade]
     dawoai exam report <시험ID>
@@ -431,6 +435,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         _out(f"  ? 문항을 알 수 없는 줄 ({line.page}쪽): {line.joined}")
     for note in res.notes:
         _out(f"  · {note}")
+    _print_export(res.export, what="판독본")
     return _grade_ready(svc, store, [args.student] if res.saved else [])
 
 
@@ -469,6 +474,15 @@ def _cmd_scan_batch(args: argparse.Namespace) -> int:
     for f in res.failed:
         _out(f"  ✗ {f.student}: {f.reason[:300]}")
     _out(f"{len(res.students)}명 판독.")
+    _print_export(res.export, what="판독본")
+    if res.needs_rename:
+        names = ", ".join(r.student_id for r in res.needs_rename)
+        _out(f"\n이름 확인 대기 {len(res.needs_rename)}명 (같은 반 동명이인, HWPX 보류): {names}"
+             " — `exam student <시험> <학생> --name 김다원A`")  # fmt: skip
+    if res.not_in_roster:
+        _out(f"명부와 맞추지 못함 {len(res.not_in_roster)}명 — `exam students`로 확인")
+    if res.export.written:
+        _out("한글에서 원본과 비교해 고친 뒤 저장하고 `exam confirm`으로 확정하세요.")
     graded = _grade_ready(svc, store, [r.student_id for r in res.students])
     return 1 if res.failed else graded
 
@@ -597,9 +611,9 @@ def _print_grade_run(run: workflow.GradeRun) -> int:
     return 0
 
 
-def _print_export(res: ExportResult) -> None:
+def _print_export(res: ExportResult, *, what: str = "HWPX") -> None:
     if res.written:
-        _out(f"HWPX {len(res.written)}개: {res.written[0].parent}")
+        _out(f"{what} {len(res.written)}개: {res.written[0].parent}")
         for p in res.written:
             _out(f"  · {p.name}")
     for w in res.warnings:
@@ -608,11 +622,81 @@ def _print_export(res: ExportResult) -> None:
 
 def _cmd_export(args: argparse.Namespace) -> int:
     svc = _svc(args)
-    res = write_all(svc.workspace, ExamStore(svc.workspace, args.exam))
+    res = write_all(svc.workspace, ExamStore(svc.workspace, args.exam), force=args.force)
     _print_export(res)
     if not res.written:
-        _out("쓸 파일이 없습니다 (채점이 끝난 답안이 없음).")
+        _out("쓸 파일이 없습니다 (판독한 답안이 없음).")
+    if res.edited:
+        _out("강사가 고친 파일은 두었습니다 — `exam confirm`으로 읽어 들이거나, 고친 것을 버리려면"
+             " `--force`")  # fmt: skip
     return 1 if res.warnings else 0
+
+
+def _cmd_confirm(args: argparse.Namespace) -> int:
+    """확인 완료: 강사가 한글에서 고친 판독본 HWPX를 다시 읽어 확정 판독문으로."""
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    run = workflow.confirm_from_files(
+        svc, store, students=[args.student] if args.student else None, only=args.q,
+        by=args.by, progress=_cli_progress,
+    )  # fmt: skip
+    for c in run.confirmed:
+        what = f"{c.changed}줄 고침" if c.changed else "고친 것 없음"
+        _out(f"✓ {c.transcript.student_id} 문항 {c.transcript.question_number}: 확정 ({what})")
+    for c in run.waiting:
+        t = c.transcript
+        _out(f"… {t.student_id} 문항 {t.question_number}: {c.changed}줄 받음, {UNREADABLE}"
+             f" {t.unreadable}곳이 남아 확정하지 않음 — 채워 저장한 뒤 다시")  # fmt: skip
+    for p in run.problems:
+        _out(f"  ✗ {p.student} 문항 {p.question}: {p.reason}")
+    if run.unchanged:
+        _out(f"이미 확정, 그 뒤 고치지 않음 {len(run.unchanged)}건")
+    for g in run.graded:
+        _out(f"채점 {g.student_id} 문항 {g.question_number}: {g.total:g}/{g.max_points:g}")
+    for f in run.failed:
+        _out(f"  ✗ 채점 실패 {f.student} 문항 {f.question}: {f.reason[:300]}")
+    _print_export(run.export)
+    return 1 if run.problems or run.failed else 0
+
+
+def _cmd_students(args: argparse.Namespace) -> int:
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    exam = store.exam()
+    records = {r.student_id: r for r in store.student_records()}
+    for sid in sorted(set(records) | set(store.students())):
+        r = records.get(sid)
+        ts = [store.transcript(sid, q.number) for q in exam.questions]
+        read = [t for t in ts if t is not None]
+        done = [t for t in read if t.confirmed]
+        marks: list[str] = []
+        if r and r.needs_rename:
+            marks.append("이름 확인 대기(같은 반 동명이인)")
+        if r and r.roster_note:
+            marks.append(r.roster_note)
+        if r and r.cover_name and r.name != r.cover_name:
+            marks.append(f"표지 '{r.cover_name}'")
+        roster = r.roster_id if r and r.roster_id else "-"
+        klass = (r.class_name if r else None) or "-"
+        line = f"{sid:10} {klass:8} {roster:6} 판독 {len(read)}/{len(ts)} 확정 {len(done)}"
+        _out(line + (f"  ! {'; '.join(marks)}" if marks else ""))
+    return 0
+
+
+def _cmd_student(args: argparse.Namespace) -> int:
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    if not (args.name or args.klass or args.roster):
+        return _err("--name, --class, --roster 중 하나는 주세요")
+    res = workflow.rename_student(
+        svc, store, args.student, name=args.name, class_name=args.klass, roster_id=args.roster
+    )
+    r = res.record
+    _out(f"{args.student} → {r.student_id} ({r.class_name or '-'}, 명부 {r.roster_id or '-'})")
+    for w in res.warnings:
+        _out(f"  ! {w}")
+    _print_export(res.export, what="판독본")
+    return 0
 
 
 def _part_totals(store: ExamStore, q: ExamQuestion, g: GradeResult) -> str:
@@ -797,9 +881,27 @@ def register(sub: Any) -> None:
     r.add_argument("exam")
     r.set_defaults(func=_wrap(_cmd_report))
 
-    ex = es.add_parser("export", help="채점 HWPX 모두 다시 쓰기 (채점할 때마다 저절로 씀)")
+    ex = es.add_parser("export", help="판독본·채점 HWPX 모두 다시 쓰기 (보통은 저절로 씀)")
     ex.add_argument("exam")
+    ex.add_argument("--force", action="store_true", help="강사가 한글에서 고친 파일도 덮어쓰기")
     ex.set_defaults(func=_wrap(_cmd_export))
+
+    cf = es.add_parser("confirm", help="확인 완료: 한글에서 고친 판독본 HWPX → 확정 판독문")
+    cf.add_argument("exam")
+    cf.add_argument("--student")
+    cf.add_argument("-q", action="append", help="문항 번호 (여러 번 가능, 없으면 전체)")
+    cf.add_argument("--by", help="확인한 강사")
+    cf.set_defaults(func=_wrap(_cmd_confirm))
+    sts = es.add_parser("students", help="이 시험의 학생 (명부 연결·이름 확인 대기)")
+    sts.add_argument("exam")
+    sts.set_defaults(func=_wrap(_cmd_students))
+    stu = es.add_parser("student", help="학생 이름·반 고치기, 명부와 잇기 (동명이인 가르기)")
+    stu.add_argument("exam")
+    stu.add_argument("student", help="지금 학생 ID (예: 김다원#5)")
+    stu.add_argument("--name", help="새 이름 (예: 김다원B)")
+    stu.add_argument("--class", dest="klass", help="새 반")
+    stu.add_argument("--roster", help="명부 학생 ID (S0012) — 명부의 이름·반·학교를 쓴다")
+    stu.set_defaults(func=_wrap(_cmd_student))
 
     from dawoai import cli_calibration
 

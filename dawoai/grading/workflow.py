@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import threading
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,9 +45,11 @@ from dawoai.models.grading import (
     TranscribedLine,
     Transcript,
 )
+from dawoai.ocr.batch import CoverRead, SetPlan
 from dawoai.ocr.pages import PageError
 from dawoai.parallel import each_in_parallel
 from dawoai.services import Services
+from dawoai.students import Roster, same_class, same_name
 
 Progress = Callable[[int, int, str], None]
 log = logging.getLogger(__name__)
@@ -196,6 +199,16 @@ class ScanResult:
     unassigned: list[TranscribedLine] = field(default_factory=lambda: list[TranscribedLine]())
     notes: list[str] = field(default_factory=lambda: list[str]())
     warnings: list[str] = field(default_factory=lambda: list[str]())
+    export: ExportResult = field(default_factory=ExportResult)
+    """판독본 HWPX (강사가 한글에서 확인할 파일)."""
+
+
+def export_readings(svc: Services, store: ExamStore, keys: list[tuple[str, str]]) -> ExportResult:
+    """판독이 끝난 학생·문항의 판독본 HWPX를 쓴다 (코드만, 토큰 0 — PLAN.md §5-1 5단계)."""
+    res = write_files(svc.workspace, store, keys)
+    for w in res.warnings:
+        log.warning(w)
+    return res
 
 
 def scan_student(
@@ -209,7 +222,8 @@ def scan_student(
     overwrite: bool = False,
     progress: Progress = _noop,
 ) -> ScanResult:
-    """답안지 사진·PDF → 문항별 판독문(미확인). `cross=None`이면 설정(ocr.cross_check)을 따른다."""
+    """답안지 사진·PDF → 문항별 판독문(미확인) + 판독본 HWPX. `cross=None`이면
+    설정(ocr.cross_check)을 따른다."""
     from dawoai.ocr.hints import collect_hints, providers_from
     from dawoai.ocr.pages import prepare_pages
     from dawoai.ocr.transcribe import transcribe_student
@@ -242,7 +256,8 @@ def scan_student(
         res.saved.append(t)
     res.unassigned = outcome.unassigned
     res.notes = outcome.notes
-    progress(2, 2, "판독 완료 — 원본과 비교해 확인하세요")
+    res.export = export_readings(svc, store, [(student, t.question_number) for t in res.saved])
+    progress(2, 2, "판독 완료 — 판독본 HWPX를 원본과 비교해 확인하세요")
     return res
 
 
@@ -253,6 +268,91 @@ class BatchResult:
     """이미 판독한 학생 (다시 하려면 overwrite)."""
     failed: list[Skipped] = field(default_factory=lambda: list[Skipped]())
     warnings: list[str] = field(default_factory=lambda: list[str]())
+    export: ExportResult = field(default_factory=ExportResult)
+    """판독본 HWPX (강사가 한글에서 확인할 파일)."""
+
+    @property
+    def needs_rename(self) -> list[StudentRecord]:
+        return [r for r in self.students if r.needs_rename]
+
+    @property
+    def not_in_roster(self) -> list[StudentRecord]:
+        return [r for r in self.students if r.roster_note]
+
+
+@dataclass
+class _SetJob:
+    """묶음 안의 학생 한 명 (표지 → 학생 ID → 판독)."""
+
+    plan: SetPlan
+    source: str
+    record: StudentRecord | None
+    need_cover: bool
+    wanted: list[int]
+    """판독할 쪽 (묶음 안의 쪽 번호, 표지 = 1)."""
+    work: Path
+    cover_image: Path | None = None
+    cover: CoverRead | None = None
+    failed: bool = False
+
+
+def _cover_record(
+    job: _SetJob, roster: Roster, taken: dict[str, StudentRecord], per_student: int
+) -> tuple[StudentRecord, list[str]]:
+    """표지에서 읽은 것 → 학생 기록. 명부가 있으면 명부의 이름·반으로 맞추고, 같은 반에 같은 이름의
+    시험지가 이미 있으면 `needs_rename`(이름을 바꾸기 전에는 HWPX를 만들지 않음, PLAN.md §5-1)."""
+    from dawoai.ocr import batch
+
+    cover = job.cover
+    assert cover is not None
+    warnings: list[str] = []
+    name, klass, school = cover.name, cover.class_name, cover.school
+    roster_id = roster_note = None
+    if roster.all():
+        m = roster.match(cover.name, cover.class_name)
+        if m.student is not None:
+            roster_id, name = m.student.id, m.student.name
+            klass = m.student.class_name or klass
+            school = m.student.school or school
+        else:
+            roster_note = m.note
+            warnings.append(f"{job.source}: {cover.name or '이름 못 읽음'} — {m.note}")
+    sid = batch.student_id_of(name, job.plan.number)
+    needs_rename = False
+    other = taken.get(sid)
+    if other is not None and other.source != job.source:
+        if same_class(other.class_name, klass):
+            needs_rename = True
+            warnings.append(
+                f"{job.source}: 같은 반({klass or '반 없음'})에 '{sid}' 시험지가 또 있음"
+                f" ({other.source}) — 김다원A·김다원B처럼 이름을 바꾸기 전에는 HWPX를"
+                " 만들지 않습니다"
+                f" (`exam student … {sid}#{job.plan.number} --name …`)"
+            )
+            if not other.needs_rename:
+                taken[other.student_id] = other.model_copy(update={"needs_rename": True})
+            sid = f"{sid}#{job.plan.number}"
+        else:  # 다른 반의 동명이인: 파일 이름은 반이 달라 겹치지 않는다. 학생 ID만 가른다
+            sid = f"{sid}@{klass or job.plan.number}"
+    record = StudentRecord(
+        student_id=sid,
+        name=name,
+        class_name=klass,
+        school=school,
+        source=job.source,
+        teacher_scores={c.question: c.points for c in cover.teacher_scores},
+        uncertain=list(cover.uncertain),
+        rotation=int(cover.rotation),
+        pages=per_student,
+        cover_name=cover.name,
+        roster_id=roster_id,
+        roster_note=roster_note,
+        needs_rename=needs_rename,
+    )
+    if cover.name is None:
+        warnings.append(f"{job.source}: 이름을 읽지 못해 '{sid}'로 저장 — 고쳐 주세요")
+    taken[sid] = record
+    return record, warnings
 
 
 def scan_batch(
@@ -269,11 +369,16 @@ def scan_batch(
     overwrite: bool = False,
     progress: Progress = _noop,
 ) -> BatchResult:
-    """학생 여러 명의 답안지 PDF (학생마다 `per_student`쪽, 첫 쪽은 표지) → 학생별 판독문(미확인).
+    """학생 여러 명의 답안지 PDF (학생마다 `per_student`쪽, 첫 쪽은 표지) → 학생별 판독문(미확인)
+    + 판독본 HWPX.
 
-    표지에서 이름·반·학교·강사 점수와 돌려 세울 각도를 읽는다 (한 번만 — 다음부터는 저장한 것을
-    쓴다). `only_questions`: 그 문항의 쪽(`ExamQuestion.answer_pages`)만 그 문항만 두고 판독 —
-    강사마다 한 문항씩 나눠 맡아 토큰을 나눠 쓸 때. 학생 한 명이 실패해도 나머지는 계속.
+    1. 표지에서 이름·반·학교·강사 점수와 돌려 세울 각도를 읽는다 (한 번만 — 다음부터는 저장한 것을
+       쓴다). 반 목록을 주지 않으면 학생 명부의 반 중에서 고르게 한다.
+    2. 명부와 맞춘다 (PLAN.md §7). 명부에 없거나 후보가 여럿이면 알린다. 같은 반에 같은 이름이 또
+       있으면 강사가 이름을 바꿀 때까지 HWPX를 만들지 않는다.
+    3. 답안 쪽을 판독한다. `only_questions`: 그 문항의 쪽(`ExamQuestion.answer_pages`)만 그
+       문항만 두고 판독 — 강사마다 한 문항씩 나눠 맡아 토큰을 나눠 쓸 때.
+    학생 한 명이 실패해도 나머지는 계속. 표지·판독은 `parallel_students`명씩 동시에.
     """
     from dawoai.ocr import batch
     from dawoai.ocr.transcribe import transcribe_student
@@ -292,17 +397,25 @@ def scan_batch(
         if too_far:
             raise PipelineError(f"문항 {', '.join(too_far)}의 답안 쪽이 한 명의 쪽 수를 넘습니다")
     part_exam = exam.model_copy(update={"questions": qs})
+    roster = Roster(svc.workspace)
+    classes = classes or roster.classes() or None
     sets = batch.plan_sets(batch.page_count(pdf), per_student, only_sets)
     use_cross = svc.config.ocr.cross_check if cross is None else cross
+    workers = svc.config.parallel_students
     res = BatchResult()
     records = store.student_records()
     by_source = {r.source: r for r in records}
-    taken = {r.student_id: r.source for r in records}
-    for k, plan in enumerate(sets):
+    jobs: list[_SetJob] = []
+    for plan in sets:
         source = f"{pdf.name} {plan.pages[0]}-{plan.pages[-1]}쪽"
         record = by_source.get(source)
         if record is not None and not overwrite:
-            todo = [q for q in qs if store.transcript(record.student_id, q.number) is None]
+            todo = [
+                q
+                for q in qs
+                if q.number not in record.transcribed
+                and store.transcript(record.student_id, q.number) is None
+            ]
             if covers_only or not todo:
                 res.skipped.append(record.student_id)
                 continue
@@ -312,41 +425,65 @@ def scan_batch(
             if only_questions
             else list(range(2, per_student + 1))
         )
-        if covers_only:
-            wanted = []
-        need_cover = record is None or overwrite
-        idx = ([1] if need_cover else []) + [p for p in wanted if p != 1]
         work = store.root / "scans" / "_batch" / f"set_{plan.number:03d}"
+        pages = [] if covers_only else [p for p in wanted if p != 1]
+        jobs.append(_SetJob(plan, source, record, record is None or overwrite, pages, work))
+    lock = threading.Lock()
+
+    def guarded(job: _SetJob, fn: Callable[[], None]) -> None:
         try:
-            images = dict(
-                zip(idx, batch.render_set(pdf, [plan.pages[i - 1] for i in idx], work), strict=True)
-            )
-            if need_cover:
-                progress(k, len(sets), f"{plan.number}번째 학생 ({source}) 표지 읽기")
-                cover = batch.read_cover(svc.engine, exam, images[1], classes)
-                sid = batch.student_id_of(cover.name, plan.number)
-                if taken.get(sid, source) != source:
-                    res.warnings.append(
-                        f"{source}: 이름 '{sid}'가 다른 묶음({taken[sid]})과 같음 — "
-                        f"'{sid}#{plan.number}'로 저장, 동명이인이면 이름 뒤 알파벳을 확인하세요"
-                    )
-                    sid = f"{sid}#{plan.number}"
-                taken[sid] = source
-                record = StudentRecord(
-                    student_id=sid,
-                    name=cover.name,
-                    class_name=cover.class_name,
-                    school=cover.school,
-                    source=source,
-                    teacher_scores={c.question: c.points for c in cover.teacher_scores},
-                    uncertain=list(cover.uncertain),
-                    rotation=int(cover.rotation),
-                    pages=per_student,
-                )
-                if cover.name is None:
-                    res.warnings.append(f"{source}: 이름을 읽지 못해 '{sid}'로 저장 — 고쳐 주세요")
-            assert record is not None
+            fn()
+        except (AgentError, TaskFailed, PageError, OSError) as e:
+            if isinstance(e, AgentError) and e.code == AgentErrorCode.CANCELLED:
+                raise
+            with lock:
+                job.failed = True
+                res.failed.append(Skipped(job.source, "-", str(e)))
+
+    # 1) 표지
+    def read_cover(job: _SetJob) -> None:
+        def run() -> None:
+            job.cover_image = batch.render_set(pdf, [job.plan.pages[0]], job.work)[0]
+            job.cover = batch.read_cover(svc.engine, exam, job.cover_image, classes)
+
+        guarded(job, run)
+
+    covers = [j for j in jobs if j.need_cover]
+    each_in_parallel(
+        covers, read_cover, name=lambda j: f"{j.plan.number}번째", what="표지 읽기",
+        workers=workers, progress=progress,
+    )  # fmt: skip
+
+    # 2) 학생 ID — 차례대로 (동명이인을 가르려면 앞 학생을 알아야 한다)
+    taken = {r.student_id: r for r in records}
+    for job in covers:
+        if job.failed:
+            continue
+        if job.record is not None:  # 다시 읽기(overwrite): 자기 자신과 겹치지 않게
+            taken.pop(job.record.student_id, None)
+        job.record, warns = _cover_record(job, roster, taken, per_student)
+        res.warnings += warns
+    for job in covers:  # 뒤 학생 때문에 동명이인이 된 앞 학생 (이번에 읽은 학생)
+        if job.record is not None:
+            job.record = taken.get(job.record.student_id, job.record)
+    for r in taken.values():  # 앞서 저장해 둔 학생이 동명이인이 된 경우
+        if r.needs_rename and (old := store.student_record(r.student_id)) and not old.needs_rename:
+            store.save_student(r)
+
+    # 3) 답안 판독
+    def read_answers(job: _SetJob) -> None:
+        record = job.record
+        assert record is not None
+
+        def run() -> None:
             sid = record.student_id
+            images: dict[int, Path] = {}
+            if job.cover_image is not None:
+                images[1] = job.cover_image
+            if job.wanted:
+                rendered = batch.render_set(pdf, [job.plan.pages[i - 1] for i in job.wanted],
+                                            job.work)  # fmt: skip
+                images.update(zip(job.wanted, rendered, strict=True))
             batch.rotate(list(images.values()), record.rotation)
             scan_dir = store.scan_dir(sid)
             scan_dir.mkdir(parents=True, exist_ok=True)
@@ -355,30 +492,43 @@ def scan_batch(
                 dst = scan_dir / f"page_{i:02d}.png"  # 묶음 안의 쪽 번호 — 강사마다 같게
                 img.replace(dst)
                 pages[i] = dst
-            if need_cover:
+            if job.need_cover:
                 store.save_student(record)
             answer = [pages[i] for i in sorted(pages) if i != 1]
-            if answer:
-                what = f"문항 {', '.join(q.number for q in qs)}" if only_questions else "답안"
-                progress(k, len(sets), f"{sid} {what} {len(answer)}쪽 판독")
-                outcome = transcribe_student(
-                    svc.engine,
-                    part_exam,
-                    scope.level,
-                    sid,
-                    answer,
-                    page_refs=[p.relative_to(store.root).as_posix() for p in answer],
-                    cross=SecondOpinion() if use_cross else None,
-                )
-                for t in outcome.transcripts.values():
-                    prev = store.transcript(sid, t.question_number)
-                    if prev is not None and prev.confirmed and not overwrite:
-                        continue
-                    store.save_transcript(t.model_copy(update={"notes": t.notes + outcome.notes}))
-            res.students.append(record)
-        except (AgentError, TaskFailed, PageError, OSError) as e:
-            res.failed.append(Skipped(source, "-", str(e)))
-    progress(len(sets), len(sets), "판독 완료 — 원본과 비교해 확인하세요")
+            if not answer:
+                return
+            what = f"문항 {', '.join(q.number for q in qs)}" if only_questions else "답안"
+            progress(0, 1, f"{sid} {what} {len(answer)}쪽 판독")
+            outcome = transcribe_student(
+                svc.engine,
+                part_exam,
+                scope.level,
+                sid,
+                answer,
+                page_refs=[p.relative_to(store.root).as_posix() for p in answer],
+                cross=SecondOpinion() if use_cross else None,
+            )
+            for t in outcome.transcripts.values():
+                prev = store.transcript(sid, t.question_number)
+                if prev is not None and prev.confirmed and not overwrite:
+                    continue
+                store.save_transcript(t.model_copy(update={"notes": t.notes + outcome.notes}))
+            # 빈 답안(판독문 없음)도 판독한 것으로 적어 둔다 — 다시 하면 건너뛰게
+            done = sorted({*record.transcribed, *(q.number for q in qs)})
+            job.record = record.model_copy(update={"transcribed": done})
+            store.save_student(job.record)
+
+        guarded(job, run)
+
+    ready = [j for j in jobs if not j.failed and j.record is not None]
+    each_in_parallel(
+        ready, read_answers, name=lambda j: j.record.student_id if j.record else "?",
+        what="답안 판독", workers=workers, progress=progress,
+    )  # fmt: skip
+    res.students = [j.record for j in ready if not j.failed and j.record is not None]
+    keys = [(r.student_id, q.number) for r in res.students for q in qs]
+    res.export = export_readings(svc, store, [k for k in keys if store.transcript(*k) is not None])
+    progress(len(sets), len(sets), "판독 완료 — 판독본 HWPX를 원본과 비교해 확인하세요")
     return res
 
 
@@ -543,6 +693,209 @@ def needs_input(store: ExamStore) -> list[Transcript]:
     ]
 
 
+# ---------------------------------------------------------------- 강사 확인 (HWPX 다시 읽기)
+
+
+@dataclass
+class ConfirmedFile:
+    transcript: Transcript
+    path: Path
+    changed: int
+    """강사가 고친 줄 수."""
+
+
+@dataclass
+class ConfirmRun:
+    confirmed: list[ConfirmedFile] = field(default_factory=lambda: list[ConfirmedFile]())
+    waiting: list[ConfirmedFile] = field(default_factory=lambda: list[ConfirmedFile]())
+    """고친 것은 받았지만 `[판독불가]`가 남아 확정하지 못한 판독문."""
+    unchanged: list[str] = field(default_factory=lambda: list[str]())
+    """이미 확정했고 그 뒤 파일을 고치지 않은 것 ('학생 문항')."""
+    problems: list[Skipped] = field(default_factory=lambda: list[Skipped]())
+    graded: list[GradeResult] = field(default_factory=lambda: list[GradeResult]())
+    failed: list[Skipped] = field(default_factory=lambda: list[Skipped]())
+    export: ExportResult = field(default_factory=ExportResult)
+
+
+def confirm_from_files(
+    svc: Services,
+    store: ExamStore,
+    *,
+    students: list[str] | None = None,
+    only: list[str] | None = None,
+    by: str | None = None,
+    progress: Progress = _noop,
+) -> ConfirmRun:
+    """ "확인 완료" (PLAN.md §5-1 6단계): 강사가 한글에서 원본과 대조해 고친 판독본 HWPX를 다시 읽어
+    **확정 판독문**으로 저장한다. 고치지 않은 줄은 앱에 둔 원래 줄(원래 LaTeX)을 그대로 쓴다.
+
+    - 확정했고 그 뒤 파일이 그대로면 다시 읽지 않는다 (파일 해시, §2-4 6번).
+    - 소문항 표식(`■ 1-(1)`)이 없어진 파일, 다른 학생의 머리가 달린 파일은 확정하지 않고 알린다.
+    - `[판독불가]`가 남으면 고친 줄만 받아 두고 확정하지 않는다 (강사가 채운다).
+    - 확정하면 그 학생·문항을 맞춘다: 고쳤으면 다시 채점, 그대로면 채점의 '판독문 확인' 표시만
+      (`grade_after_confirm`). 끝나면 파일을 다시 써 "확인 전" 표시를 지운다.
+    """
+    from dawoai.export.exam_files import accept_file, is_edited, student_file
+    from dawoai.export.hwpx import read_back, reconcile
+
+    exam = store.exam()
+    qs = select_questions(exam, only)
+    roster = students or store.students()
+    run = ConfirmRun()
+    hashes = store.export_hashes()
+    todo = [(s, q) for s in roster for q in qs if store.transcript(s, q.number) is not None]
+    rewrite: list[tuple[str, str]] = []
+    for k, (st, q) in enumerate(todo):
+        t = store.transcript(st, q.number)
+        assert t is not None
+        record = store.student_record(st)
+        if record is not None and record.needs_rename:
+            run.problems.append(Skipped(st, q.number, "같은 반 동명이인 — 이름을 먼저 바꾸세요"))
+            continue
+        path = student_file(svc.workspace, store, st, q.number)
+        if not path.is_file():
+            run.problems.append(
+                Skipped(st, q.number, f"{path.name}이 없습니다 — `exam export`로 다시 쓰세요")
+            )
+            continue
+        if t.confirmed and not is_edited(store, path, hashes):
+            run.unchanged.append(f"{st} {q.number}")
+            continue
+        progress(k, len(todo), f"{st} 문항 {q.number} 판독본 읽기")
+        try:
+            back = read_back(path)
+        except Exception as e:  # 한글이 아닌 프로그램으로 저장해 깨진 파일 등
+            run.problems.append(Skipped(st, q.number, f"{path.name}을 읽을 수 없습니다 ({e})"))
+            continue
+        name = (record.name if record and record.name else None) or st
+        if name not in back.head.split(" · "):
+            run.problems.append(
+                Skipped(
+                    st,
+                    q.number,
+                    f"{path.name}의 머리 '{back.head}'에 {name}이 없습니다 "
+                    "— 다른 학생의 파일을 붙여 넣었는지 확인하세요",
+                )
+            )
+            continue
+        rec = reconcile(q.number, back.parts, t.lines)
+        if rec.problems:
+            run.problems += [Skipped(st, q.number, p) for p in rec.problems]
+            continue
+        before = t
+        t = t.model_copy(update={"lines": rec.lines})
+        if rec.changed:
+            note = f"한글에서 {rec.changed}줄 고침 ({by or '강사'})"
+            t = t.model_copy(update={"notes": [*t.notes, note]})
+        item = ConfirmedFile(t, path, rec.changed)
+        if t.unreadable:
+            store.save_transcript(t.model_copy(update={"confirmed": False, "confirmed_by": None}))
+            accept_file(store, path)
+            run.waiting.append(item)
+            continue
+        t = t.model_copy(update={"confirmed": True, "confirmed_by": by})
+        item.transcript = t
+        store.save_transcript(t)
+        accept_file(store, path)  # 강사가 고친 내용을 받았으니 다음부터 다시 써도 된다
+        run.confirmed.append(item)
+        try:
+            g = grade_after_confirm(svc, store, before, t, progress=progress, export=False)
+        except (AgentError, TaskFailed, PipelineError) as e:
+            if isinstance(e, AgentError) and e.code == AgentErrorCode.CANCELLED:
+                raise
+            run.failed.append(Skipped(st, q.number, str(e)))
+            g = None
+        if g is not None:
+            run.graded += g.graded
+            run.failed += g.failed
+            run.export.written += g.export.written
+            run.export.warnings += g.export.warnings
+        rewrite.append((st, q.number))
+    written = {p.name for p in run.export.written}
+    left = [k for k in rewrite if student_file(svc.workspace, store, *k).name not in written]
+    if left:
+        more = write_files(svc.workspace, store, left)
+        run.export.written += more.written
+        run.export.warnings += more.warnings
+    progress(len(todo), len(todo), f"확정 {len(run.confirmed)}건")
+    return run
+
+
+@dataclass
+class RenameResult:
+    record: StudentRecord
+    warnings: list[str] = field(default_factory=lambda: list[str]())
+    export: ExportResult = field(default_factory=ExportResult)
+
+
+def rename_student(
+    svc: Services,
+    store: ExamStore,
+    student: str,
+    *,
+    name: str | None = None,
+    class_name: str | None = None,
+    roster_id: str | None = None,
+) -> RenameResult:
+    """이 시험의 학생 이름·반을 고치거나 명부의 학생과 잇는다 (표지를 잘못 읽었을 때, 같은 반
+    동명이인을 `김다원A`·`김다원B`로 가를 때). 판독문·채점·스캔을 새 학생 ID로 옮기고, 옛 HWPX는
+    지우고(강사가 고친 파일은 남김) 새 이름으로 다시 쓴다."""
+    from dawoai.export.exam_files import remove_student_files
+    from dawoai.ocr import batch
+
+    old = store.student_record(student)
+    if old is None and student not in store.students():
+        raise PipelineError(f"이 시험에 '{student}' 학생이 없습니다")
+    record = old or StudentRecord(student_id=student, source="-")
+    linked = None
+    if roster_id is not None:
+        linked = Roster(svc.workspace).get(roster_id)
+        if linked is None:
+            raise PipelineError(f"명부에 {roster_id}가 없습니다 (`students list`)")
+    new_name = linked.name if linked else (name or record.name or student)
+    klass = (linked.class_name if linked else None) or class_name or record.class_name
+    new_sid = batch.student_id_of(new_name, 0)
+    others = [r for r in store.student_records() if r.student_id != student]
+    clash = [r for r in others if same_name(r.name, new_name) and same_class(r.class_name, klass)]
+    if clash:
+        raise PipelineError(
+            f"{klass or '반 없음'}에 {new_name}이(가) 이미 있습니다 ({clash[0].source}) — "
+            f"{new_name}A, {new_name}B처럼 알파벳을 붙이세요"
+        )
+    if any(r.student_id == new_sid for r in others):  # 다른 반의 동명이인
+        new_sid = f"{new_sid}@{klass or 'x'}"
+    res = RenameResult(record)
+    res.warnings += remove_student_files(svc.workspace, store, student)
+    store.rename_student(student, new_sid)
+    record = record.model_copy(
+        update={
+            "student_id": new_sid,
+            "name": new_name,
+            "class_name": klass,
+            "school": (linked.school if linked else None) or record.school,
+            "roster_id": linked.id if linked else record.roster_id,
+            "roster_note": None if linked else record.roster_note,
+            "needs_rename": False,
+        }
+    )
+    store.save_student(record)
+    res.record = record
+    keys = [(new_sid, q.number) for q in store.exam().questions]
+    for r in others:  # 짝이던 학생: 같은 반 같은 이름이 더 없으면 HWPX를 만들 수 있다
+        twins = [
+            o
+            for o in [*others, record]
+            if o.student_id != r.student_id
+            and o.name == r.name
+            and same_class(o.class_name, r.class_name)
+        ]
+        if r.needs_rename and not twins:
+            store.save_student(r.model_copy(update={"needs_rename": False}))
+            keys += [(r.student_id, q.number) for q in store.exam().questions]
+    res.export = write_files(svc.workspace, store, keys)
+    return res
+
+
 # ---------------------------------------------------------------- 보정
 
 
@@ -584,16 +937,18 @@ def grade_after_confirm(
     t: Transcript,
     *,
     progress: Progress = _noop,
+    export: bool = True,
 ) -> GradeRun | None:
     """강사가 판독문을 확정하면 그 학생·문항을 맞춘다. 고친 것 없이 확정만 했으면 AI를 부르지 않고
     채점의 '판독문 강사 확인' 표시만 켠다. 고쳤으면 다시 채점한다 (강사가 확정한 점수는
-    `grade_exam`이 지킨다)."""
+    `grade_exam`이 지킨다). 채점하지 않을 때도 판독본 HWPX를 다시 써 고친 판독문·"확인 전" 표시를
+    맞춘다 (`export=False`면 부른 쪽이 쓴다)."""
     old = store.grade(t.student_id, t.question_number)
     if not wants_grading(store, before, t):
         if t.confirmed and old is not None and not old.transcript_confirmed:
-            g = old.model_copy(update={"transcript_confirmed": True})
-            store.save_grade(g)
-            export_grades(svc, store, [g])  # 파일의 "판독문 확인 전" 줄을 지운다
+            store.save_grade(old.model_copy(update={"transcript_confirmed": True}))
+        if export:
+            export_readings(svc, store, [(t.student_id, t.question_number)])
         return None
     return grade_exam(
         svc,

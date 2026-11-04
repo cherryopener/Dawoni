@@ -118,6 +118,7 @@ def _cell(store: ExamStore, student: str, q: ExamQuestion) -> dict[str, Any]:
 def exam_summary(store: ExamStore, exam: Exam) -> dict[str, Any]:
     students = store.students()
     cells = [_cell(store, s, q) for s in students for q in exam.questions]
+    records = store.student_records()
     return {
         "questions": len(exam.questions),
         "solved": sum(store.solution(q.number) is not None for q in exam.questions),
@@ -136,6 +137,8 @@ def exam_summary(store: ExamStore, exam: Exam) -> dict[str, Any]:
         "needs_review": sum(
             c["grade"] is not None and c["grade"]["status"] == "needs_review" for c in cells
         ),
+        "needs_rename": sum(r.needs_rename for r in records),
+        "not_in_roster": sum(r.roster_note is not None for r in records),
     }
 
 
@@ -423,12 +426,42 @@ def approve(exam_id: str, number: str, body: ByBody, st: AppState = State) -> Ru
 
 @router.get("/{exam_id}/students")
 def students(exam_id: str, st: AppState = State) -> list[dict[str, Any]]:
+    """학생마다 표지·명부 정보(`record`: 이름·반·학교, 명부 ID, 이름 확인 대기)와 문항별 상태."""
     _, store = _store(st, exam_id)
     exam = store.exam()
+    records = {r.student_id: r for r in store.student_records()}
     return [
-        {"student": s, "cells": {q.number: _cell(store, s, q) for q in exam.questions}}
-        for s in store.students()
+        {
+            "student": s,
+            "record": records[s].model_dump(mode="json") if s in records else None,
+            "cells": {q.number: _cell(store, s, q) for q in exam.questions},
+        }
+        for s in sorted(set(store.students()) | set(records))
     ]
+
+
+class IdentityBody(BaseModel):
+    name: str | None = Field(default=None, description="새 이름 (동명이인은 김다원A처럼)")
+    class_name: str | None = None
+    roster_id: str | None = Field(default=None, description="명부 학생 ID — 명부의 이름·반을 쓴다")
+
+
+@router.put("/{exam_id}/students/{student}/identity")
+def identity(
+    exam_id: str, student: str, body: IdentityBody, st: AppState = State
+) -> dict[str, Any]:
+    """학생 이름·반을 고치거나 명부와 잇는다 (표지 오독, 같은 반 동명이인 가르기). 판독문·채점을
+    새 이름으로 옮기고 판독본 HWPX를 다시 쓴다."""
+    svc, store = _store(st, exam_id)
+    res = workflow.rename_student(
+        svc, store, student, name=body.name, class_name=body.class_name, roster_id=body.roster_id
+    )
+    return {
+        "record": res.record.model_dump(mode="json"),
+        "warnings": res.warnings,
+        "files": [p.name for p in res.export.written],
+        "file_warnings": res.export.warnings,
+    }
 
 
 class AnswerBody(BaseModel):
@@ -476,24 +509,73 @@ def scan(
             "unassigned": [x.joined for x in res.unassigned],
             "notes": res.notes,
             "warnings": res.warnings,
+            "files": [p.name for p in res.export.written],
+            "file_warnings": res.export.warnings,
             **_grade_ready(svc, store, [student] if res.saved else [], ctx),
         }
 
     return st.jobs.submit("scan", run, {"exam": exam_id, "student": student})
 
 
+class ExportBody(BaseModel):
+    force: bool = False
+    """강사가 한글에서 고친 파일도 덮어쓴다 (고친 내용은 사라진다)."""
+
+
 @router.post("/{exam_id}/export")
-def export(exam_id: str, st: AppState = State) -> Job:
-    """채점 HWPX를 모두 다시 쓴다 (코드만, 토큰 0). 채점할 때마다 저절로 쓰므로 보통은 필요 없다 —
-    내보내기가 들어오기 전에 채점한 시험, 파일을 지웠거나 한글에서 열어 두어 못 쓴 경우."""
+def export(exam_id: str, body: ExportBody | None = None, st: AppState = State) -> Job:
+    """판독본·채점 HWPX를 모두 다시 쓴다 (코드만, 토큰 0). 판독·채점할 때마다 저절로 쓰므로 보통은
+    필요 없다 — 파일을 지웠거나 한글에서 열어 두어 못 쓴 경우. 강사가 고친 파일은 두고 알린다."""
     svc, store = _store(st, exam_id)
+    force = body.force if body else False
 
     def run(ctx: JobContext) -> dict[str, Any]:
         ctx.progress(0, 1, "HWPX 쓰는 중")
-        res = write_all(svc.workspace, store)
-        return {"files": [p.name for p in res.written], "file_warnings": res.warnings}
+        res = write_all(svc.workspace, store, force=force)
+        return {
+            "files": [p.name for p in res.written],
+            "edited": [p.name for p in res.edited],
+            "file_warnings": res.warnings,
+        }
 
     return st.jobs.submit("export", run, {"exam": exam_id})
+
+
+class ConfirmFilesBody(BaseModel):
+    students: list[str] | None = None
+    questions: list[str] | None = None
+    by: str | None = None
+
+
+@router.post("/{exam_id}/confirm-files")
+def confirm_files(exam_id: str, body: ConfirmFilesBody, st: AppState = State) -> Job:
+    """확인 완료 (PLAN.md §5-1 6단계): 강사가 한글에서 고친 판독본 HWPX를 다시 읽어 확정 판독문으로
+    저장하고, 고친 답안은 다시 채점한다. 소문항 표식이 없어진 파일 등은 `problems`로 알린다."""
+    svc, store = _store(st, exam_id)
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        res = workflow.confirm_from_files(
+            svc, store, students=body.students, only=body.questions, by=body.by,
+            progress=ctx.progress,
+        )  # fmt: skip
+        return {
+            "confirmed": [
+                {"student": c.transcript.student_id, "question": c.transcript.question_number,
+                 "changed": c.changed} for c in res.confirmed
+            ],
+            "waiting": [_waiting(c.transcript) for c in res.waiting],
+            "unchanged": res.unchanged,
+            "problems": [
+                {"student": p.student, "question": p.question, "reason": p.reason}
+                for p in res.problems
+            ],
+            "graded": len(res.graded),
+            "failed": [f"{f.student} {f.question}: {f.reason}" for f in res.failed],
+            "files": [p.name for p in res.export.written],
+            "file_warnings": res.export.warnings,
+        }  # fmt: skip
+
+    return st.jobs.submit("confirm_files", run, {"exam": exam_id})
 
 
 @router.get("/{exam_id}/needs-input")
@@ -747,6 +829,12 @@ def scan_batch(exam_id: str, body: BatchScanBody, st: AppState = State) -> Job:
             "skipped": res.skipped,
             "warnings": res.warnings,
             "failed": [f"{f.student}: {f.reason}" for f in res.failed],
+            "needs_rename": [r.student_id for r in res.needs_rename],
+            "not_in_roster": [
+                {"student": r.student_id, "note": r.roster_note} for r in res.not_in_roster
+            ],
+            "files": [p.name for p in res.export.written],
+            "file_warnings": res.export.warnings,
             **_grade_ready(svc, store, students if body.grade else [], ctx),
         }
 

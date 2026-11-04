@@ -66,7 +66,7 @@ COVER: TaskDef[CoverRead] = TaskDef(
     template="read_cover.md.j2",
     output=CoverRead,
     rule_target="transcribe",
-    timeout_s=300,
+    timeout_s=600,  # flash-medium 표지 1장이 300초를 넘긴 적 있음 (2026-11-04 M3 실측)
 )
 
 _SPACES = re.compile(r"\s+")

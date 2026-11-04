@@ -166,6 +166,45 @@ uv run python experiments/measure_agy.py rubric                  # 아래 표
 - 객관식·단답형은 루브릭·채점 모두 AI 호출이 없다. 코드가 못 정한 단답(말로 쓴 답 등)만 문항당 한 번
   가벼운 도우미에게 묶어 묻는다 (`tests/test_code_grading.py`). 이 시험에는 객관식·단답형만으로 된 문항이 없다.
 
+## 답안지 → HWPX 실측 (M3, 2026-11-04, agy 1.4.12, flash-medium)
+
+```bash
+uv run python -m dawoai students import 명부.xlsx                 # 이름/성명·반·학교 (전화번호는 읽지 않음)
+uv run python -m dawoai exam scan-batch <시험> 답안지.pdf --per-student 3   # 표지 → 명부 → 판독 → 판독본 HWPX
+uv run python -m dawoai exam students <시험>                       # 명부 연결·이름 확인 대기
+uv run python -m dawoai exam student <시험> 김다원#5 --name 김다원B  # 같은 반 동명이인 가르기
+uv run python -m dawoai exam confirm <시험> --by 김선생              # 확인 완료: 한글에서 고친 판독본 → 확정 판독문
+uv run python experiments/m3_batch.py scan --parallel 4           # 아래 표 (24명)
+uv run --extra windows python experiments/m3_batch.py hancom-edit # 한글(COM)로 고쳐 저장 → 확인 완료
+uv run --extra windows python experiments/m3_resave_probe.py      # 한글로 다시 저장만 한 파일이 같게 읽히는지
+```
+
+다워니 실측 답안지 스캔(`real_data/20261028172150.pdf`, 72쪽 = 3쪽 × 24명, 옆으로 돌아간 쪽)을 앱 모듈
+(`workflow.scan_batch`)로 끝까지 돌렸다. 학생 4명씩 동시에(`parallel_students=4`), 교차 판독 없음.
+
+| 확인한 것 | 결과 |
+|---|---|
+| 스캔 1개 → 학생별 판독본 | **학생 24명 모두** 판독본 HWPX: 학생 × 문항 파일 62개(1번 21, 2번 24, 3번 17 — 빈 답안은 파일 없음) + 반별 묶음 3개, 71 MB. `[판독불가]` 0곳 |
+| 표지 읽기 | 호출 25 (시간 초과 1 → 다시), 중앙값 128초·3.0만 토큰, 합 83만 |
+| 손글씨 판독 | 호출 26 (형식 수리 1), 중앙값 238초·6.9만 토큰, 합 189만. 23명 2,408초(4명씩) + 다시 1명 |
+| 명부 연결 | 명부(표지 기준값의 이름 2명)와 2명 연결, 나머지 22명은 "명부에 없음"으로 알림 (명부가 일부라 당연) |
+| 한글에서 고친 내용 → 확정 판독문 | 한글 2024(COM)로 `TSS1_권오제_1.hwpx`를 찾아 바꾸기("라고" → "라고(강사)") 후 저장 → 확인 완료: 고친 2줄만 새 줄, **확정 판독문에 반영**. 고치지 않은 줄은 원래 LaTeX 그대로 |
+| 한글로 다시 저장만 한 파일 | 학생 파일 62개 모두 한글로 열어 저장 → 다시 읽어 고친 줄 **0/62** (아래 고친 뒤) |
+
+실측에서 고친 것:
+- `\overline{ap}`가 다시 읽을 때 `\frac{}{line}{ap}`가 됐다 — 한글 수식의 붙여 쓴 명령을 가르는 코드가
+  `overline`을 `over line`으로 갈랐다. `\Leftrightarrow`는 변환기가 몰라 `[식: …]` 글자로 들어갔고 다시 읽을
+  때 글로 읽혔다. 둘 다 고침(`LRARROW`, 글자로 넣은 식은 식으로 되돌림). 식 안 한글의 `\text{}` 감싸기와
+  `\ne`/`\neq`도 같은 식으로 본다. 고치기 전에는 한글로 다시 저장만 한 파일 12개 중 5개가 "고친 줄"로 읽혔다.
+- 빈 답안이 있는 학생을 다시 돌릴 때마다 다시 판독했다(판독문이 없는 문항을 "아직 안 읽음"으로 봄) —
+  `StudentRecord.transcribed`로 판독한 문항을 적어 둔다.
+- flash-medium 표지 1장이 300초 제한을 넘겼다 → 표지 제한 600초.
+- 첫 확인 완료 실측에서 위 `overline` 버그로 바뀐 1줄(고경원 1번)은 실험 자료에서 손으로 되돌렸다.
+
+- 빈 답안(판독문 없음)은 판독본을 만들지 않고 묶음에 "답안 없음" 쪽으로만 넣는다. AI가 놓친 답을 강사가
+  채울 파일이 없으므로, 빈 답안 코드 0점과 함께 M4에서 정한다.
+- 한글 COM 실측은 '접근 허용' 창에 [모두 허용]을 눌러야 돈다 (M0와 같음).
+
 ## 나중에 할 일
 
 - macOS 설치·호환성 확인 (M0에서 미룸): 모든 의존성이 소스 빌드 없이 설치되는지, pywebview 창, 한글 없는

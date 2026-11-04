@@ -24,6 +24,7 @@ from dawoai.server import (
     api_content,
     api_exams,
     api_setup,
+    api_students,
 )
 from dawoai.server.files import PathRefused
 from dawoai.server.security import COOKIE, LocalOnly
@@ -96,6 +97,7 @@ def create_app(
     app.include_router(api_setup.router)
     app.include_router(api_content.router)
     app.include_router(api_exams.router)
+    app.include_router(api_students.router)
     app.include_router(api_calibration.router)
     app.include_router(api_auth.router)
 

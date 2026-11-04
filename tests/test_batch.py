@@ -91,7 +91,8 @@ def test_cli_scan_batch(
     app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     ws = create_workspace(tmp_path / "ws")
-    responses = [_cover("김태희 A"), _lines("x=2일 때 최솟값 3"), _cover("김태희A"), _lines("모름")]
+    # 표지를 모두 읽은 뒤 판독한다 (동명이인을 가르려면 학생 ID를 먼저 정해야 한다)
+    responses = [_cover("김태희 A"), _cover("김태희A"), _lines("x=2일 때 최솟값 3"), _lines("모름")]
     exe = make_fake(
         "script", script=[{"response": json.dumps(r, ensure_ascii=False)} for r in responses]
     )
@@ -114,11 +115,12 @@ def test_cli_scan_batch(
                  "--classes", "TSS1,TSS2"]) == 0  # fmt: skip
     out = capsys.readouterr().out
     assert "김태희A" in out and "표지 점수 1번 3" in out
-    assert "다른 묶음" in out, "같은 이름이 두 묶음에 있으면 알린다"
+    assert "같은 반(TSS1)에 '김태희A' 시험지가 또 있음" in out, "같은 반 같은 이름은 알린다"
 
     store = ExamStore(WorkspacePaths(ws.root), eid)
     recs = {r.student_id: r for r in store.student_records()}
     assert set(recs) == {"김태희A", "김태희A#2"}
+    assert recs["김태희A"].needs_rename and recs["김태희A#2"].needs_rename, "둘 다 이름 확인 대기"
     assert recs["김태희A"].teacher_scores == {"1": 3} and recs["김태희A"].class_name == "TSS1"
     t = store.transcript("김태희A", "1")
     assert t is not None and not t.confirmed and t.lines[0].text == "x=2일 때 최솟값 3"

@@ -498,6 +498,22 @@ class StudentRecord(DawoaiModel):
     uncertain: list[str] = Field(default_factory=lambda: list[str]())
     rotation: int = Field(default=0, description="표지로 정한, 묶음의 쪽을 세울 각도 (시계 방향)")
     pages: int | None = Field(default=None, description="묶음의 쪽 수 (표지 포함)")
+    cover_name: str | None = Field(
+        default=None, description="표지에서 읽은 이름 그대로 (명부와 맞춰 `name`이 바뀌어도 남김)"
+    )
+    roster_id: str | None = Field(default=None, description="학생 명부의 ID (S0001), 맞춘 경우")
+    roster_note: str | None = Field(
+        default=None, description="명부와 맞추지 못한 이유 (강사가 확인할 것). 맞췄으면 None"
+    )
+    transcribed: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="답안 쪽을 판독한 문항 — 빈 답안이라 판독문이 없어도 다시 판독하지 않게",
+    )
+    needs_rename: bool = Field(
+        default=False,
+        description="같은 반에 같은 이름의 시험지가 또 있음 — 강사가 김다원A·김다원B처럼 이름을 "
+        "바꾸기 전에는 HWPX를 만들지 않는다 (PLAN.md §5-1 3단계)",
+    )
 
 
 # ---------------------------------------------------------------- 판독문

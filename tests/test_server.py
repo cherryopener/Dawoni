@@ -271,16 +271,18 @@ def test_one_unreadable_student_does_not_block_others(
     a = c.get(f"{base}/students/A/grades/1").json()["grade"]
     assert a["total"] == 4 and a["transcript_confirmed"] is False
 
-    # A는 파일까지, B는 아직 파일 없음. 반별 묶음은 B를 "입력 대기" 쪽으로 넣어 먼저 만든다
+    # A는 채점본까지, B는 판독본만 (강사가 [판독불가]를 채울 파일). 묶음에는 둘 다
     out = next((tmp_path / "ws" / "exports").iterdir())
     assert out.name.endswith("_자동_채점")
-    assert sorted(p.name for p in out.iterdir()) == ["(반별)_반없음_1.hwpx", "반없음_A_1.hwpx"]
+    names = ["(반별)_반없음_1.hwpx", "반없음_A_1.hwpx", "반없음_B_1.hwpx"]
+    assert sorted(p.name for p in out.iterdir()) == names
     assert job["result"]["files"] == ["반없음_A_1.hwpx", "(반별)_반없음_1.hwpx"]
     assert count_heads(out / "(반별)_반없음_1.hwpx") == 2
     a_file = read_back(out / "반없음_A_1.hwpx")
     assert a_file.head == "자동 채점 · 반없음 · A" and list(a_file.parts) == ["1"]
+    assert any("[판독불가]" in x for x in read_back(out / "반없음_B_1.hwpx").parts["1"])
     listed = c.get("/api/exports").json()
-    assert {e["name"] for e in listed} == {"(반별)_반없음_1.hwpx", "반없음_A_1.hwpx"}
+    assert {e["name"] for e in listed} == set(names)
     assert {e["folder"] for e in listed} == {out.name}
 
     path = f"{base}/students/B/transcripts/1"
