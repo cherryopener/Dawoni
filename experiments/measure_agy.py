@@ -4,7 +4,7 @@
 실측 시험(`real_data/test.pdf`: 시험지 + 해설지)과 그 시험의 학생 답안 스캔(`real_data/20261028172150.pdf`,
 학생 1명 = 3쪽, 첫 쪽 표지), 다워니가 읽고 강사가 확인한 시험·해설지(`--dawoni-exam` 폴더)다.
 
-    uv run python experiments/measure_agy.py exam  --models gemini-3.8-flash-low,gemini-4-argon-low
+    uv run python experiments/measure_agy.py exam  --models gemini-3.8-flash-medium,gemini-4-argon-low
     uv run python experiments/measure_agy.py key   --models ...
     uv run python experiments/measure_agy.py cover --models ... --sets 1-6
     uv run python experiments/measure_agy.py read  --models ... --sets 1-2
@@ -475,7 +475,8 @@ def report() -> str:
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("task", choices=[*TASKS, "grade", "report"])
-    ap.add_argument("--models", default="")
+    # 실측은 flash-medium으로 한다 — argon은 구독 한도가 따로라 실제 작업(strong)에 남겨 둔다
+    ap.add_argument("--models", default="gemini-3.8-flash-medium")
     ap.add_argument("--sets", default="1")
     ap.add_argument("--transcripts", help="grade: 이 모델의 판독 결과로 채점")
     ap.add_argument("--redo", action="store_true")

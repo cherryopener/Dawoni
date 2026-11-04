@@ -256,15 +256,15 @@ def test_all_unavailable(client: Callable[[str, str], client_mod.AgentClient]) -
 
 def test_tier_model_falls_back_to_agent_model() -> None:
     cfg = AppConfig()
-    assert cfg.tier_model("agy", "fast").model == "gemini-4-argon-low"
+    assert cfg.tier_model("agy", "fast").model == "gemini-3.8-flash-medium"
     assert cfg.tier_model("claude", "strong").effort == "high"
     # 등급 칸이 없으면 AI 설정의 모델 (모델 이름을 짐작하지 않는다)
     cfg.tiers["agy"].pop("strong")
-    assert cfg.tier_model("agy", "strong").model == "gemini-4-argon-low"
+    assert cfg.tier_model("agy", "strong").model == "gemini-3.8-flash-medium"
     cfg.agents["codex"].model = "my-codex"
     assert cfg.tier_model("codex", "fast").model == "my-codex"
     assert cfg.tier_model("codex", "fast").effort == "low"
-    assert cfg.tier_model("agy", None).model == "gemini-4-argon-low"
+    assert cfg.tier_model("agy", None).model == "gemini-3.8-flash-medium"
 
 
 def test_old_config_gets_default_tiers() -> None:

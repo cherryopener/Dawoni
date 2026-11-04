@@ -15,6 +15,8 @@ uv run ruff check .
 uv run pyright
 ```
 
+- **Windows가 주력**이다 (학원 PC). 개발·확인은 Windows에서 먼저 하고, macOS 설치·호환성은 나중에 한다
+  (아래 "나중에 할 일").
 - Python 3.13 (`.python-version`). 다워니(3.15)에서 낮췄다 — PLAN.md §12
 - 실제 AI CLI를 호출하는 테스트는 기본 제외: `uv run pytest -m agent`
 - 실제 자료 회귀 테스트는 `real_data/`(git 제외, 다워니 실측 시험·답안)가 있을 때만 돈다.
@@ -30,8 +32,8 @@ uv run pyright
 
 ```bash
 uv run python experiments/hwpx_probe.py --scan real_data/20261028172150.pdf --page 2
-uv run python experiments/hwpx_latex_coverage.py tests/fixtures <다워니 작업공간>/exams
-uv run --extra windows python experiments/hwpx_probe.py --hancom   # 한글로 열어 PDF·HWPX 다시 저장
+uv run python experiments/hwpx_latex_coverage.py tests/fixtures D:/Downloads/Dawoni-windows/temp/exams
+uv run --extra windows python experiments/hwpx_probe.py --hancom
 ```
 
 | 확인한 것 | 결과 |
@@ -41,11 +43,16 @@ uv run --extra windows python experiments/hwpx_probe.py --hancom   # 한글로 �
 | 판독본을 다시 읽기 (머리·소문항·줄·수식) | 쓴 것과 같음 |
 | 강사가 판독문 한 줄을 고친 파일을 다시 읽기 | 고친 내용 반영 |
 | LaTeX → 한글 수식 (실제 자료 식 81개: 다워니 해설지·픽스처) | 81개 모두 바뀜. 되돌렸다 다시 바꿔도 같은 스크립트. `\quad`·`\ `는 미리 공백으로 바꿔야 함 |
-| 한글 2024에서 열기·PDF 저장·다시 저장 (`--hancom`) | **아직 확인 못 함** — 아래 |
+| 학생 × 문항 파일 1개 (`2반_김다원_1_5678.hwpx`): 판독 → 쪽 나눔 → 채점 (PLAN.md §15-4) | 한글에서 2쪽으로 열림. 다시 읽기는 채점 머리(`다워이 채점` 스타일)에서 멈춰 판독문만 같게 읽음. 한글이 다시 저장해도 같음 |
+| 한글 2024에서 열기 (강사 확인) | 깨짐 없이 열림 |
+| 한글 2024 COM으로 열기 → PDF·HWPX 다시 저장 → 다시 읽기 (`--hancom`) | 판독본·채점본 모두 저장됨. 한글이 다시 저장한 판독본도 쓴 것과 같음 |
 
 - 한글 COM 자동화는 파일을 열 때 '접근 허용' 창을 띄운다. 한글 자동화 보안 모듈
-  (`FilePathCheckerModule`)이 등록된 PC에서만 창 없이 돈다. 창을 숨기면 아무도 답할 수 없어
+  (`FilePathCheckerModule`)을 설치한 PC에서는 창 없이 돈다. 없으면 창을 숨겼을 때 아무도 답할 수 없어
   멈추므로 `--hancom`은 한글 창을 보이게 연다 — 창이 뜨면 [모두 허용]을 누른다.
+- 한글은 **한 번 띄워 여러 파일에 쓴다.** 파일마다 띄우고 끄면 두 번째 연결이 아직 꺼지는 중인 한글에
+  붙어 `The server threw an exception` → `The RPC server is unavailable`로 죽는다.
+- 한글 PDF에서 점수표 글자가 바탕 글꼴(명조)로 나온다 — 표 칸 문단에도 맑은 고딕을 줄 것 (M4).
 - 다시 읽을 때 수식은 한글 수식 스크립트 → LaTeX로 되돌리므로 표기가 조금 바뀐다(`^2` → `^{2}`,
   `\ge` → `\geq`). 강사가 고치지 않은 식은 앱 데이터에 둔 원래 LaTeX를 쓰면 된다 (M3에서).
 
@@ -84,6 +91,12 @@ uv run --extra windows python experiments/hwpx_probe.py --hancom   # 한글로 �
 - 작은 표본(시험 1개, 학생 6명)이다. 결론은 "argon-low가 어느 역할에서도 flash-medium보다 나쁘지 않고
   3~7배 빠르며 토큰은 약 1/3"까지다.
 
-**기본값 (config.py)**: agy fast = standard = `gemini-4-argon-low`, strong = `gemini-4-argon-medium`.
-flash-low는 쓰지 않는다. 구독 한도가 모델마다 어떻게 깎이는지는 재지 않았다 — argon이 토큰은 적지만
-한도를 더 빨리 쓰는지 며칠 써 보며 확인한다 (PLAN.md §2-4-5).
+**기본값 (config.py)**: agy fast = standard = `gemini-3.8-flash-medium`, strong = `gemini-4-argon-low`.
+flash와 argon은 구독 한도가 따로다. 정확도가 같으므로 대부분의 호출은 flash-medium에 두고, strong 역할만
+argon-low로 보내 두 한도를 나눠 쓴다. flash-low는 쓰지 않는다. 앞으로의 실측도 flash-medium으로 한다
+(`measure_agy.py`의 기본 모델).
+
+## 나중에 할 일
+
+- macOS 설치·호환성 확인 (M0에서 미룸): 모든 의존성이 소스 빌드 없이 설치되는지, pywebview 창, 한글 없는
+  PC에서 HWPX 만들기·읽기. Windows를 먼저 끝낸 뒤 M8 패키징 전에 한다.

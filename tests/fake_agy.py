@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -46,6 +47,11 @@ def result(status: str = "SUCCESS", response: str = "", **extra: object) -> None
 
 
 def main() -> int:
+    # 진짜 agy처럼 UTF-8로 주고받는다. 파이프 너머 파이썬은 기본이 시스템 인코딩(Windows cp949)이라
+    # 한글 프롬프트가 깨진다 — PYTHONIOENCODING 없는 PowerShell에서 테스트가 실패했음 (2026-11-04)
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
     mode = os.environ.get("FAKE_AGENT_MODE", "ok")
     args = sys.argv[1:]
     schema = args[args.index("--json-schema") + 1] if "--json-schema" in args else None

@@ -22,8 +22,10 @@ import io
 import re
 import sys
 import warnings
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from hwpx.document import HwpxDocument
 from hwpx.equation.authoring import latex_to_eqedit
@@ -40,6 +42,7 @@ OUT = Path(__file__).resolve().parent / "out"
 FONT = "맑은 고딕"
 STYLE_HEAD = "다워이 머리"
 STYLE_PART = "다워이 소문항"
+STYLE_GRADED = "다워이 채점"  # 채점 부분의 첫 문단 (새 쪽). 다시 읽기는 여기서 멈춘다
 MARK = "■"
 PART_MARK = re.compile(rf"^{MARK}\s*(.+?)\s*$")
 UNASSIGNED = "문항을 알 수 없는 줄"
@@ -62,9 +65,15 @@ class Student:
     klass: str
     name: str
     school: str
+    ident: str = ""
+    """같은 반 동명이인을 가르는 식별자 (학부모 전화 뒷 4자리 등, 없으면 짧은 학생 id)"""
 
     def head(self) -> str:
         return f"{self.exam} · {self.klass} · {self.name} · {self.school}"
+
+    def filename(self, question: str) -> str:
+        """강사 1명이 문항 1개를 맡으므로 학생 × 문항 = 파일 1개: `반_이름_문항_식별자.hwpx`."""
+        return "_".join(x for x in (self.klass, self.name, question, self.ident) if x) + ".hwpx"
 
 
 @dataclass
@@ -77,7 +86,7 @@ class PartGrade:
     """(판독문 인용, 감점 이유)"""
 
 
-STUDENT = Student("2026-11 중간고사 물리", "2반", "김다원", "○○고")
+STUDENT = Student("2026-11 중간고사 물리", "2반", "김다원", "○○고", ident="5678")
 LINES: list[TranscriptLine] = [
     TranscriptLine(part="1-(1)", text="옴의 법칙으로 전류를 구하면", math=r"I = \frac{V}{R} = \frac{6}{3} = 2"),
     TranscriptLine(part="1-(1)", text="따라서 전류는 2 A이다."),
@@ -141,6 +150,7 @@ class Builder:
         self.red_underline = run(underline=True, underline_color=RED, underline_shape="SOLID")
         self.style_head = st.ensure_style(STYLE_HEAD, char_pr_id_ref=self.bold)
         self.style_part = st.ensure_style(STYLE_PART, char_pr_id_ref=self.part)
+        self.style_graded = st.ensure_style(STYLE_GRADED, char_pr_id_ref=self.bold)
         self.first = True
 
     def para(
@@ -200,6 +210,13 @@ def build_reading(
 ) -> Path:
     """판독본: 머리 → 원본 그림 → 소문항별 판독문."""
     b = Builder()
+    write_reading(b, student, lines, scans)
+    return b.save(path)
+
+
+def write_reading(
+    b: Builder, student: Student, lines: list[TranscriptLine], scans: list[bytes]
+) -> None:
     b.para(student.head(), char=b.bold, style=b.style_head)
     for i, png in enumerate(scans, start=1):
         b.para(f"[원본] 답안 {i}쪽", char=b.small_gray)
@@ -216,7 +233,6 @@ def build_reading(
                     p.add_highlight(color=YELLOW, match=u)
             if line.math:
                 b.equation(p, line.math)
-    return b.save(path)
 
 
 def _split_quote(text: str, quote: str) -> tuple[str, str, str] | None:
@@ -229,9 +245,37 @@ def build_graded(
 ) -> Path:
     """채점본: 머리 → 점수표 → 소문항별 판독문(근거 강조) + 점수 + 코멘트 + 메모."""
     b = Builder()
+    write_graded(b, student, lines, grades, style=b.style_head)
+    return b.save(path)
+
+
+def build_combined(
+    path: Path,
+    student: Student,
+    lines: list[TranscriptLine],
+    grades: dict[str, PartGrade],
+    scans: list[bytes],
+) -> Path:
+    """학생 × 문항 파일 1개: 판독본이 쭉 나오고, 채점본은 새 쪽에서 시작한다 (§15-4 답, 2026-11-04)."""
+    b = Builder()
+    write_reading(b, student, lines, scans)
+    head = write_graded(b, student, lines, grades, style=b.style_graded)
+    head.element.set("pageBreak", "1")
+    return b.save(path)
+
+
+def write_graded(
+    b: Builder,
+    student: Student,
+    lines: list[TranscriptLine],
+    grades: dict[str, PartGrade],
+    *,
+    style: str,
+) -> HwpxOxmlParagraph:
+    """채점 부분을 쓰고 그 머리 문단을 돌려준다."""
     total = sum(g.awarded for g in grades.values())
     full = sum(g.points for g in grades.values())
-    b.para(f"{student.head()} · 총점 {total:g} / {full:g}", char=b.bold, style=b.style_head)
+    head = b.para(f"{student.head()} · 총점 {total:g} / {full:g}", char=b.bold, style=style)
     table = b.doc.add_table(len(grades) + 1, 3)
     for c, h in enumerate(("소문항", "점수", "배점")):
         table.set_cell_text(0, c, h)
@@ -267,7 +311,7 @@ def build_graded(
             b.para(f"✕ {why}", char=b.red)
         if g.bad:
             b.doc.notes.add_memo(g.bad[0][1], anchor=score, author="다워이")
-    return b.save(path)
+    return head
 
 
 # ---------------------------------------------------------------- 다시 읽기
@@ -293,7 +337,7 @@ def _paragraph_text(p: etree._Element) -> str:  # pyright: ignore[reportPrivateU
 
 def read_back(path: Path) -> ReadBack:
     doc = HwpxDocument.open(path)
-    styles = {s: doc.styles.get(s) for s in (STYLE_HEAD, STYLE_PART)}
+    styles = {s: doc.styles.get(s) for s in (STYLE_HEAD, STYLE_PART, STYLE_GRADED)}
     ids = {k: (str(v.id) if v else None) for k, v in styles.items()}
     head = ""
     parts: dict[str, list[str]] = {}
@@ -306,6 +350,8 @@ def read_back(path: Path) -> ReadBack:
             continue  # 표 칸 안의 문단
         text = _paragraph_text(el)
         style = str(p.style_id_ref) if p.style_id_ref is not None else None
+        if style is not None and style == ids[STYLE_GRADED]:
+            break  # 채점 부분은 앱이 다시 만든다 — 판독문만 읽는다
         m = PART_MARK.match(text)
         if style == ids[STYLE_HEAD] or (not head and " · " in text and not parts):
             head = head or text
@@ -362,34 +408,46 @@ def teacher_edit(src: Path, dest: Path) -> Path:
 # ---------------------------------------------------------------- 한글(COM) 확인
 
 
-def hancom_roundtrip(src: Path) -> tuple[Path, Path, Path]:
-    """한글로 열어 PDF·HWPX로 다시 저장한다. (PDF, 다시 저장한 HWPX, PDF 첫 쪽 PNG)."""
-    import pymupdf
+@contextlib.contextmanager
+def hancom() -> Iterator[Any]:
+    """한글 하나를 띄워 여러 파일에 쓴다. 파일마다 띄우고 끄면 두 번째 Dispatch가 아직 꺼지는 중인
+    한글에 붙어 'The server threw an exception' → 'RPC server is unavailable'로 죽는다 (2026-11-04)."""
     import win32com.client  # pyright: ignore[reportMissingModuleSource]
 
-    pdf = src.with_suffix(".hancom.pdf")
-    resaved = src.with_name(src.stem + ".hancom.hwpx")
-    print(
-        f"  한글로 여는 중: {src.name} — '접근 허용' 창이 뜨면 [모두 허용]을 누르세요", flush=True
-    )
-    hwp = win32com.client.gencache.EnsureDispatch("HWPFrame.HwpObject")
+    hwp = win32com.client.DispatchEx("HWPFrame.HwpObject")
     try:
         # 보안 모듈(FilePathCheckerModule)이 등록된 PC면 접근 확인 창이 뜨지 않는다. 없으면 한글이
         # 창을 띄워 묻는다 — 창을 숨기면 아무도 답할 수 없어 멈추므로 보이게 둔다 (2026-11-04 실측).
         with contextlib.suppress(Exception):
             hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
         hwp.XHwpWindows.Item(0).Visible = True
-        if not hwp.Open(str(src), "HWPX", "forceopen:true"):
-            raise RuntimeError(f"한글이 열지 못함: {src}")
-        hwp.SaveAs(str(pdf), "PDF", "")
-        hwp.SaveAs(str(resaved), "HWPX", "")
+        yield hwp
     finally:
-        hwp.Clear(1)
+        with contextlib.suppress(Exception):
+            hwp.Clear(1)
         hwp.Quit()
-    png = src.with_suffix(".hancom.png")
+
+
+def hancom_roundtrip(hwp: Any, src: Path) -> tuple[Path, Path, list[Path]]:
+    """한글로 열어 PDF·HWPX로 다시 저장한다. (PDF, 다시 저장한 HWPX, PDF 쪽마다 PNG)."""
+    import pymupdf
+
+    pdf = src.with_suffix(".hancom.pdf")
+    resaved = src.with_name(src.stem + ".hancom.hwpx")
+    print(
+        f"  한글로 여는 중: {src.name} — '접근 허용' 창이 뜨면 [모두 허용]을 누르세요", flush=True
+    )
+    if not hwp.Open(str(src), "HWPX", "forceopen:true"):
+        raise RuntimeError(f"한글이 열지 못함: {src}")
+    hwp.SaveAs(str(pdf), "PDF", "")
+    hwp.SaveAs(str(resaved), "HWPX", "")
+    hwp.Clear(1)
+    pngs: list[Path] = []
     with pymupdf.open(pdf) as doc:
-        doc[0].get_pixmap(dpi=80).save(png)
-    return pdf, resaved, png
+        for i, page in enumerate(doc, start=1):
+            pngs.append(src.with_suffix(f".hancom.p{i}.png"))
+            page.get_pixmap(dpi=80).save(pngs[-1])
+    return pdf, resaved, pngs
 
 
 # ---------------------------------------------------------------- 실행
@@ -428,12 +486,36 @@ def main(argv: list[str]) -> int:
     print(f"강사 수정 흉내 → 다시 읽기: {'반영됨' if ok else f'반영 안 됨 {fixed}'}")
     failed |= not ok
 
+    # 학생 × 문항 파일: 판독 → 새 쪽 → 채점 (§15-4 답)
+    combined: dict[str, tuple[Path, dict[str, list[str]]]] = {}
+    for q in dict.fromkeys(line.part.split("-")[0] for line in LINES if line.part):
+        q_lines = [x for x in LINES if x.part and x.part.split("-")[0] == q]
+        q_grades = {k: v for k, v in GRADES.items() if k.split("-")[0] == q}
+        path = build_combined(OUT / STUDENT.filename(q), STUDENT, q_lines, q_grades, scans)
+        issues = HwpxDocument.open(path).validate().issues
+        q_problems = compare(read_back(path), expected(q_lines), STUDENT)
+        print(f"문항 파일 {path.name}: 스키마 {issues or '통과'}, "
+              f"다시 읽기(판독 부분만) {q_problems or '같음'}")  # fmt: skip
+        failed |= bool(issues) or bool(q_problems)
+        combined[path.name] = (path, expected(q_lines))
+
     if args.hancom:
-        for label, path in (("판독본", reading), ("채점본", graded)):
-            pdf, resaved, png = hancom_roundtrip(path)
-            print(f"한글 {label}: PDF {pdf.name}, 다시 저장 {resaved.name}, 미리보기 {png.name}")
-        _, resaved, _ = hancom_roundtrip(reading)
-        got2 = read_back(resaved)
+        saved: dict[str, Path] = {}
+        with hancom() as hwp:
+            targets = [("판독본", reading), ("채점본", graded)]
+            targets += [(name, path) for name, (path, _) in combined.items()]
+            for label, path in targets:
+                pdf, saved[label], pngs = hancom_roundtrip(hwp, path)
+                print(
+                    f"한글 {label}: PDF {pdf.name} ({len(pngs)}쪽), 다시 저장 {saved[label].name}"
+                )
+        for name, (_, q_want) in combined.items():
+            q_problems = compare(read_back(saved[name]), q_want, STUDENT)
+            print(
+                f"한글이 다시 저장한 {name} 다시 읽기: {q_problems or '같음'}"
+            )
+            failed |= bool(q_problems)
+        got2 = read_back(saved["판독본"])
         problems2 = compare(got2, want, STUDENT)
         print(
             f"한글이 다시 저장한 판독본 다시 읽기: {'같음' if not problems2 else '다름'} (그림 {got2.pictures}개)"
