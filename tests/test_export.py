@@ -16,6 +16,7 @@ from dawoai.export.hwpx import (
     count_heads,
     expected_text,
     from_eqedit,
+    prose_pieces,
     read_back,
     sheet_lines,
     to_eqedit,
@@ -84,6 +85,50 @@ def test_bundle_keeps_waiting_students(tmp_path: Path) -> None:
     assert not HwpxDocument.open(path).validate().issues
     assert count_heads(path) == 2
     assert "입력 대기" in HwpxDocument.open(path).text.plain()
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [
+        # 실측 채점 이유: 식이 `$` 없이 글에 섞여 온다 (contract 6번)
+        (r"정답은 2\Omega이나 4\Omega으로 작성함",
+         [("정답은 ", False), (r"2\Omega", True), ("이나 ", False), (r"4\Omega", True),
+          ("으로 작성함", False)]),
+        (r"공식으로 T_1 = 2\sqrt{\frac{r}{g}}를 구함.",
+         [("공식으로 ", False), (r"T_1 = 2\sqrt{\frac{r}{g}}", True), ("를 구함.", False)]),
+        (r"각도(\theta)가 같다", [("각도(", False), (r"\theta", True), (")가 같다", False)]),
+        (r"전력 \(P=VI\)와 $V^2/R$", [("전력 ", False), ("P=VI", True), ("와 ", False),
+                                     ("V^2/R", True)]),
+        ("식 없이 (1)과 1/2, V=IR", [("식 없이 (1)과 1/2, V=IR", False)]),
+    ],
+)  # fmt: skip
+def test_prose_pieces(text: str, want: list[tuple[str, bool]]) -> None:
+    assert prose_pieces(text) == want
+
+
+def test_reasons_are_colored_text_with_equations_not_memos(tmp_path: Path) -> None:
+    """○/✕ 이유는 파란·빨간 글씨로만 (한글 메모는 인쇄되지 않고 ✕ 줄과 겹친다), 이유 속 식은
+    같은 색 한글 수식."""
+    sheet = _sheet()
+    sheet.grades = {
+        "2-(1)①": PartGrade(2, 2, good=[("전류의 비는", r"비 2:1과 V=I_{\text{㉠}} R을 씀")]),
+        "2-(1)②": PartGrade(0, 2, bad=[("저항이 적은", r"밝기는 P=I^2R로 비교해야 함")]),
+    }
+    path = build_student(tmp_path / "x.hwpx", sheet)
+    doc = HwpxDocument.open(path)
+    assert not doc.validate().issues
+    assert not doc.notes.memos, "메모 없음"
+    import zipfile
+
+    xml = "".join(
+        zipfile.ZipFile(path).read(n).decode("utf-8")
+        for n in zipfile.ZipFile(path).namelist()
+        if n.startswith("Contents/section")
+    )
+    assert "I^2R" not in xml.replace(" ", ""), "이유 속 식이 글자로 남지 않음"
+    assert 'textColor="#C00000"' in xml and 'textColor="#1F4E9E"' in xml, "식도 이유와 같은 색"
+    assert "[식:" not in xml
+    assert read_back(path).parts.keys() == expected_text(LINES).keys(), "판독 다시 읽기는 그대로"
 
 
 def test_equation_left_as_text_reads_back_as_equation(tmp_path: Path) -> None:

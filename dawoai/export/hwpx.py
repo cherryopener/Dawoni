@@ -2,9 +2,9 @@
 
 학생 × 문항 = 파일 1개(`반_이름_문항.hwpx`): 머리 → 원본 스캔 그림 → 학생이 쓴 글 그대로(소문항 표식
 `■ 1-(1)` 아래, 글 사이 식은 한글 수식) → 새 쪽에서 채점(점수표, 맞은 근거 연두 형광펜·틀린 곳 빨간
-밑줄, 소문항 점수와 이유, 메모). 반별 묶음(`(반별)_반_문항.hwpx`)은 그 반 학생 파일을 이름순으로
-이어 붙인 인쇄용 — 입력을 기다리는 학생은 "입력 대기" 쪽으로 넣어 먼저 만들고, 채워질 때마다 다시
-만든다.
+밑줄, 소문항 점수와 ○ 파란·✕ 빨간 이유 — 글에 섞인 식은 한글 수식). 반별 묶음
+(`(반별)_반_문항.hwpx`)은 그 반 학생 파일을 이름순으로 이어 붙인 인쇄용 — 입력을 기다리는
+학생은 "입력 대기" 쪽으로 넣어 먼저 만들고, 채워질 때마다 다시 만든다.
 
 앱은 판독 부분만 다시 읽는다(`read_back`, 채점 머리 스타일에서 멈춤). 실험
 `experiments/hwpx_probe.py`에서 한글 2024로 확인한 것을 옮겼다 (2026-11-04: 실제 학생 6명 21개
@@ -283,9 +283,12 @@ class Builder:
             if text:
                 p.add_run(text, char_pr_id_ref=char)
 
-    def equation(self, p: HwpxOxmlParagraph, latex: str, *, lead: str = " ") -> bool:
+    def equation(
+        self, p: HwpxOxmlParagraph, latex: str, *, lead: str = " ", color: str | None = None
+    ) -> bool:
         """한글 수식으로 넣는다. 못 바꾸면 글자로 넣고 False (PLAN.md §14).
-        lead: 앞에 둘 글자 — 줄 끝에 붙는 식은 " ", 글 사이에 낀 식(`\\( \\)`)은 ""."""
+        lead: 앞에 둘 글자 — 줄 끝에 붙는 식은 " ", 글 사이에 낀 식(`\\( \\)`)은 "".
+        color: 식 글자색 (○ 파란·✕ 빨간 이유 속 식이 글과 같은 색이 되게)."""
         try:
             script = to_eqedit(latex)
         except Exception:
@@ -304,7 +307,9 @@ class Builder:
         if sized != script:
             m = measure_equation(sized)
             size = (m.width, m.height)
-        self.doc.shapes.add_equation(script, paragraph=p, size=size)
+        eq = self.doc.shapes.add_equation(script, paragraph=p, size=size)
+        if color:
+            eq.set_attribute("textColor", color)
         return True
 
     def save(self, path: Path) -> Path:
@@ -366,6 +371,83 @@ def write_line(
     return p
 
 
+_PROSE_TEXT = re.compile(r"[\uac00-\ud7a3\u1100-\u11ff\u3130-\u318f]+")
+"""AI가 쓴 이유 글에서 식을 가르는 한글 (음절·자모). ㉠·Ω·→는 식 쪽에 남는다."""
+_LATEX_SIGN = re.compile(r"\\[A-Za-z]+|[\^_{}]")
+_DOLLAR = re.compile(r"\$\$?(.+?)\$\$?")
+_EDGE = " \t,.;:!?'\"“”‘’·"
+
+
+def _trim_math(run: str) -> tuple[str, str, str]:
+    """식 덩어리 → (앞 글, 식, 뒤 글): 양끝의 띄어쓰기·문장부호와 짝 없는 괄호는 글로 둔다."""
+    lead = run[: len(run) - len(run.lstrip(_EDGE))]
+    core = run[len(lead) :]
+    tail = core[len(core.rstrip(_EDGE)) :]
+    core = core[: len(core) - len(tail)]
+    while core.startswith("(") and core.count("(") > core.count(")"):
+        lead, core = lead + "(", core[1:].lstrip()
+    while core.endswith(")") and core.count(")") > core.count("("):
+        core, tail = core[:-1].rstrip(), ")" + tail
+    if core.startswith("(") and core.endswith(")") and _wrapped(core):  # (P=I^2R) → 괄호는 글
+        lead, core, tail = lead + "(", core[1:-1].strip(), ")" + tail
+    return lead, core, tail
+
+
+def _wrapped(s: str) -> bool:
+    """맨 앞 `(`의 짝이 맨 뒤 `)`인가 (`(a)(b)`는 아님)."""
+    depth = 0
+    for i, c in enumerate(s):
+        depth += (c == "(") - (c == ")")
+        if depth == 0:
+            return i == len(s) - 1
+    return False
+
+
+def prose_pieces(text: str) -> list[tuple[str, bool]]:
+    """AI가 쓴 이유·총평 → (조각, 식인가). 지시서가 `$`로 감싸지 말라고 해서(contract 6번)
+    식이 `2\\Omega이어야`, `T_1 = 2\\sqrt{\\frac{r}{g}}를`처럼 글에 그냥 섞여 온다 — 한글 사이의
+    덩어리 중 LaTeX 흔적(`\\명령`, `^`, `_`, `{}`)이 있는 것만 식으로 본다. `\\( \\)`·`$ $`로
+    감싼 것은 그대로 식."""
+    text = _DOLLAR.sub(lambda m: f"\\({m.group(1)}\\)", text)
+    out: list[tuple[str, bool]] = []
+    for i, piece in enumerate(_INLINE.split(text)):
+        if i % 2:
+            out.append((piece, True))
+            continue
+        pos = 0
+        for m in [*_PROSE_TEXT.finditer(piece), None]:
+            end = m.start() if m else len(piece)
+            run = piece[pos:end]
+            if _LATEX_SIGN.search(run):
+                lead, core, tail = _trim_math(run)
+                out += [(lead, False), (core, True), (tail, False)]
+            else:
+                out.append((run, False))
+            if m:
+                out.append((m.group(0), False))
+                pos = m.end()
+    merged: list[tuple[str, bool]] = []
+    for s, is_math in out:
+        if not s:
+            continue
+        if merged and not is_math and not merged[-1][1]:
+            merged[-1] = (merged[-1][0] + s, False)
+        else:
+            merged.append((s, is_math))
+    return merged
+
+
+def write_prose(b: Builder, text: str, char: str, color: str) -> HwpxOxmlParagraph:
+    """AI가 쓴 이유 한 문단: 글은 char 글씨, 글에 섞인 식은 그 자리에 같은 색 한글 수식."""
+    p = b.para()
+    for piece, is_math in prose_pieces(text):
+        if is_math:
+            b.equation(p, piece, lead="", color=color)
+        else:
+            b.runs(p, [(piece, char)])
+    return p
+
+
 def write_reading(b: Builder, sheet: Sheet) -> HwpxOxmlParagraph:
     """원본 그림 → 학생이 쓴 글 그대로(글자·수식)를 쓰고 머리 문단을 돌려준다."""
     head = b.para(sheet.head, char=b.bold, style=b.style_head)
@@ -407,17 +489,16 @@ def write_graded(b: Builder, sheet: Sheet, *, style: str) -> HwpxOxmlParagraph:
             )  # fmt: skip
         if g is None:
             continue
-        score = b.para(f"점수 {g.awarded:g} / {g.points:g}", char=b.bold)
+        b.para(f"점수 {g.awarded:g} / {g.points:g}", char=b.bold)
+        # 이유는 색 글씨로만 쓴다 — 한글 메모(오른쪽 여백 댓글)는 인쇄되지 않고 ✕ 줄과 겹친다
         for _, why in g.good:
             if why:
-                b.para(f"○ {why}", char=b.blue)
+                write_prose(b, f"○ {why}", b.blue, BLUE)
         for _, why in g.bad:
             if why:
-                b.para(f"✕ {why}", char=b.red)
-        if g.bad and g.bad[0][1]:
-            b.doc.notes.add_memo(g.bad[0][1], anchor=score, author="다워이")
+                write_prose(b, f"✕ {why}", b.red, RED)
     if sheet.comment:
-        b.para(f"총평: {sheet.comment}", char=b.blue)
+        write_prose(b, f"총평: {sheet.comment}", b.blue, BLUE)
     return head
 
 
