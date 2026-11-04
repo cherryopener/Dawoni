@@ -615,3 +615,34 @@ def test_diagnostics_bundle(app_paths: AppPaths, tmp_path: Path) -> None:
         assert not any(n.startswith("failed_calls/") for n in names), "고르지 않은 묶음은 빠짐"
         assert "취소가 안 됨" in z.read("README.md").decode()
         assert "config" in json.loads(z.read("context.json"))
+
+
+def test_multiple_choice_rubric_without_ai(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path
+) -> None:
+    """객관식: 루브릭을 코드로 만들고(AI 0회), 강사가 정답(복수 정답)을 고친 뒤 승인한다."""
+    from tests_support import fake_prompts
+
+    exe = make_fake("script", script=[])
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    save_config(app_paths, cfg)
+    c = _client(app_paths)
+    c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    item = {
+        "item_type": "multiple_choice", "subject": "수학",
+        "stem": [{"type": "paragraph", "runs": [{"t": "text", "v": "옳은 것은?"}]}],
+        "choices": [{"label": n, "runs": [{"t": "text", "v": str(n * 10)}]} for n in range(1, 6)],
+    }  # fmt: skip
+    eid = c.post("/api/exams", json={"title": "객관식", "scope_id": scope["id"],
+                                     "questions": [{"number": "1", "points": 3, "item": item}]}
+                 ).json()["id"]  # fmt: skip
+    base = f"/api/exams/{eid}"
+    assert _wait(c, c.post(f"{base}/rubrics", json={}).json())["status"] == "succeeded"
+    r = c.get(f"{base}/questions/1").json()["rubric"]
+    assert r["answer_rules"][0]["answers"] == [] and fake_prompts(exe) == []
+    assert c.post(f"{base}/questions/1/rubric/approve", json={}).status_code >= 400, "정답 없음"
+    r = c.put(f"{base}/questions/1/rubric/answers", json={"answers": ["②", "4"]}).json()
+    assert r["answer_rules"][0]["answers"] == ["2", "4"]
+    assert c.post(f"{base}/questions/1/rubric/approve", json={}).json()["status"] == "approved"

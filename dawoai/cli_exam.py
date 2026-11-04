@@ -37,6 +37,7 @@ from dawoai.context import TaskFailed
 from dawoai.export.exam_files import ExportResult, write_all
 from dawoai.fsio import read_json
 from dawoai.grading import workflow
+from dawoai.grading.answers import set_answers
 from dawoai.grading.pipeline import (
     PipelineError,
     SecondOpinion,
@@ -294,6 +295,20 @@ def _cmd_key_confirm(args: argparse.Namespace) -> int:
         store.save_key(k.model_copy(update={"confirmed": True, "confirmed_by": args.by}))
         _out(f"문항 {q.number}: 해설지 확인")
     _out("해설지를 고쳤다면 `exam rubric`으로 루브릭을 다시 만드세요.")
+    return 0
+
+
+def _cmd_answers(args: argparse.Namespace) -> int:
+    """객관식·단답형 정답 고치기: 복수 정답(--answer 여러 번), 전원 정답(--all-correct)."""
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    r = store.rubric(args.q)
+    if r is None or not r.code_graded:
+        return _err(f"문항 {args.q}: 코드 채점 루브릭이 없습니다 (`exam rubric` 먼저).")
+    r = set_answers(r, args.part or "", args.answer, all_correct=args.all_correct, by=args.by)
+    store.save_rubric(r)
+    _out(f"문항 {args.q}: 정답 고침 — {r.items[0].criterion if len(r.items) == 1 else '저장'}")
+    _out("다시 승인해야 채점에 씁니다 (`exam approve`).")
     return 0
 
 
@@ -709,6 +724,14 @@ def register(sub: Any) -> None:
     k.add_argument("file", help="해설지 PDF·DOCX·HWPX·HWP (시험지 파일의 해설 부분이어도 됨)")
     k.add_argument("--pages", help="해설 쪽 (예: 6 또는 5-6). 없으면 '부분 점수' 표시로 찾음")
     k.set_defaults(func=_wrap(_cmd_key))
+    aw = es.add_parser("answers", help="객관식·단답형 정답 고치기 (복수 정답·전원 정답)")
+    aw.add_argument("exam")
+    aw.add_argument("-q", required=True, help="문항 번호")
+    aw.add_argument("--part", help="소문항 표시 (예: (1)). 없으면 문항 전체")
+    aw.add_argument("--answer", action="append", default=[], help="인정할 답 (여러 번 = 복수 정답)")
+    aw.add_argument("--all-correct", action="store_true", help="전원 정답")
+    aw.add_argument("--by")
+    aw.set_defaults(func=_wrap(_cmd_answers))
     kc = with_q(es.add_parser("key-confirm", help="해설지 판독 확인 (원본과 비교한 뒤)"))
     kc.add_argument("--by")
     kc.set_defaults(func=_wrap(_cmd_key_confirm))

@@ -129,6 +129,8 @@ def key_text(key: AnswerKey, q: ExamQuestion) -> str:
             lines.append(f"  해설: {p.solution}")
         lines.append(f"  부분 점수: {credit_text(p)}")
         lines += [f"  0점 조건: {z}" for z in p.zero_if]
+        if p.concepts:
+            lines.append(f"  개념: {', '.join(p.concepts)}")
     lines += [f"해설지 메모: {n}" for n in key.notes]
     return "\n".join(lines)
 
@@ -187,7 +189,9 @@ def rubric_text(
 ) -> str:
     """`parts`: 시험 문항의 소문항 (유형·배점). 루브릭 항목을 소문항별로 묶어 보여 준다."""
     lines = ["[루브릭]"]
-    if isinstance(rubric, Rubric) and not rubric.based_on_key:
+    if isinstance(rubric, Rubric) and rubric.code_graded:
+        lines.append("(객관식·단답형 — 코드로 채점, AI 호출 없음)")
+    elif isinstance(rubric, Rubric) and not rubric.based_on_key:
         lines.append("(강사 해설지 없이 AI 풀이로 만든 루브릭)")
     answers = {c.part: c.key_answer for c in rubric.checks}
     labels = [p.label for p in parts] or list(dict.fromkeys(i.part or "" for i in rubric.items))

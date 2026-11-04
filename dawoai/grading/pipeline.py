@@ -30,6 +30,7 @@ from rapidfuzz import fuzz
 from dawoai.config import AgentName
 from dawoai.context import ContextEngine, Shrinkable, TaskDef, TaskInput
 from dawoai.grading import checks
+from dawoai.grading.answers import grade_by_code, missing_answers, part_lines
 from dawoai.grading.render import (
     exam_question_text,
     key_text,
@@ -64,7 +65,6 @@ from dawoai.models.grading import (
     SolutionDraft,
     StudentAnswerSide,
     Transcript,
-    TranscriptLine,
 )
 from dawoai.models.scope import ScopeProfile
 
@@ -246,13 +246,17 @@ def expand_key_rubric(
     보내는 것: 이 문항과 이 문항의 해설지만, 범위는 짧은 판본(이름만)."""
 
     def check(d: KeyRubricDraft) -> list[str]:
-        return checks.check_rubric(d.to_rubric_draft(), q, None, key)
+        draft = d.to_rubric_draft()
+        return checks.check_rubric(draft, q, None, key) + checks.check_rubric_scope(
+            draft, q, key, scope
+        )
 
     variables = {
         "level": scope.level,
         "points": q.points,
         "parts": bool(q.parts),
         "never_deduct": DEFAULT_NEVER_DEDUCT,
+        "concepts": bool(key.concepts),
     }
     res = engine.run(
         dataclasses.replace(EXPAND_KEY, validator=check),
@@ -308,7 +312,9 @@ def derive_rubric(
         raise PipelineError(f"문항 {q.number}: 범위 안 해설이 없어 루브릭을 만들 수 없습니다.")
 
     def check(d: RubricDraft) -> list[str]:
-        return checks.check_rubric(d, q, solution, key)
+        return checks.check_rubric(d, q, solution, key) + checks.check_rubric_scope(
+            d, q, key, scope
+        )
 
     task = dataclasses.replace(RUBRIC, validator=check)
     base = [exam_question_text(q)]
@@ -475,6 +481,12 @@ def _disagreement_note(c: PartCheck) -> str | None:
 
 
 def approve_rubric(rubric: Rubric, by: str | None) -> Rubric:
+    missing = missing_answers(rubric)
+    if missing:
+        raise PipelineError(
+            f"문항 {rubric.question_number}: 정답이 없는 소문항 {', '.join(missing)} — "
+            "정답을 적거나 전원 정답으로 한 뒤 승인하세요."
+        )
     return rubric.model_copy(
         update={"status": "approved", "approved_by": by, "approved_at": utcnow()}
     )
@@ -488,10 +500,15 @@ def edit_rubric(
     problems = checks.check_rubric(draft, q, solution, strict=False)
     if problems:
         raise PipelineError("; ".join(problems))
+    ids = {i.id for i in draft.items}
+    lost = [r.part or "(전체)" for r in previous.answer_rules if r.item_id not in ids]
+    if lost:
+        raise PipelineError(f"코드 채점 항목을 지울 수 없습니다 (소문항 {', '.join(lost)})")
     bump = 1 if previous.status == "approved" else 0
     return Rubric(
         **draft.model_dump(),
         question_number=previous.question_number,
+        answer_rules=previous.answer_rules,
         based_on_key=previous.based_on_key,
         review_notes=previous.review_notes,
         version=previous.version + bump,
@@ -530,14 +547,6 @@ def decide_candidates(rubric: Rubric, accept: list[str], reject: list[str]) -> R
             "version": rubric.version + bump,
         }
     )
-
-
-def part_lines(t: Transcript, part: str) -> list[TranscriptLine]:
-    """판독문에서 그 소문항 줄 (지운 줄 제외). 소문항 표시가 하나도 없으면 전부."""
-    lines = [x for x in t.lines if not x.struck]
-    if not part or not any(x.part for x in lines):
-        return lines
-    return [x for x in lines if (x.part or "") == part]
 
 
 def check_sides(
@@ -765,6 +774,8 @@ def grade_answer(
             f"{transcript.student_id} 문항 {q.number}: {UNREADABLE} {transcript.unreadable}곳을 "
             "강사가 채워야 채점할 수 있습니다."
         )
+    if rubric.code_graded:  # 객관식·단답형: 코드로 (애매한 단답만 가벼운 도우미)
+        return grade_by_code(engine, q, rubric, [transcript], scope)[0]
     first, used_agent, used_model = _grade_once(
         engine, q, rubric, transcript, scope, agent, model, examples
     )

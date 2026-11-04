@@ -18,6 +18,7 @@ from dawoai.agents import AgentError, AgentErrorCode
 from dawoai.context import TaskFailed, situation
 from dawoai.export.exam_files import ExportResult, write_files
 from dawoai.grading import calibration
+from dawoai.grading.answers import code_gradable, code_rubric, grade_by_code
 from dawoai.grading.pipeline import (
     PipelineError,
     SecondOpinion,
@@ -113,14 +114,18 @@ def rubric_questions(
     by: str | None = None,
     progress: Progress = _noop,
 ) -> list[Rubric]:
-    """해설지가 있는 문항은 해설지 넓히기(호출 1번). 해설지가 없거나 `ai_solve`("AI 풀기
-    (해설지 검산)")면 AI 풀이 → 루브릭 → 검토 → 검산 — 해설이 없으면 먼저 푼다(`ai_solve`).
-    해설지도 해설도 없는 문항은 거절한다."""
+    """객관식·단답형은 코드로 (AI 호출 0회 — 정답은 해설지나 시험지에서). 해설지가 있는 서술형은
+    해설지 넓히기(호출 1번). 해설지가 없거나 `ai_solve`("AI 풀기 (해설지 검산)")면 AI 풀이 →
+    루브릭 → 검토 → 검산 — 해설이 없으면 먼저 푼다(`ai_solve`). 해설지도 해설도 없는 서술형은
+    거절한다."""
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
     qs = select_questions(exam, only)
+    coded = {q.number for q in qs if code_gradable(q)}
     keyed = {q.number for q in qs if store.answer_key(q.number) is not None and not ai_solve}
-    missing = [q.number for q in qs if q.number not in keyed and store.solution(q.number) is None]
+    missing = [
+        q.number for q in qs if q.number not in keyed | coded and store.solution(q.number) is None
+    ]
     if missing and not ai_solve:
         raise PipelineError(
             f"문항 {', '.join(missing)}: 해설지도 해설도 없습니다. 해설지를 붙이거나 먼저 해설을"
@@ -131,6 +136,10 @@ def rubric_questions(
         with _working(svc, store, "rubric", q.number, by):
             key = store.answer_key(q.number)
             previous = store.rubric(q.number)
+            if q.number in coded:
+                r = code_rubric(q, key, previous).model_copy(update={"created_by": by})
+                store.save_rubric(r)
+                return r
             if q.number in keyed:
                 assert key is not None
                 r = expand_key_rubric(svc.engine, q, key, scope, previous=previous)
@@ -468,6 +477,19 @@ def grade_exam(
                 )
                 continue
             todo.append((q, rubric, t))
+    coded: dict[str, list[tuple[ExamQuestion, Rubric, Transcript]]] = {}
+    for job in todo:
+        if job[1].code_graded:
+            coded.setdefault(job[0].number, []).append(job)
+    todo = [job for job in todo if not job[1].code_graded]
+    for jobs in coded.values():  # 객관식·단답형: 문항마다 한 번에 (AI는 애매한 단답만, 많아야 1번)
+        q, rubric, _ = jobs[0]
+        progress(0, len(todo) + 1, f"문항 {q.number} 코드 채점 ({len(jobs)}명)")
+        by_student = {t.student_id: t for _, _, t in jobs}
+        for g in grade_by_code(svc.engine, q, rubric, [t for _, _, t in jobs], scope):
+            g = g.model_copy(update={"transcript_confirmed": by_student[g.student_id].confirmed})
+            store.save_grade(g)
+            run.graded.append(g)
     for k, (q, rubric, t) in enumerate(todo):
         progress(k, len(todo), f"{t.student_id} 문항 {q.number} 채점")
         pick = calibration.pick_for(store, q.number, rubric, t) if use_examples else None

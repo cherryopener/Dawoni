@@ -176,6 +176,10 @@ class RubricItem(DawoaiModel):
         ge=1,
         description="해설지 부분 점수 표기의 몇 번째 항목에 해당하는가 (1부터). 표기가 없으면 null",
     )
+    concepts: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="이 기준이 쓰는 개념·법칙: [강사 해설지]의 '개념' 이름 그대로 (없으면 [])",
+    )
 
 
 class PartialCredit(DawoaiModel):
@@ -298,6 +302,9 @@ class AcceptedAlternative(DawoaiModel):
         default="accepted",
         description="AI가 해설지를 넓혀 제안한 것은 proposed — 강사가 인정해야 채점에 쓴다",
     )
+    concepts: list[str] = Field(
+        default_factory=lambda: list[str](), description="이 표현이 쓰는 개념 (해설지 넓히기)"
+    )
 
 
 class KeyExpansion(DawoaiModel):
@@ -308,6 +315,10 @@ class KeyExpansion(DawoaiModel):
         description="해설지와 같은 근거·결론을 다르게 쓴 답 — 학생 답안에 나올 법한 문장으로"
     )
     item_ids: list[str] = Field(min_length=1, description="이렇게 써도 점수를 받는 항목")
+    concepts: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="이 표현이 쓰는 개념·법칙: [강사 해설지]의 '개념' 이름 그대로 (없으면 [])",
+    )
 
 
 class KeyRubricDraft(DawoaiModel):
@@ -335,7 +346,7 @@ class KeyRubricDraft(DawoaiModel):
             accepted_alternatives=[
                 AcceptedAlternative(
                     id=f"E{i}", part=e.part, description=e.description,
-                    item_ids=e.item_ids, status="proposed",
+                    item_ids=e.item_ids, status="proposed", concepts=e.concepts,
                 )
                 for i, e in enumerate(self.expansions, start=1)
             ],
@@ -415,8 +426,30 @@ class AnswerCheck(DawoaiModel):
     reasoning: str = Field(description="조건마다 확인한 과정")
 
 
+AnswerKind = Literal["choice", "value"]
+
+
+class AnswerRule(DawoaiModel):
+    """코드로 채점하는 항목 (객관식·단답형, PLAN.md §4-3): 정답과 비교, AI 호출 없음.
+
+    `answers`의 하나하나가 인정하는 답이다 (복수 정답). 객관식에서 "2,4"처럼 쉼표로 이은 답은
+    번호를 모두 써야 맞는 답 하나다. 전원 정답(`all_correct`)이면 누구나 만점."""
+
+    item_id: str
+    part: str = Field(default="", description="소문항 표시 (없으면 빈 문자열)")
+    kind: AnswerKind = Field(description="choice=선지 번호 비교, value=답 문자열·식 비교")
+    answers: list[str] = Field(default_factory=lambda: list[str]())
+    expr: str | None = Field(default=None, description="해설지 답의 sympy 식 (값 비교용)")
+    all_correct: bool = False
+    set_by: str | None = Field(default=None, description="강사가 정답을 고쳤으면 그 사람")
+
+
 class Rubric(RubricDraft):
     question_number: str
+    answer_rules: list[AnswerRule] = Field(
+        default_factory=lambda: list[AnswerRule](),
+        description="코드 채점 문항(객관식·단답형)의 정답 — 있으면 AI 채점을 하지 않는다",
+    )
     based_on_key: bool = False
     """강사 해설지를 기준으로 만든 루브릭인가 (아니면 AI 풀이만으로 — 정답 확인 필요)."""
     review_notes: list[str] = Field(
@@ -432,6 +465,19 @@ class Rubric(RubricDraft):
     )
     agent: str | None = Field(default=None, description="초안을 만든 AI")
     model: str | None = Field(default=None, description="초안을 만든 모델")
+
+    @model_validator(mode="after")
+    def _rules(self) -> Rubric:
+        ids = {i.id for i in self.items}
+        bad = sorted({r.item_id for r in self.answer_rules} - ids)
+        if bad:
+            raise ValueError(f"정답 규칙이 없는 항목을 참조: {bad}")
+        return self
+
+    @property
+    def code_graded(self) -> bool:
+        """객관식·단답형: 코드로 채점한다 (AI 채점 없음)."""
+        return bool(self.answer_rules)
 
 
 # ---------------------------------------------------------------- 학생

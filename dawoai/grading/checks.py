@@ -21,34 +21,55 @@ from dawoai.models.grading import (
 )
 from dawoai.models.scope import ScopeProfile
 
-# 금지 기법 이름 → 식에서 그 기법을 쓴 흔적 (이름만으로는 못 잡는 경우)
-_TECHNIQUE_TRACES: dict[str, tuple[str, ...]] = {
+# 금지 기법 → (그 기법을 가리키는 낱말, 식에서 그 기법을 쓴 흔적). 이름만으로는 못 잡는 경우를 위해.
+# 금지 목록의 이름에 들어 있는 가장 긴 열쇠를 쓴다 ("벡터 외적"은 "벡터"가 아니라 "벡터 외적" —
+# 물리에서 \vec{F}는 범위 안이다). 열쇠가 없는 이름(강사가 넣은 것)은 이름 그대로만 찾는다.
+_TRACES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "미분": (
-        r"\\frac\{d",  # \frac{dy}{dx}
-        r"\\frac\{\\partial",
-        r"[A-Za-z]'+\s*(\(|=)",  # f'(x), y'=
-        r"\\prime",
-        r"\\dot\{",
-        r"\bd[a-z]\s*/\s*d[a-z]\b",  # dy/dx
+        ("미분", "도함수", "derivative"),
+        (
+            r"\\frac\{\s*d",  # \frac{dy}{dx}
+            r"\\frac\{\\partial",
+            r"\b[fghy]'+\s*[(=]",  # f'(x), y'= (물리의 v'는 충돌 뒤 속도라 뺌)
+            r"\\prime",
+            r"\\d?dot\{",
+            r"\bd[a-zA-Z]\s*/\s*d[a-zA-Z]\b",  # dy/dx
+        ),
     ),
-    "적분": (r"\\int",),
-    "극한": (r"\\lim",),
-    "로피탈": (r"\\lim",),
-    "벡터": (r"\\vec\{", r"\\overrightarrow"),
-    "행렬": (r"\\begin\{[pb]?matrix\}",),
-}
+    "편미분": (("편미분", "partial derivative"), (r"\\partial", r"\\nabla")),
+    "적분": (("적분", "integral"), (r"\\i+nt(?![A-Za-z])", r"\\oint", "∫")),
+    "극한": (("극한", "limit"), (r"\\lim(?![A-Za-z])", r"\blim\s*_")),
+    "로피탈": (("로피탈", "hôpital", "hospital"), ()),
+    "테일러": (("테일러", "매클로린", "taylor"), ()),
+    "삼각함수": (("삼각함수",), (r"\\(?:sin|cos|tan)(?![A-Za-z])",)),
+    "삼각비": (("삼각비",), (r"\\(?:sin|cos|tan)(?![A-Za-z])",)),
+    "로그": (("상용로그", "자연로그"), (r"\\(?:log|ln)(?![A-Za-z])", r"(?<![가-힣])로그")),
+    "벡터": (("벡터",), (r"\\vec\{", r"\\overrightarrow")),
+    "벡터 외적": (
+        ("외적", "cross product"), (r"\\vec\{[^{}]*\}\s*\\times\s*\\vec", r"\\times\s*\\vec\{")
+    ),
+    "행렬": (("행렬", "matrix"), (r"\\begin\{[pbvBV]?matrix\}",)),
+    "판별식": (("판별식",), (r"b\^\{?2\}?\s*-\s*4\s*ac",)),
+    "라그랑지안": (("라그랑지안", "라그랑주", "lagrangian"), (r"\\mathcal\{L\}",)),
+}  # fmt: skip
+
+
+def _traces(name: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    keys = [k for k in _TRACES if k in name]
+    if not keys:
+        return (name,), ()
+    return _TRACES[max(keys, key=len)]  # 이름 그대로는 찾지 않음 ("로그" ⊂ "프로그램")
 
 
 def _forbidden_hits(text: str, scope: ScopeProfile) -> list[str]:
     hits: list[str] = []
+    low = text.lower()
     for f in scope.forbidden:
-        if f.name and f.name in text:
-            hits.append(f.name)
+        if not f.name:
             continue
-        for key, patterns in _TECHNIQUE_TRACES.items():
-            if key in f.name and any(re.search(p, text) for p in patterns):
-                hits.append(f.name)
-                break
+        words, patterns = _traces(f.name)
+        if any(w.lower() in low for w in words) or any(re.search(p, text) for p in patterns):
+            hits.append(f.name)
     return hits
 
 
@@ -337,6 +358,142 @@ def _check_against_key(
     return problems
 
 
+# ---------------------------------------------------------------- 범위 (PLAN.md §4-2)
+
+_CONCEPT_NOISE = re.compile(r"[\s·,()\-_]|의$|법칙$|원리$|정리$|공식$")
+
+
+def _concept_key(name: str) -> str:
+    s = unicodedata.normalize("NFKC", name).lower()
+    for _ in range(3):  # "옴의 법칙" → "옴"
+        s = _CONCEPT_NOISE.sub("", s)
+    return s
+
+
+def concept_in(name: str, allowed: list[str]) -> bool:
+    """개념 이름이 해설지 개념 목록에 있는가 — 띄어쓰기·'법칙' 같은 꼬리·짧은 줄임은 봐준다."""
+    from rapidfuzz import fuzz
+
+    n = _concept_key(name)
+    if not n:
+        return True
+    for a in allowed:
+        k = _concept_key(a)
+        if not k:
+            continue
+        if n == k or (min(len(n), len(k)) >= 2 and (n in k or k in n)):
+            return True
+        if fuzz.ratio(n, k) >= 85:
+            return True
+    return False
+
+
+def key_scope_text(key: AnswerKey | None, q: ExamQuestion) -> str:
+    """해설지·문항이 이미 쓰는 글 — 여기 있는 기법은 프리셋이 금지해도 이 시험의 범위다."""
+    from dawoai.grading.render import exam_question_text
+
+    parts = [exam_question_text(q)]
+    for p in key.parts if key else []:
+        parts += [p.answer or "", p.solution, p.credit_text or "", *p.zero_if, *p.concepts]
+    return "\n".join(parts)
+
+
+def _conclusions(latex: str) -> dict[str, str]:
+    """식의 '좌변 = 우변' 결론: 정규화한 좌변 → sympy 식 (읽을 수 있는 것만)."""
+    from dawoai.mathx.sym import parse
+
+    out: dict[str, str] = {}
+    for seg in re.split(r",|\\quad|\\qquad|;|\\text\{[^{}]*\}|[가-힣]+", latex):
+        if seg.count("=") < 1:
+            continue
+        sides = [x.strip() for x in seg.split("=")]
+        lhs, rhs = normalize_for_compare(sides[0]), sides[-1]
+        if not lhs or not rhs or re.search(r"\\(?:le|ge|lt|gt|neq|approx)|[<>]", seg):
+            continue
+        expr = latex_to_expr(rhs)
+        try:
+            parse(expr)
+        except ValueError:
+            continue
+        out[lhs] = expr
+    return out
+
+
+def _math_of(text: str) -> list[str]:
+    from dawoai.models.content import MathRun, runs_from_text
+
+    return [r.v for r in runs_from_text(text) if isinstance(r, MathRun)]
+
+
+def _conclusion_conflict(text: str, key_answer: str | None) -> str | None:
+    """넓힌 표현이 해설지 답과 같은 좌변에 다른 값을 쓰면 그 식 (sympy로 분명히 다를 때만)."""
+    if not key_answer:
+        return None
+    want = _conclusions(key_answer.replace("\\(", "").replace("\\)", ""))
+    for m in _math_of(text):
+        for lhs, expr in _conclusions(m).items():
+            if lhs in want and equivalent(expr, want[lhs]) is False:
+                return m
+    return None
+
+
+def check_rubric_scope(
+    draft: RubricDraft, q: ExamQuestion, key: AnswerKey | None, scope: ScopeProfile
+) -> list[str]:
+    """채점 기준이 해설지의 범위 안인가.
+
+    1. 수준 프리셋의 금지 기법(미분·적분 …)이 기준·부분 점수·넓힌 표현·정답 후보에 나오면 수리.
+       해설지·문항이 그 기법을 이미 쓰면 이 시험의 범위다 (강사가 정함).
+    2. 기준·넓힌 표현이 적은 개념(`concepts`)은 해설지 개념 목록 안이어야 한다 (목록이 있을 때).
+    3. 넓힌 표현의 결론이 해설지 답과 다르면 수리 (같은 좌변, 다른 값)."""
+    problems: list[str] = []
+    exempt = set(_forbidden_hits(key_scope_text(key, q), scope))
+
+    def forbidden(where: str, *texts: str) -> None:
+        hits = [h for h in _forbidden_hits(" ".join(texts), scope) if h not in exempt]
+        if hits:
+            problems.append(
+                f"{where}: 이 수준({scope.level})에서 쓰지 않는 기법({', '.join(hits)})이 채점 "
+                "기준에 들어 있다. 해설지가 쓴 방법만으로 기준을 쓸 것 — 범위 밖 기법을 "
+                "요구하지도, 넓힌 표현에 넣지도 않는다"
+            )
+
+    def allowed_for(part: str | None) -> list[str]:
+        if key is None:
+            return []
+        kp = key.part(part)
+        return (kp.concepts if kp and kp.concepts else None) or key.concepts
+
+    def outside(where: str, part: str | None, concepts: list[str]) -> None:
+        allowed = allowed_for(part)
+        bad = [c for c in concepts if allowed and not concept_in(c, allowed)]
+        if bad:
+            problems.append(
+                f"{where}: 해설지 개념 목록에 없는 개념 {bad}을 쓴다. 해설지 개념"
+                f"({', '.join(allowed)}) 안에서만 기준을 세우고 넓힐 것 — 다른 개념의 풀이는 "
+                "넣지 않는다"
+            )
+
+    for i in draft.items:
+        forbidden(i.id, i.criterion, i.evidence_hint, *i.concepts)
+        outside(i.id, i.part, i.concepts)
+    for p in draft.partial:
+        forbidden(f"{p.item_id}의 부분점수", p.condition)
+    for n, a in enumerate(draft.accepted_alternatives, start=1):
+        where = a.id or f"다른 풀이 {n}"
+        forbidden(where, a.description, *a.concepts)
+        outside(where, a.part, a.concepts)
+        kp = key.part(a.part) if key and a.part is not None else None
+        if a.status == "proposed" and kp and (m := _conclusion_conflict(a.description, kp.answer)):
+            problems.append(
+                f"{where}: 결론 \\({m}\\)이 해설지 답({kp.answer})과 다르다. 값·결론이 다른 답은 "
+                "넓힌 표현에 넣지 않는다 — 같은 결론을 다르게 쓴 말만"
+            )
+    for c in draft.candidates:
+        forbidden(f"정답 후보 {c.id}", c.answer, c.argument)
+    return problems
+
+
 def merge_never_deduct(draft: RubricDraft, defaults: tuple[str, ...]) -> list[str]:
     seen = set(draft.never_deduct)
     return list(draft.never_deduct) + [d for d in defaults if d not in seen]
@@ -423,7 +580,48 @@ def check_grade(
                         f"({', '.join(hits)})을 근거로 한다. "
                         "범위 밖 기법을 쓰지 않았다는 이유로 감점하지 말 것"
                     )
+                elif term := unrequired_method(j.deduction_reason, rubric):
+                    problems.append(
+                        f"{item.id}: 감점 이유 '{term}을(를) 쓰지 않음'은 루브릭에 없는 요구다. "
+                        "루브릭 기준에 있는 것으로만 감점할 것 — 해설지가 요구하지 않은 "
+                        "방법·개념을 쓰지 않았다고 감점하지 않는다"
+                    )
     return problems
+
+
+_NOT_USED = re.compile(
+    r"((?:[가-힣A-Za-z0-9]+\s){0,2}[가-힣A-Za-z0-9]+?)\s*(?:을|를)\s*"
+    r"(?:쓰지|사용하지|이용하지|적용하지|활용하지)\s*않"
+)
+_GENERIC = {
+    "풀이", "과정", "식", "단위", "답", "근거", "그림", "부호", "기호", "문장", "설명", "결론",
+}  # fmt: skip
+"""답안의 모양을 말하는 낱말 — "단위를 쓰지 않아"는 방법을 요구하는 감점이 아니다."""
+_FILLER = {"그래서", "따라서", "그리고", "또한", "이를", "이", "그", "및"}
+
+
+def unrequired_method(reason: str, rubric: RubricDraft) -> str | None:
+    """감점 이유가 "○○을 쓰지 않아서"이고 ○○이 루브릭 어디에도 없으면 ○○ (다워니 never_deduct).
+
+    ○○ 전체가 루브릭 글에 있거나 루브릭 개념 표시와 같은 개념이면 루브릭의 요구다."""
+    m = _NOT_USED.search(reason)
+    if not m:
+        return None
+    words = m.group(1).split()
+    while words and words[0] in _FILLER:
+        words = words[1:]
+    if not words or all(w in _GENERIC for w in words):
+        return None
+    term = " ".join(words)
+    hay = " ".join(
+        [i.criterion + " " + i.evidence_hint for i in rubric.items]
+        + [p.condition for p in rubric.partial]
+        + [a.description for a in rubric.accepted_alternatives if a.status == "accepted"]
+    ).replace(" ", "")
+    tags = [c for i in rubric.items for c in i.concepts]
+    if term.replace(" ", "") in hay or (tags and concept_in(term, tags)):
+        return None
+    return term
 
 
 def total_points(out: GradeOutput) -> float:

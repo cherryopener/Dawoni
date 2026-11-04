@@ -12,6 +12,7 @@ from dawoai import sharing
 from dawoai.cli_exam import parse_answer_text
 from dawoai.export.exam_files import write_all
 from dawoai.grading import workflow
+from dawoai.grading.answers import set_answers
 from dawoai.grading.pipeline import (
     PipelineError,
     SecondOpinion,
@@ -324,7 +325,7 @@ def put_rubric(exam_id: str, number: str, draft: RubricDraft, st: AppState = Sta
     q = store.exam().question(number)
     old = store.rubric(number)
     sol = store.solution(number)
-    if old is None or (sol is None and not old.based_on_key):
+    if old is None or (sol is None and not old.based_on_key and not old.code_graded):
         raise PipelineError(f"문항 {number}: 해설·루브릭 초안을 먼저 만드세요.")
     r = edit_rubric(old, draft, q, sol)
     store.save_rubric(r)
@@ -385,6 +386,25 @@ def match_candidates(exam_id: str, number: str, st: AppState = State) -> Job:
         return {"parts": [p.part for p in m.parts]}
 
     return st.jobs.submit("match_candidates", run, {"exam": exam_id})
+
+
+class AnswersBody(BaseModel):
+    part: str = Field(default="", description="소문항 표시 (없으면 문항 전체)")
+    answers: list[str] = Field(default_factory=lambda: list[str](), description="인정할 답들")
+    all_correct: bool = False
+    by: str | None = None
+
+
+@router.put("/{exam_id}/questions/{number}/rubric/answers")
+def put_answers(exam_id: str, number: str, body: AnswersBody, st: AppState = State) -> Rubric:
+    """객관식·단답형 정답 고치기 (복수 정답·전원 정답). 승인된 루브릭이면 다시 승인."""
+    _, store = _store(st, exam_id)
+    r = store.rubric(number)
+    if r is None or not r.code_graded:
+        raise PipelineError(f"문항 {number}: 코드 채점 루브릭이 없습니다.")
+    r = set_answers(r, body.part, body.answers, all_correct=body.all_correct, by=body.by)
+    store.save_rubric(r)
+    return r
 
 
 @router.post("/{exam_id}/questions/{number}/rubric/approve")

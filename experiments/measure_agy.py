@@ -6,6 +6,7 @@
 
     uv run python experiments/measure_agy.py exam  --models gemini-3.8-flash-medium,gemini-4-argon-low
     uv run python experiments/measure_agy.py key   --models ...
+    uv run python experiments/measure_agy.py rubric                # M2: 해설지 넓히기 호출 수
     uv run python experiments/measure_agy.py cover --models ... --sets 1-6
     uv run python experiments/measure_agy.py read  --models ... --sets 1-2
     uv run python experiments/measure_agy.py grade --models ... --sets 1-2 --transcripts <모델>
@@ -223,21 +224,51 @@ def run_grade(model: str, set_no: int, *, source_model: str) -> Any:
     return out
 
 
+def run_rubric(model: str, _: int) -> Any:
+    """M2: 강사가 확인한 해설지로 해설지 넓히기 — 문항마다 호출 1번이어야 한다 (수리 포함해 셈).
+    범위는 수준 프리셋(고1 물리: 미분·적분 … 금지)으로 — 다워니 범위 프로필에는 금지 목록이 없다."""
+    from dawoai.grading.pipeline import expand_key_rubric
+    from dawoai.levels import parse_level, preset_scope
+
+    exam = load_exam()
+    scope = preset_scope(parse_level("고1 물리"))
+    engine = engine_for(model)
+    before = len(CallLog(CALLS).read())
+    out: dict[str, Any] = {"rubrics": {}, "errors": {}}
+    for q in exam.questions:
+        key = dawoni_keys().get(q.number)
+        if key is None:
+            continue
+        try:
+            r = expand_key_rubric(engine, q, key, scope)
+            out["rubrics"][q.number] = r.model_dump(mode="json")
+        except Exception as e:  # 수리 끝에 실패해도 호출 수는 센다
+            out["errors"][q.number] = f"{type(e).__name__}: {str(e)[:400]}"
+    calls = [c for c in CallLog(CALLS).read()[before:] if c.get("task") == "expand_key_rubric"]
+    out["calls"] = len(calls)
+    out["questions"] = len(out["rubrics"]) + len(out["errors"])
+    out["repairs"] = [c.get("errors") for c in calls if c.get("errors")]
+    return out
+
+
 TASKS: dict[str, Callable[[str, int], Any]] = {
     "exam": run_exam,
     "key": run_key,
     "cover": run_cover,
     "read": run_read,
+    "rubric": run_rubric,
 }
 
 
 def item_name(task: str, set_no: int) -> str:
-    return "all" if task in ("exam", "key") else f"set{set_no}"
+    return "all" if task in ("exam", "key", "rubric") else f"set{set_no}"
 
 
 def execute(task: str, models: list[str], sets: list[int], *, redo: bool, workers: int,
             fn: Callable[[str, int], Any]) -> None:  # fmt: skip
-    jobs = [(m, s) for m in models for s in (sets if task not in ("exam", "key") else [0])]
+    jobs = [
+        (m, s) for m in models for s in (sets if task not in ("exam", "key", "rubric") else [0])
+    ]
 
     def one(job: tuple[str, int]) -> None:
         model, set_no = job

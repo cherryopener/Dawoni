@@ -75,7 +75,7 @@ ROLES: dict[RoleName, Role] = {
         Role("solver_verifier", "풀이·검산", "strong", 2, 600, 16_000,
              ("solve_question", "check_answer")),
         Role("light_helper", "가벼운 도우미", "fast", 1, 600, 24_000,
-             ("match_candidates", "refine_rule", "learn_lesson")),
+             ("match_candidates", "check_short_answers", "refine_rule", "learn_lesson")),
     )
 }  # fmt: skip
 
