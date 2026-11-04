@@ -292,7 +292,8 @@ def test_batch_links_roster_and_holds_same_class_twins(
     saved = store.student_record("박찬현")
     assert saved is not None and saved.needs_rename
 
-    names = sorted(p.name for p in res.export.written)
+    names = sorted(p.name for p in res.export.written if p.suffix == ".hwpx")
+    assert any(p.suffix == ".xlsx" for p in res.export.written), "점수표도 (채점 전이라 비어 있음)"
     assert names == ["(반별)_2반_1.hwpx", "2반_김다원_1.hwpx", "2반_최민준_1.hwpx"], (
         "판독이 끝나면 바로 판독본을 쓰고, 같은 반 동명이인은 이름을 바꿀 때까지 보류"
     )

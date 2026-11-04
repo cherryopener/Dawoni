@@ -11,6 +11,8 @@
   쪽으로 넣는다. 앱은 묶음을 다시 읽지 않는다 — 묶음을 고쳐 두었으면 다시 만들지 않고 알린다.
 - 같은 반에 같은 이름의 시험지가 둘 이상이면(`needs_rename`) 강사가 이름을 바꾸기 전까지 그
   학생 파일을 쓰지 않는다 (§5-1 3단계).
+- 엑셀 점수표 `(점수표)_<시험>.xlsx`(`export.xlsx`, §9-2)도 파일을 쓸 때마다 전체를 다시 만든다 —
+  엑셀에서 고쳐 둔 점수표는 덮어쓰지 않고 알린다 (앱은 점수표를 읽지 않는다).
 
 쓰기 실패(강사가 한글에서 그 파일을 열어 둠 등)는 채점을 멈추지 않고 경고로 돌려준다.
 """
@@ -23,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dawoai.export.hwpx import (
+    PartGrade,
     Sheet,
     build_bundle,
     build_student,
@@ -30,6 +33,7 @@ from dawoai.export.hwpx import (
     png_scan,
     sheet_lines,
 )
+from dawoai.export.xlsx import Cell, Column, Row, State, build_scores
 from dawoai.fsio import sha256_file
 from dawoai.grading.store import ExamStore, safe_name
 from dawoai.models.grading import UNREADABLE, Exam
@@ -73,6 +77,86 @@ def student_file(ws: WorkspacePaths, store: ExamStore, student: str, q: str) -> 
 def bundle_file(ws: WorkspacePaths, store: ExamStore, klass: str, q: str) -> Path:
     """`(`는 탐색기 이름순(StrCmpLogicalW)에서도 학생 파일보다 위에 온다 (2026-11-04 확인)."""
     return exam_dir(ws, store.exam()) / safe_name(f"(반별)_{klass}_{q}.hwpx")
+
+
+def score_file(ws: WorkspacePaths, store: ExamStore) -> Path:
+    """`(점수표)_<시험>.xlsx` — 반별 묶음처럼 이름순 맨 위."""
+    return exam_dir(ws, store.exam()) / safe_name(f"(점수표)_{store.exam().title}.xlsx")
+
+
+def score_table(store: ExamStore) -> tuple[list[Column], list[Row]]:
+    """엑셀 점수표에 넣을 열(소문항)과 학생 줄 (PLAN.md §9-2)."""
+    exam = store.exam()
+    cols: dict[str, list[Column]] = {
+        q.number: [Column(f"{q.number}-{p.label}", p.points) for p in q.parts]
+        or [Column(q.number, q.points)]
+        for q in exam.questions
+    }
+    rows: list[Row] = []
+    for student in _roster(store):
+        r = store.student_record(student)
+        row = Row(_class_of(store, student), _name_of(store, student), r.school if r else None)
+        rows.append(row)
+        for q in exam.questions:
+            g = store.grade(student, q.number)
+            t = store.transcript(student, q.number)
+            state: State
+            if (r is not None and r.needs_rename) or t is None or t.unreadable or g is None:
+                state = "ungraded"
+            elif g.status == "needs_review":
+                state = "review"
+            elif not g.transcript_confirmed and g.status != "teacher_confirmed":
+                state = "unconfirmed"
+            else:
+                state = "ok"
+            if g is None or state in ("ungraded", "review"):
+                row.totals[q.number] = Cell(None, state)
+                row.cells |= {c.key: Cell(None, state) for c in cols[q.number]}
+                continue
+            row.totals[q.number] = Cell(g.total, state)
+            rubric = store.rubric(q.number)
+            parts = part_grades(q.number, g, rubric) if rubric else {}
+            if not q.parts and not parts:
+                parts = {q.number: PartGrade(g.total, g.max_points)}
+            for key, pg in parts.items():
+                if key not in {c.key for c in cols[q.number]}:  # 시험에 없는 소문항 표시 (드묾)
+                    cols[q.number].append(Column(key, pg.points))
+                row.cells[key] = Cell(pg.awarded, state)
+    return [c for q in exam.questions for c in cols[q.number]], rows
+
+
+def write_scores(
+    ws: WorkspacePaths,
+    store: ExamStore,
+    res: ExportResult,
+    hashes: dict[str, str],
+    *,
+    force: bool = False,
+) -> None:
+    """점수표를 다시 쓴다 (학생 파일과 같이 — 앱 데이터만 읽으니 늘 전체를 다시 만든다)."""
+    exam = store.exam()
+    columns, rows = score_table(store)
+    _write(res, hashes, score_file(ws, store),
+           lambda p: build_scores(p, exam.title, columns, rows, by_class=exam.scores_by_class),
+           force=force, opened="엑셀에서 닫고",
+           edited="점수표를 엑셀에서 고쳐 두어 다시 쓰지 않음 — 앱은 점수표를 읽지 않으니 "
+                  "점수는 앱에서 고치고, 이 파일을 지우거나 다른 이름으로 저장하면 다시 "
+                  "만듭니다")  # fmt: skip
+
+
+def export_scores(
+    ws: WorkspacePaths, store: ExamStore, *, by_class: bool | None = None, force: bool = False
+) -> ExportResult:
+    """점수표만 다시 쓴다. by_class를 주면 시험에 저장해 다음 저절로 쓸 때도 그렇게 쓴다."""
+    res = ExportResult()
+    with _lock:
+        exam = store.exam()
+        if by_class is not None and by_class != exam.scores_by_class:
+            store.save_exam(exam.model_copy(update={"scores_by_class": by_class}))
+        hashes = store.export_hashes()
+        write_scores(ws, store, res, hashes, force=force)
+        store.save_export_hashes(hashes)
+    return res
 
 
 def is_edited(store: ExamStore, path: Path, hashes: dict[str, str] | None = None) -> bool:
@@ -189,6 +273,7 @@ def write_files(
             _write(res, hashes, path, lambda p, pg=page: build_bundle(p, pg), force=force,
                    edited="묶음을 한글에서 고쳐 두어 다시 만들지 않음 — 앱은 묶음을 읽지 않으니 "
                           "학생 파일에서 고치고, 이 묶음을 지우면 다시 만듭니다")  # fmt: skip
+        write_scores(ws, store, res, hashes, force=force)
         store.save_export_hashes(hashes)
     return res
 
@@ -232,6 +317,7 @@ def _write(
     *,
     force: bool,
     edited: str,
+    opened: str = "한글에서 닫고",
 ) -> None:
     known = hashes.get(path.name)
     if not force and known is not None and path.is_file() and sha256_file(path) != known:
@@ -244,5 +330,5 @@ def _write(
         hashes[path.name] = sha256_file(path)
     except OSError as e:
         res.warnings.append(
-            f"{path.name}을 쓰지 못함 ({e.strerror or e}) — 한글에서 닫고 다시 내보내세요"
+            f"{path.name}을 쓰지 못함 ({e.strerror or e}) — {opened} 다시 내보내세요"
         )

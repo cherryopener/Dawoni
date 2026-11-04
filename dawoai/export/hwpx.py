@@ -28,6 +28,7 @@ from hwpx.equation.measure import measure_equation
 from hwpx.oxml.paragraph import HwpxOxmlParagraph
 from lxml import etree
 
+from dawoai.export.quotes import Kind, LineSpots, Quote, Spots, locate, segments
 from dawoai.grading.checks import normalize_latex
 from dawoai.models.grading import UNREADABLE, GradeResult, Rubric, TranscriptLine
 
@@ -47,6 +48,7 @@ PINK = "#FFC7CE"  # [판독불가]
 GREEN = "#C6EFCE"  # 맞은 근거 (연두 형광펜)
 BLUE = "#1F4E9E"  # 맞은 근거 코멘트
 RED = "#C00000"  # 감점 코멘트, 틀린 곳 밑줄
+GREEN_EQ = "#00804A"  # 맞은 근거가 식일 때 식 글자색 (형광펜은 글자에만 칠해진다)
 GRAY = "#7F7F7F"
 
 HP = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
@@ -62,9 +64,9 @@ class PartGrade:
     awarded: float
     points: float
     good: list[tuple[str, str]] = field(default_factory=lambda: list[tuple[str, str]]())
-    """(판독문 인용, 맞은 이유). 인용 조각이 여럿이면 이유는 첫 조각에만."""
+    """(판독문 인용, 맞은 이유) — 인용은 채점이 쓴 그대로 (`…`로 이은 조각, `quotes.locate`)."""
     bad: list[tuple[str, str]] = field(default_factory=lambda: list[tuple[str, str]]())
-    """(판독문 인용, 감점 이유)."""
+    """(판독문 인용, 감점 이유). 일부만 받은 항목은 인용 없이 이유만 (근거는 맞은 곳으로 칠함)."""
 
 
 @dataclass
@@ -98,15 +100,6 @@ def sheet_lines(question: str, lines: list[TranscriptLine]) -> list[TranscriptLi
     ]
 
 
-def _fragments(quote: str) -> list[str]:
-    """채점 근거 인용 → 판독문에서 찾을 글 조각: `…`로 나뉜 조각의 식 밖 부분 (6자 이상)."""
-    out: list[str] = []
-    for chunk in re.split(r"…|\.\.\.|;;", quote):
-        pieces = _INLINE.split(chunk)
-        out += [s for i, x in enumerate(pieces) if i % 2 == 0 and len(s := x.strip()) >= 6]
-    return out
-
-
 def part_grades(question: str, g: GradeResult, rubric: Rubric) -> dict[str, PartGrade]:
     """채점 결과(채점 항목별) → 소문항별 점수·근거. 강사가 고친 점수가 있으면 그것을 쓴다."""
     part_of = {i.id: i.part for i in rubric.items}
@@ -116,12 +109,11 @@ def part_grades(question: str, g: GradeResult, rubric: Rubric) -> dict[str, Part
         pg = out.setdefault(f"{question}-{part}" if part else question, PartGrade(0, 0))
         pg.awarded += j.awarded
         pg.points += g.item_points.get(j.rubric_item_id, 0)
-        quotes = _fragments(j.evidence_quote or "") or [""]
+        quote = j.evidence_quote or ""
         if j.awarded > 0:
-            pg.good += [(x, j.reason if not i else "") for i, x in enumerate(quotes)]
+            pg.good.append((quote, j.reason))
         if j.deduction_reason:  # 일부만 받은 항목은 근거를 맞은 곳으로 칠하고 이유만 단다
-            bad = quotes if j.awarded == 0 else [""]
-            pg.bad += [(x, j.deduction_reason if not i else "") for i, x in enumerate(bad)]
+            pg.bad.append((quote if j.awarded == 0 else "", j.deduction_reason))
     for part, score in g.teacher_part_scores.items():
         key = f"{question}-{part}" if part else question
         if key in out:
@@ -257,6 +249,12 @@ class Builder:
         self.blue = run(color=BLUE)
         self.red = run(color=RED)
         self.red_underline = run(underline=True, underline_color=RED, underline_shape="SOLID")
+        # 맞은 근거는 형광펜(markpen)이 아니라 글자 음영 — 한글은 형광펜을 PDF·인쇄에 찍지 않는다
+        # (2026-11-05 한글 2024 PDF 저장: 형광펜 자리 바탕이 흰색, 음영은 찍힘). 채점본은 인쇄용이다
+        self.good = run(highlight=GREEN)
+        self.good_bad = run(
+            highlight=GREEN, underline=True, underline_color=RED, underline_shape="SOLID"
+        )
         self.style_head = st.ensure_style(STYLE_HEAD, char_pr_id_ref=self.bold)
         self.style_part = st.ensure_style(STYLE_PART, char_pr_id_ref=self.part)
         self.style_graded = st.ensure_style(STYLE_GRADED, char_pr_id_ref=self.bold)
@@ -329,21 +327,23 @@ def _by_part(lines: list[TranscriptLine]) -> dict[str, list[TranscriptLine]]:
     return out
 
 
-def _split_quote(text: str, quote: str) -> tuple[str, str, str] | None:
-    i = text.find(quote)
-    return (text[:i], quote, text[i + len(quote) :]) if i >= 0 else None
-
-
-def _marked(text: str, quotes: list[str], base: str, mark: str) -> list[tuple[str, str]]:
-    """quotes가 나오는 곳만 mark 글자 모양으로 나눈다."""
-    for q in quotes:
-        if q and (s := _split_quote(text, q)):
-            return [
-                *_marked(s[0], quotes, base, mark),
-                (s[1], mark),
-                *_marked(s[2], quotes, base, mark),
-            ]
-    return [(text, base)]
+def _spans(text: str, marks: dict[int, set[Kind]]) -> list[tuple[str, frozenset[Kind]]]:
+    """글 조각 → 같은 종류끼리 이은 (글, 종류). 칠한 글자 사이에 낀 띄어쓰기는 같이 칠한다 (인용을
+    찾을 때 띄어쓰기를 무시하므로 띄어쓰기에는 자리가 없다 — 낱말마다 끊기지 않게)."""
+    kinds = [frozenset(marks.get(i, ())) for i in range(len(text))]
+    for i, c in enumerate(text):
+        if c.isspace() and not kinds[i]:
+            left = next((kinds[j] for j in range(i - 1, -1, -1) if not text[j].isspace()), None)
+            right = next((kinds[j] for j in range(i + 1, len(text)) if not text[j].isspace()), None)
+            if left and left == right:
+                kinds[i] = left
+    out: list[tuple[str, frozenset[Kind]]] = []
+    for c, k in zip(text, kinds, strict=True):
+        if out and out[-1][1] == k:
+            out[-1] = (out[-1][0] + c, k)
+        else:
+            out.append((c, k))
+    return out
 
 
 def write_line(
@@ -351,25 +351,36 @@ def write_line(
     line: TranscriptLine,
     *,
     highlights: list[tuple[str, str]] | None = None,
-    underline: list[str] | None = None,
+    spots: LineSpots | None = None,
 ) -> HwpxOxmlParagraph:
     """판독문 한 줄 = 문단 하나. 글 사이의 `\\( \\)` 식은 그 자리에 한글 수식으로 넣는다.
-    highlights: (글, 색) 형광펜, underline: 빨간 밑줄 — 둘 다 글 부분에서만 찾는다."""
+    highlights: (글, 색) 형광펜 — 글 부분에서 처음 나오는 곳 (판독본의 불확실·판독불가 표시).
+    spots: 채점 근거 자리(`quotes.locate`) — 맞은 곳 연두 음영, 틀린 곳 빨간 밑줄. 식에 걸치면
+    그 식 글자를 초록·빨강으로 (음영·밑줄은 식 상자에 칠해지지 않는다)."""
     p = b.para()
     if line.struck:
         b.runs(p, [("[지움] ", b.small_gray)])
     base = b.struck if line.struck else b.plain
-    for i, piece in enumerate(_INLINE.split(line.text)):
-        if i % 2:
-            b.equation(p, piece, lead="")
-        else:
-            b.runs(p, _marked(piece, [] if line.struck else underline or [], base, b.red_underline))
+    segs = segments(line)
+    for si, (piece, is_math) in enumerate(segs):
+        if is_math:
+            on_eq: set[Kind] = spots.maths.get(si, set()) if spots else set()
+            color = RED if "bad" in on_eq else GREEN_EQ if "good" in on_eq else None
+            lead = " " if line.math and si == len(segs) - 1 else ""
+            b.equation(p, piece, lead=lead, color=color)
+            continue
+        marks = spots.chars.get(si) if spots else None
+        for text, kinds in _spans(piece, marks) if marks else [(piece, frozenset[Kind]())]:
+            good, bad = "good" in kinds, "bad" in kinds
+            char = (
+                b.good_bad if good and bad else b.good if good else b.red_underline if bad else base
+            )
+            if text:
+                p.add_run(text, char_pr_id_ref=char)
     if not line.struck:
         for match, color in highlights or []:
             with contextlib.suppress(ValueError):  # 판독문에 없거나 식에 걸치면 칠하지 않는다
                 p.add_highlight(color=color, match=match)
-    if line.math:
-        b.equation(p, line.math)
     return p
 
 
@@ -469,14 +480,28 @@ def write_reading(b: Builder, sheet: Sheet) -> HwpxOxmlParagraph:
     return head
 
 
+def grade_spots(sheet: Sheet) -> Spots:
+    """채점 근거 인용들이 판독문(`sheet.lines`)의 어디인가."""
+    quotes: list[Quote] = []
+    for part, g in (sheet.grades or {}).items():
+        good: list[Quote] = [(q, "good", part) for q, _ in g.good if q]
+        bad: list[Quote] = [(q, "bad", part) for q, _ in g.bad if q]
+        quotes += good + bad
+    return locate(sheet.lines, quotes)
+
+
 def write_graded(b: Builder, sheet: Sheet, *, style: str) -> HwpxOxmlParagraph:
     """채점 부분을 쓰고 그 머리 문단을 돌려준다."""
     grades = sheet.grades or {}
+    spots = grade_spots(sheet)
+    index = {id(line): i for i, line in enumerate(sheet.lines)}
     total = sum(g.awarded for g in grades.values())
     full = sum(g.points for g in grades.values())
     head = b.para(f"{sheet.head} · 총점 {total:g} / {full:g}", char=b.bold, style=style)
-    for note in sheet.notes:
-        b.para(note, char=b.small_gray)
+    for (
+        note
+    ) in sheet.notes:  # 검증 경고(`! R3: …`)에 섞인 식이 `₩frac`으로 보이지 않게 한글 수식으로
+        write_prose(b, note, b.small_gray, GRAY)
     table = b.doc.add_table(len(grades) + 1, 3)
     for c, h in enumerate(("소문항", "점수", "배점")):
         table.set_cell_text(0, c, h)
@@ -487,11 +512,7 @@ def write_graded(b: Builder, sheet: Sheet, *, style: str) -> HwpxOxmlParagraph:
         g = grades.get(part)
         b.para(f"{MARK} {part}", char=b.part, style=b.style_part)
         for line in part_lines:  # 맞은 곳: 연두 형광펜, 틀린 곳: 빨간 밑줄
-            write_line(
-                b, line,
-                highlights=[(q, GREEN) for q, _ in g.good] if g else [],
-                underline=[q for q, _ in g.bad] if g else [],
-            )  # fmt: skip
+            write_line(b, line, spots=spots.lines.get(index[id(line)]))
         if g is None:
             continue
         b.para(f"점수 {g.awarded:g} / {g.points:g}", char=b.bold)

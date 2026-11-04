@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from dawoai import sharing
 from dawoai.cli_exam import parse_answer_text
-from dawoai.export.exam_files import write_all
+from dawoai.export.exam_files import export_scores, write_all
 from dawoai.grading import assign, workflow
 from dawoai.grading.answers import set_answers
 from dawoai.grading.pipeline import (
@@ -539,6 +539,28 @@ def export(exam_id: str, body: ExportBody | None = None, st: AppState = State) -
         }
 
     return st.jobs.submit("export", run, {"exam": exam_id})
+
+
+class ScoresBody(BaseModel):
+    by_class: bool | None = None
+    """반마다 시트 하나로 (시험에 저장). None이면 시험에 저장된 대로."""
+    force: bool = False
+    """엑셀에서 고친 점수표도 덮어쓴다."""
+
+
+@router.post("/{exam_id}/scores")
+def scores(exam_id: str, body: ScoresBody | None = None, st: AppState = State) -> dict[str, Any]:
+    """엑셀 점수표만 다시 쓴다 (코드만, 토큰 0, 빠름 — 작업으로 돌리지 않는다). 채점·검토를 저장할
+    때마다 저절로 쓰므로 보통은 반별 시트를 켜고 끌 때만."""
+    svc, store = _store(st, exam_id)
+    b = body or ScoresBody()
+    res = export_scores(svc.workspace, store, by_class=b.by_class, force=b.force)
+    return {
+        "files": [p.name for p in res.written],
+        "edited": [p.name for p in res.edited],
+        "file_warnings": res.warnings,
+        "by_class": store.exam().scores_by_class,
+    }
 
 
 class ConfirmFilesBody(learning.LearnFields):

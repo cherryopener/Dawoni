@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from hwpx.document import HwpxDocument
+from lxml import etree
 
 from dawoai.export.hwpx import (
     PartGrade,
@@ -21,6 +22,7 @@ from dawoai.export.hwpx import (
     sheet_lines,
     to_eqedit,
 )
+from dawoai.export.quotes import Spots, locate, segments
 from dawoai.models.grading import TranscriptLine
 
 LINES = sheet_lines(
@@ -139,3 +141,92 @@ def test_equation_left_as_text_reads_back_as_equation(tmp_path: Path) -> None:
     assert "[식:" in "".join(p.text or "" for p in HwpxDocument.open(path).paragraphs)
     got = read_back(path).parts["1-(1)"]
     assert [canon(x) for x in got] == [canon(r"따라서 \(L \over v\)이다")]
+
+
+# ---------------------------------------------------------------- 근거 인용 → 강조 자리 (M6)
+
+REAL = sheet_lines(
+    "1",
+    [  # M5 실측 판독문 꼴: 글 사이 식, 식만 있는 줄, 같은 짧은 식이 두 소문항에
+        TranscriptLine(part="(1)", text=r"중력가속도 \(g\), \(Ap\) 방향으로의 가속도 성분은"),
+        TranscriptLine(part="(1)", text=r"\(g\cos\alpha\) (단, \(\alpha = \angle OAP\))"),
+        TranscriptLine(part="(1)", math=r"\theta = \alpha"),
+        TranscriptLine(part="(2)", text="각도는 같다", math=r"\theta = \alpha"),
+        TranscriptLine(part="(2)", text="지운 줄", struck=True),
+    ],
+)
+
+
+def _marked_text(spots: Spots, li: int, si: int) -> str:
+    seg = segments(REAL[li])[si][0]
+    return "".join(c for i, c in enumerate(seg) if i in spots.lines[li].chars[si])
+
+
+def test_quote_across_lines_with_part_label_and_math() -> None:
+    """채점 인용은 `(1) `을 붙이고, 여러 줄을 띄어 잇고, 식을 `\\( \\)` 없이 쓰기도 한다 (실측)."""
+    quote = r"(1) 중력가속도 \(g\), \(Ap\) 방향으로의 가속도 성분은 g\cos\alpha (단,"
+    spots = locate(REAL, [(quote, "good", "1-(1)")])
+    assert spots.found == 1 and not spots.missed
+    assert _marked_text(spots, 0, 0).replace(" ", "") == "중력가속도"
+    assert spots.lines[0].maths == {1: {"good"}, 3: {"good"}}
+    assert spots.lines[1].maths[1] == {"good"}, "식만 인용해도 그 식에 색"
+    assert _marked_text(spots, 1, 2).replace(" ", "") == "(단,"
+    assert 3 not in spots.lines[1].maths, "인용이 끝난 뒤 식은 칠하지 않음"
+
+
+def test_repeated_quote_prefers_its_own_part() -> None:
+    spots = locate(REAL, [(r"\theta = \alpha", "bad", "1-(2)")])
+    assert list(spots.lines) == [3]
+    first = locate(REAL, [(r"\theta = \alpha", "bad", None)])
+    assert list(first.lines) == [2], "소문항을 모르면 처음 나온 곳"
+
+
+def test_ellipsis_chunks_and_struck_lines() -> None:
+    spots = locate(REAL, [("중력가속도 … 각도는 같다 … 없는 글", "good", None),
+                          ("지운 줄", "bad", "1-(2)")])  # fmt: skip
+    assert spots.found == 3 and spots.missed == ["없는 글"]
+    assert 4 not in spots.lines, "지운 줄은 찾아도 칠하지 않음"
+
+
+def test_bare_question_number_is_not_stripped_from_quotes() -> None:
+    """소문항 없는 문항의 줄은 `part`가 문항 번호(`3`)뿐 — 인용에서 숫자를 지우면 안 된다."""
+    lines = sheet_lines("3", [TranscriptLine(part=None, text="답은 3배이다")])
+    assert locate(lines, [("3배", "good", "3")]).found == 1
+
+
+def test_graded_file_shades_quote_and_underlines_deduction(tmp_path: Path) -> None:
+    """맞은 근거는 글자 음영(형광펜은 한글 PDF·인쇄에 찍히지 않음), 틀린 곳은 빨간 밑줄, 식은 색."""
+    import zipfile
+
+    sheet = Sheet(
+        head="t · TSS1 · 김다원",
+        lines=REAL,
+        grades={
+            "1-(1)": PartGrade(2, 2, good=[(r"(1) 중력가속도 \(g\), \(Ap\) 방향", "좋음")]),
+            "1-(2)": PartGrade(0, 2, bad=[(r"각도는 같다 … \theta = \alpha", "틀림")]),
+        },
+    )
+    path = build_student(tmp_path / "x.hwpx", sheet)
+    doc = HwpxDocument.open(path)
+    assert not doc.validate().issues
+    graded = next(p for p in doc.paragraphs if p.element.get("pageBreak") == "1")
+    paras = doc.paragraphs[doc.paragraphs.index(graded) :]
+    header = zipfile.ZipFile(path).read("Contents/header.xml")
+    chars = {c.get("id"): c for c in etree.fromstring(header).iter("{*}charPr")}
+
+    def styled(text: str) -> tuple[str, str]:
+        """(음영색, 밑줄 종류)"""
+        for p in paras:
+            for r in p.runs:
+                if (r.text or "").strip() == text:
+                    c = chars[str(r.char_pr_id_ref)]
+                    u = next(c.iter("{*}underline"), None)
+                    return c.get("shadeColor", ""), u.get("type", "") if u is not None else ""
+        raise AssertionError(text)
+
+    assert styled("중력가속도")[0] == "#C6EFCE"
+    assert styled("각도는 같다")[1] not in ("", "NONE")
+    xml = zipfile.ZipFile(path).read("Contents/section0.xml").decode("utf-8")
+    assert 'textColor="#00804A"' in xml and 'textColor="#C00000"' in xml, "식은 초록·빨강"
+    assert "markpenBegin" not in xml.split('pageBreak="1"', 1)[1], "채점본에는 형광펜을 쓰지 않음"
+    assert canon(read_back(path).parts["1-(1)"][0]) == canon(REAL[0].text), "판독 부분은 그대로"

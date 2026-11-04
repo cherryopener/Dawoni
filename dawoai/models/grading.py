@@ -70,6 +70,10 @@ class Exam(DawoaiModel):
     scope_id: str
     questions: list[ExamQuestion] = Field(min_length=1)
     created_at: datetime = Field(default_factory=utcnow)
+    scores_by_class: bool = Field(
+        default=False,
+        description="엑셀 점수표를 반마다 시트로 나눌까 (기본: 한 시트, PLAN.md §9-2)",
+    )
 
     @model_validator(mode="after")
     def _numbers(self) -> Exam:

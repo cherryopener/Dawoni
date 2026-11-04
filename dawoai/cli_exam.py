@@ -21,7 +21,8 @@
                                                    # 판독본 HWPX 다시 읽기 → 확정 판독문
     dawoai exam students <시험ID>                 # 표지에서 읽은 학생 (명부 연결·이름 확인 대기)
     dawoai exam student <시험ID> 김다원#5 --name 김다원B [--class 2반] [--roster S0012]
-    dawoai exam export <시험ID>                 # 채점 HWPX 다시 쓰기 (보통은 채점 때 저절로)
+    dawoai exam export <시험ID>                 # 채점 HWPX·점수표 다시 쓰기 (보통은 채점 때 저절로)
+    dawoai exam scores <시험ID> [--by-class | --one-sheet]   # 엑셀 점수표만 (반별 시트 켜고 끄기)
     dawoai exam grade <시험ID> [--student 홍길동] [-q 3] [--by 김선생] [--double] [--regrade]
     dawoai exam assign <시험ID> -q 3 --by 김선생 [--take | --release]  # 문항 맡기 (§8)
     dawoai exam board <시험ID>                   # 진행판: 문항마다 맡은 강사·채점 현황
@@ -40,7 +41,7 @@ from typing import Any
 from dawoai.agents import AgentError
 from dawoai.config import AGENT_NAMES
 from dawoai.context import TaskFailed
-from dawoai.export.exam_files import ExportResult, write_all
+from dawoai.export.exam_files import ExportResult, export_scores, write_all
 from dawoai.fsio import read_json
 from dawoai.grading import workflow
 from dawoai.grading.answers import set_answers
@@ -657,6 +658,14 @@ def _print_export(res: ExportResult, *, what: str = "HWPX") -> None:
         _out(f"  ! {w}")
 
 
+def _cmd_scores(args: argparse.Namespace) -> int:
+    svc = _svc(args)
+    res = export_scores(svc.workspace, ExamStore(svc.workspace, args.exam), by_class=args.by_class,
+                        force=args.force)  # fmt: skip
+    _print_export(res, what="점수표")
+    return 1 if res.warnings else 0
+
+
 def _cmd_export(args: argparse.Namespace) -> int:
     svc = _svc(args)
     res = write_all(svc.workspace, ExamStore(svc.workspace, args.exam), force=args.force)
@@ -935,6 +944,16 @@ def register(sub: Any) -> None:
     ex.add_argument("exam")
     ex.add_argument("--force", action="store_true", help="강사가 한글에서 고친 파일도 덮어쓰기")
     ex.set_defaults(func=_wrap(_cmd_export))
+
+    sc = es.add_parser("scores", help="엑셀 점수표만 다시 쓰기 (반 | 이름 | 학교 | 소문항… | 총점)")
+    sc.add_argument("exam")
+    way = sc.add_mutually_exclusive_group()
+    way.add_argument("--by-class", dest="by_class", action="store_const", const=True,
+                     help="반마다 시트 하나 (시험에 저장 — 다음부터 저절로 쓸 때도)")  # fmt: skip
+    way.add_argument("--one-sheet", dest="by_class", action="store_const", const=False,
+                     help="한 시트에 모두 (기본)")  # fmt: skip
+    sc.add_argument("--force", action="store_true", help="엑셀에서 고친 점수표도 덮어쓰기")
+    sc.set_defaults(func=_wrap(_cmd_scores), by_class=None)
 
     cf = es.add_parser("confirm", help="확인 완료: 한글에서 고친 판독본 HWPX → 확정 판독문")
     cf.add_argument("exam")
