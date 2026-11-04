@@ -40,6 +40,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="hwpx")
 
 OUT = Path(__file__).resolve().parent / "out"
 FONT = "맑은 고딕"
+NORMAL = "0"  # 바탕글
 STYLE_HEAD = "다워이 머리"
 STYLE_PART = "다워이 소문항"
 STYLE_GRADED = "다워이 채점"  # 채점 부분의 첫 문단 (새 쪽). 다시 읽기는 여기서 멈춘다
@@ -65,15 +66,20 @@ class Student:
     klass: str
     name: str
     school: str
-    ident: str = ""
-    """같은 반 동명이인을 가르는 식별자 (학부모 전화 뒷 4자리 등, 없으면 짧은 학생 id)"""
+    """name: 같은 반 동명이인은 학원 방식대로 이름 뒤 알파벳으로 가른다 (김다원A, 김다원B)"""
 
     def head(self) -> str:
         return f"{self.exam} · {self.klass} · {self.name} · {self.school}"
 
     def filename(self, question: str) -> str:
-        """강사 1명이 문항 1개를 맡으므로 학생 × 문항 = 파일 1개: `반_이름_문항_식별자.hwpx`."""
-        return "_".join(x for x in (self.klass, self.name, question, self.ident) if x) + ".hwpx"
+        """강사 1명이 문항 1개를 맡으므로 학생 × 문항 = 파일 1개: `반_이름_문항.hwpx`."""
+        return f"{self.klass}_{self.name}_{question}.hwpx"
+
+
+def bundle_filename(klass: str, question: str) -> str:
+    """반별 묶음 `(반별)_반_문항.hwpx`. `(`는 탐색기 이름순(StrCmpLogicalW)에서도, 글자 코드 순에서도
+    숫자·한글·영문 앞이라 묶음 파일이 학생 파일보다 위에 온다 (2026-11-04 확인)."""
+    return f"(반별)_{klass}_{question}.hwpx"
 
 
 @dataclass
@@ -86,7 +92,8 @@ class PartGrade:
     """(판독문 인용, 감점 이유)"""
 
 
-STUDENT = Student("2026-11 중간고사 물리", "2반", "김다원", "○○고", ident="5678")
+STUDENT = Student("2026-11 중간고사 물리", "2반", "김다원", "○○고")
+CLASSMATE = Student("2026-11 중간고사 물리", "2반", "강민수", "○○고")  # 묶음 정렬 확인용
 LINES: list[TranscriptLine] = [
     TranscriptLine(part="1-(1)", text="옴의 법칙으로 전류를 구하면", math=r"I = \frac{V}{R} = \frac{6}{3} = 2"),
     TranscriptLine(part="1-(1)", text="따라서 전류는 2 A이다."),
@@ -164,7 +171,8 @@ class Builder:
                 for r in p.runs:
                     r.char_pr_id_ref = char
         else:
-            p = self.doc.add_paragraph(text, char_pr_id_ref=char or self.plain)
+            # inherit_style=False: 기본값은 앞 문단 스타일을 물려받아 머리 다음 문단까지 '다워이 머리'가 됨
+            p = self.doc.add_paragraph(text, char_pr_id_ref=char or self.plain, inherit_style=False)
         if style is not None:
             p.style_id_ref = style
         return p
@@ -216,11 +224,12 @@ def build_reading(
 
 def write_reading(
     b: Builder, student: Student, lines: list[TranscriptLine], scans: list[bytes]
-) -> None:
-    b.para(student.head(), char=b.bold, style=b.style_head)
+) -> HwpxOxmlParagraph:
+    """원본 그림 → 학생이 쓴 글 그대로(글자·수식)를 쓰고 머리 문단을 돌려준다."""
+    head = b.para(student.head(), char=b.bold, style=b.style_head)
     for i, png in enumerate(scans, start=1):
         b.para(f"[원본] 답안 {i}쪽", char=b.small_gray)
-        b.doc.add_picture(png, "png", width_mm=150)
+        b.doc.add_picture(png, "png", width_mm=150, style_id_ref=NORMAL)
     for part, part_lines in _by_part(lines).items():
         b.para(f"{MARK} {part}", char=b.part, style=b.style_part)
         for line in part_lines:
@@ -233,6 +242,7 @@ def write_reading(
                     p.add_highlight(color=YELLOW, match=u)
             if line.math:
                 b.equation(p, line.math)
+    return head
 
 
 def _split_quote(text: str, quote: str) -> tuple[str, str, str] | None:
@@ -258,10 +268,40 @@ def build_combined(
 ) -> Path:
     """학생 × 문항 파일 1개: 판독본이 쭉 나오고, 채점본은 새 쪽에서 시작한다 (§15-4 답, 2026-11-04)."""
     b = Builder()
-    write_reading(b, student, lines, scans)
-    head = write_graded(b, student, lines, grades, style=b.style_graded)
-    head.element.set("pageBreak", "1")
+    write_student(b, student, lines, grades, scans)
     return b.save(path)
+
+
+def write_student(
+    b: Builder,
+    student: Student,
+    lines: list[TranscriptLine],
+    grades: dict[str, PartGrade],
+    scans: list[bytes],
+) -> HwpxOxmlParagraph:
+    head = write_reading(b, student, lines, scans)
+    write_graded(b, student, lines, grades, style=b.style_graded).element.set("pageBreak", "1")
+    return head
+
+
+Entry = tuple[Student, list[TranscriptLine], dict[str, PartGrade], list[bytes]]
+
+
+def build_class_bundle(path: Path, entries: list[Entry]) -> Path:
+    """반별 묶음: 학생 파일을 이름순으로 이어 붙인 인쇄용 파일. 학생마다 새 쪽에서 시작한다.
+    앱은 묶음을 다시 읽지 않는다 — 강사가 고치는 곳은 학생 파일이고, 묶음은 그때마다 다시 만든다."""
+    b = Builder()
+    for i, entry in enumerate(sorted(entries, key=lambda e: e[0].name)):
+        head = write_student(b, *entry)
+        if i:
+            head.element.set("pageBreak", "1")
+    return b.save(path)
+
+
+def count_heads(path: Path) -> int:
+    doc = HwpxDocument.open(path)
+    style = doc.styles.get(STYLE_HEAD)
+    return sum(1 for p in doc.paragraphs if style and str(p.style_id_ref) == str(style.id))
 
 
 def write_graded(
@@ -486,34 +526,42 @@ def main(argv: list[str]) -> int:
     print(f"강사 수정 흉내 → 다시 읽기: {'반영됨' if ok else f'반영 안 됨 {fixed}'}")
     failed |= not ok
 
-    # 학생 × 문항 파일: 판독 → 새 쪽 → 채점 (§15-4 답)
-    combined: dict[str, tuple[Path, dict[str, list[str]]]] = {}
+    # 학생 × 문항 파일: 원본 그림 → 학생이 쓴 글 → 새 쪽 → 채점 (§15-4 답), 반별 묶음
+    combined: dict[str, tuple[Path, Student, dict[str, list[str]]]] = {}
+    bundles: list[Path] = []
     for q in dict.fromkeys(line.part.split("-")[0] for line in LINES if line.part):
         q_lines = [x for x in LINES if x.part and x.part.split("-")[0] == q]
         q_grades = {k: v for k, v in GRADES.items() if k.split("-")[0] == q}
-        path = build_combined(OUT / STUDENT.filename(q), STUDENT, q_lines, q_grades, scans)
-        issues = HwpxDocument.open(path).validate().issues
-        q_problems = compare(read_back(path), expected(q_lines), STUDENT)
-        print(f"문항 파일 {path.name}: 스키마 {issues or '통과'}, "
-              f"다시 읽기(판독 부분만) {q_problems or '같음'}")  # fmt: skip
-        failed |= bool(issues) or bool(q_problems)
-        combined[path.name] = (path, expected(q_lines))
+        entries: list[Entry] = [(st, q_lines, q_grades, scans) for st in (STUDENT, CLASSMATE)]
+        for st, *rest in entries:
+            path = build_combined(OUT / st.filename(q), st, *rest)
+            issues = HwpxDocument.open(path).validate().issues
+            q_problems = compare(read_back(path), expected(q_lines), st)
+            print(f"문항 파일 {path.name}: 스키마 {issues or '통과'}, "
+                  f"다시 읽기(판독 부분만) {q_problems or '같음'}")  # fmt: skip
+            failed |= bool(issues) or bool(q_problems)
+            combined[path.name] = (path, st, expected(q_lines))
+        bundle = build_class_bundle(OUT / bundle_filename(STUDENT.klass, q), entries)
+        issues = HwpxDocument.open(bundle).validate().issues
+        heads = count_heads(bundle)
+        print(f"반별 묶음 {bundle.name}: 스키마 {issues or '통과'}, 학생 {heads}명")
+        failed |= bool(issues) or heads != len(entries)
+        bundles.append(bundle)
 
     if args.hancom:
         saved: dict[str, Path] = {}
         with hancom() as hwp:
             targets = [("판독본", reading), ("채점본", graded)]
-            targets += [(name, path) for name, (path, _) in combined.items()]
+            targets += [(name, path) for name, (path, _, _) in combined.items()]
+            targets += [(p.name, p) for p in bundles]
             for label, path in targets:
                 pdf, saved[label], pngs = hancom_roundtrip(hwp, path)
                 print(
                     f"한글 {label}: PDF {pdf.name} ({len(pngs)}쪽), 다시 저장 {saved[label].name}"
                 )
-        for name, (_, q_want) in combined.items():
-            q_problems = compare(read_back(saved[name]), q_want, STUDENT)
-            print(
-                f"한글이 다시 저장한 {name} 다시 읽기: {q_problems or '같음'}"
-            )
+        for name, (_, st, q_want) in combined.items():
+            q_problems = compare(read_back(saved[name]), q_want, st)
+            print(f"한글이 다시 저장한 {name} 다시 읽기: {q_problems or '같음'}")
             failed |= bool(q_problems)
         got2 = read_back(saved["판독본"])
         problems2 = compare(got2, want, STUDENT)
