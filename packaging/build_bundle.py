@@ -137,6 +137,36 @@ def _access_json(arg: str | None) -> str | None:
     return text or None
 
 
+def _check_access(text: str, where: str) -> None:
+    """앱이 읽을 수 있는 로그인 설정인지 (JSON 형식 + `AccessConfig`). 틀리면 자리만 알리고 멈춘다 —
+    클라이언트 비밀번호가 들어 있으니 내용은 찍지 않는다 (Actions 로그는 공개 저장소에서 보인다)."""
+    from pydantic import ValidationError
+
+    from dawoni.access import AccessConfig
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        hint = (
+            ' — 문자열 안에 줄바꿈·탭이 있음: 따옴표(")가 빠졌거나 값이 두 줄로 나뉨'
+            if e.msg.startswith("Invalid control character")
+            else ""
+        )
+        raise SystemExit(
+            f"{where}이 올바른 JSON이 아닙니다: {e.lineno}번째 줄 {e.colno}번째 글자 "
+            f"({e.msg}){hint}. packaging/access.example.json 형식대로 고친 뒤 다시 넣으세요"
+        ) from None
+    try:
+        cfg = AccessConfig.model_validate(data)
+    except ValidationError as e:
+        bad = "; ".join(
+            f"{'.'.join(map(str, x['loc']))}: {x['msg']}" for x in e.errors(include_input=False)
+        )
+        raise SystemExit(f"{where}의 값이 틀렸습니다: {bad}") from None
+    if not cfg.google_client_id.strip():
+        raise SystemExit(f"{where}에 google_client_id가 비어 있습니다")
+
+
 def main() -> int:
     if sys.platform != "win32":
         raise SystemExit("Windows에서만 만든다")
@@ -157,7 +187,7 @@ def main() -> int:
         raise SystemExit(f"python.org 설치본이 아닙니다: {base}\\pythonw.exe 서명 {status}")
     access = _access_json(args.access)
     if access is not None:
-        json.loads(access)  # 형식만 확인 — 내용은 찍지 않는다
+        _check_access(access, "--access 파일" if args.access else "비밀값 DAWONI_ACCESS_JSON")
     elif args.require_access:
         raise SystemExit("로그인 설정이 없습니다 (--access 또는 비밀값 DAWONI_ACCESS_JSON)")
 
