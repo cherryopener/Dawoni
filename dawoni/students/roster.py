@@ -139,6 +139,17 @@ class Roster:
         names = {s.class_name for s in self.all() if s.class_name}
         return sorted(names, key=natural_key)
 
+    def names_by_class(self, classes: list[str] | None = None) -> dict[str, list[str]]:
+        """반 → 이름 (가나다순). `classes`를 주면 그 반만 — 표지 이름을 이 안에서 고르게 한다
+        (실측: claude는 명부 없이 표지 이름 6명 중 5명을 틀리게 읽음, 2026-11-05)."""
+        out: dict[str, list[str]] = {}
+        for st in self.all():
+            klass = st.class_name or ""
+            if classes and not any(same_class(klass, c) for c in classes):
+                continue
+            out.setdefault(klass, []).append(st.name)
+        return {k: sorted(v) for k, v in sorted(out.items(), key=lambda kv: natural_key(kv[0]))}
+
     def import_rows(self, rows: list[dict[str, str | None]]) -> ImportResult:
         """(이름, 반, 학교) 줄들 → 명부. 이름·반이 같은 학생은 학교만 고친다."""
         res = ImportResult()

@@ -393,6 +393,11 @@ uv run python experiments/m5_calibrate.py after --model claude-sonnet-5-5 --labe
 - 시험 읽기는 셋 다 맞고 claude가 10배 넘게 빠르다. 해설지는 opus·flash가 맞고 sonnet이 소문항 2개를 다르게 옮겼다.
 - 답안 판독은 정답이 없어 다른 모델과의 유사도만 봤다(셋 다 84~86%) — 표지 이름처럼 claude가 한글 손글씨를
   틀리는지는 판독문을 원본과 대조해야 안다.
+- **명부로 표지 이름 고르기 (2026-11-05)**: 명부(학원 xlsx — 반·이름 열)가 있으면 표지 읽기에 반별 이름을 주고
+  그 안에서 고르게 했다(`read_cover.md.j2` 2026-11-05.1). 같은 6장, 명부 = 24명:
+  이름 sonnet **1/6 → 6/6**, flash-medium 5/6 → 6/6. 학교·강사 점수 칸은 그대로라 sonnet 칸 정확도는 67% → 75%.
+  명부와 맞지 않는 학생은 판독·채점은 하고, 알림("명부에 없는 이름 n명")과 "이름 확인 대기"를 띄워 강사가 화면에서
+  명부의 이름을 고르거나 "명부에 없는 학생으로 두기"를 할 때까지 판독본 HWPX를 만들지 않는다.
 - **Windows에서 claude 고친 것**: npm의 `claude.cmd`를 거치면 cmd.exe 명령행 한계(8,191자)에 걸려 시험 읽기의
   `--json-schema`(8,235자)가 "The command line is too long."으로 실패했다 → `.cmd`가 부르는 `bin\claude.exe`를
   바로 부른다(`detect.unwrap_cmd_shim`).

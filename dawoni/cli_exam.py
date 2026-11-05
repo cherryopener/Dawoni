@@ -21,6 +21,7 @@
                                                    # 판독본 HWPX 다시 읽기 → 확정 판독문
     dawoni exam students <시험ID>                 # 표지에서 읽은 학생 (명부 연결·이름 확인 대기)
     dawoni exam student <시험ID> 김다원#5 --name 김다원B [--class 2반] [--roster S0012]
+                                                 [--off-roster]   # 명부에 없는 학생으로 확정
     dawoni exam export <시험ID>                 # 채점 HWPX·점수표 다시 쓰기 (보통은 채점 때 저절로)
     dawoni exam scores <시험ID> [--by-class | --one-sheet]   # 엑셀 점수표만 (반별 시트 켜고 끄기)
     dawoni exam grade <시험ID> [--student 홍길동] [-q 3] [--by 김선생] [--double] [--regrade]
@@ -732,11 +733,12 @@ def _cmd_students(args: argparse.Namespace) -> int:
 def _cmd_student(args: argparse.Namespace) -> int:
     svc = _svc(args)
     store = ExamStore(svc.workspace, args.exam)
-    if not (args.name or args.klass or args.roster):
-        return _err("--name, --class, --roster 중 하나는 주세요")
+    if not (args.name or args.klass or args.roster or args.off_roster):
+        return _err("--name, --class, --roster, --off-roster 중 하나는 주세요")
     res = workflow.rename_student(
-        svc, store, args.student, name=args.name, class_name=args.klass, roster_id=args.roster
-    )
+        svc, store, args.student, name=args.name, class_name=args.klass, roster_id=args.roster,
+        off_roster=args.off_roster,
+    )  # fmt: skip
     r = res.record
     _out(f"{args.student} → {r.student_id} ({r.class_name or '-'}, 명부 {r.roster_id or '-'})")
     for w in res.warnings:
@@ -970,6 +972,9 @@ def register(sub: Any) -> None:
     stu.add_argument("--name", help="새 이름 (예: 김다원B)")
     stu.add_argument("--class", dest="klass", help="새 반")
     stu.add_argument("--roster", help="명부 학생 ID (S0012) — 명부의 이름·반·학교를 쓴다")
+    stu.add_argument(
+        "--off-roster", action="store_true", help="명부에 없는 학생으로 확정 (이름 확인 끝)"
+    )
     stu.set_defaults(func=_wrap(_cmd_student))
 
     from dawoni import cli_calibration

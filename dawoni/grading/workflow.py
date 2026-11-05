@@ -404,6 +404,7 @@ def scan_batch(
             raise PipelineError(f"문항 {', '.join(too_far)}의 답안 쪽이 한 명의 쪽 수를 넘습니다")
     part_exam = exam.model_copy(update={"questions": qs})
     roster = Roster(svc.workspace)
+    names = roster.names_by_class(classes) or None  # 표지 이름을 명부 안에서 고르게
     classes = classes or roster.classes() or None
     sets = batch.plan_sets(batch.page_count(pdf), per_student, only_sets)
     use_cross = svc.config.ocr.cross_check if cross is None else cross
@@ -450,7 +451,7 @@ def scan_batch(
     def read_cover(job: _SetJob) -> None:
         def run() -> None:
             job.cover_image = batch.render_set(pdf, [job.plan.pages[0]], job.work)[0]
-            job.cover = batch.read_cover(svc.engine, exam, job.cover_image, classes)
+            job.cover = batch.read_cover(svc.engine, exam, job.cover_image, classes, names)
 
         guarded(job, run)
 
@@ -849,8 +850,9 @@ def confirm_from_files(
         t = store.transcript(st, q.number)
         assert t is not None
         record = store.student_record(st)
-        if record is not None and record.needs_rename:
-            run.problems.append(Skipped(st, q.number, "같은 반 동명이인 — 이름을 먼저 바꾸세요"))
+        if record is not None and record.name_pending:
+            why = "같은 반 동명이인" if record.needs_rename else "명부와 맞추지 못함"
+            run.problems.append(Skipped(st, q.number, f"{why} — 이름을 먼저 확인하세요"))
             continue
         path = student_file(svc.workspace, store, st, q.number)
         if not path.is_file():
@@ -936,10 +938,14 @@ def rename_student(
     name: str | None = None,
     class_name: str | None = None,
     roster_id: str | None = None,
+    off_roster: bool = False,
 ) -> RenameResult:
     """이 시험의 학생 이름·반을 고치거나 명부의 학생과 잇는다 (표지를 잘못 읽었을 때, 같은 반
     동명이인을 `김다원A`·`김다원B`로 가를 때). 판독문·채점·스캔을 새 학생 ID로 옮기고, 옛 HWPX는
-    지우고(강사가 고친 파일은 남김) 새 이름으로 다시 쓴다."""
+    지우고(강사가 고친 파일은 남김) 새 이름으로 다시 쓴다.
+
+    `roster_id` 없이 이름·반만 고치면 명부와 다시 맞춰 본다 — 한 명으로 정해지면 잇고, 아니면
+    '명부 확인'이 남는다. `off_roster`: 명부에 없는 학생으로 확정 (이름 확인 끝, HWPX를 쓴다)."""
     from dawoni.export.exam_files import remove_student_files
     from dawoni.ocr import batch
 
@@ -948,12 +954,22 @@ def rename_student(
         raise PipelineError(f"이 시험에 '{student}' 학생이 없습니다")
     record = old or StudentRecord(student_id=student, source="-")
     linked = None
+    roster = Roster(svc.workspace)
     if roster_id is not None:
-        linked = Roster(svc.workspace).get(roster_id)
+        linked = roster.get(roster_id)
         if linked is None:
             raise PipelineError(f"명부에 {roster_id}가 없습니다 (`students list`)")
     new_name = linked.name if linked else (name or record.name or student)
     klass = (linked.class_name if linked else None) or class_name or record.class_name
+    note = record.roster_note
+    if linked is None and not off_roster and roster.all():
+        m = roster.match(new_name, klass)
+        if m.student is not None:
+            linked = m.student
+            new_name, klass = linked.name, linked.class_name or klass
+        note = m.note
+    elif linked is not None or off_roster:
+        note = None
     new_sid = batch.student_id_of(new_name, 0)
     others = [r for r in store.student_records() if r.student_id != student]
     clash = [r for r in others if same_name(r.name, new_name) and same_class(r.class_name, klass)]
@@ -973,8 +989,8 @@ def rename_student(
             "name": new_name,
             "class_name": klass,
             "school": (linked.school if linked else None) or record.school,
-            "roster_id": linked.id if linked else record.roster_id,
-            "roster_note": None if linked else record.roster_note,
+            "roster_id": linked.id if linked else (None if off_roster else record.roster_id),
+            "roster_note": note,
             "needs_rename": False,
         }
     )

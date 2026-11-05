@@ -26,6 +26,7 @@ from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.grading import Exam, StudentRecord, Transcript, TranscriptLine
 from dawoni.models.scope import ScopeProfile
 from dawoni.paths import AppPaths
+from dawoni.server.api_views import exam_notices
 from dawoni.services import Services, open_services
 from dawoni.students import Roster, natural_key, read_table
 from dawoni.workspace import create_workspace
@@ -282,6 +283,7 @@ def test_batch_links_roster_and_holds_same_class_twins(
 
     res = workflow.scan_batch(svc, store, pdf, per_student=2)
     assert "2반" in fake_prompts(exe)[0], "반 목록을 주지 않으면 명부의 반 중에서 고른다"
+    assert "2반: 김다원, 박찬현" in fake_prompts(exe)[0], "표지 이름도 명부 안에서 고르게"
     recs = {r.student_id: r for r in res.students}
     assert set(recs) == {"김다원", "박찬현", "박찬현#3", "최민준"}
     kim = recs["김다원"]
@@ -294,9 +296,13 @@ def test_batch_links_roster_and_holds_same_class_twins(
 
     names = sorted(p.name for p in res.export.written if p.suffix == ".hwpx")
     assert any(p.suffix == ".xlsx" for p in res.export.written), "점수표도 (채점 전이라 비어 있음)"
-    assert names == ["(반별)_2반_1.hwpx", "2반_김다원_1.hwpx", "2반_최민준_1.hwpx"], (
-        "판독이 끝나면 바로 판독본을 쓰고, 같은 반 동명이인은 이름을 바꿀 때까지 보류"
+    assert names == ["(반별)_2반_1.hwpx", "2반_김다원_1.hwpx"], (
+        "판독이 끝나면 바로 판독본을 쓰고, 같은 반 동명이인·명부에 없는 이름은 확인할 때까지 보류"
     )
+    assert store.transcript("최민준", "1") is not None, "명부에 없어도 판독은 한다"
+    notices = {n["id"].split(":")[0]: n for n in exam_notices(store)}
+    assert notices["roster"]["title"] == "명부에 없는 이름 1명"
+    assert "2반 최민준" in notices["roster"]["detail"]
     bundle = bundle_file(svc.workspace, store, "2반", "1")
     assert count_heads(bundle) == 4, "묶음에는 보류한 학생도 안내 쪽으로"
 
@@ -313,6 +319,9 @@ def test_batch_links_roster_and_holds_same_class_twins(
     b = store.student_record("박찬현B")
     a = store.student_record("박찬현")
     assert b is not None and not b.needs_rename and a is not None and not a.needs_rename
+    assert b.roster_note is not None, "명부에는 박찬현 한 명뿐 — 박찬현B는 명부 확인"
+    assert not student_file(svc.workspace, store, "박찬현B", "1").is_file()
+    assert main([*w, "student", store.exam_id, "박찬현B", "--off-roster"]) == 0
     assert student_file(svc.workspace, store, "박찬현B", "1").is_file()
 
     # 명부에 없던 학생을 명부에 넣고 잇는다
@@ -321,9 +330,43 @@ def test_batch_links_roster_and_holds_same_class_twins(
     linked = store.student_record("최민준")
     assert linked is not None and linked.roster_id == new.id and linked.roster_note is None
     assert linked.school == "용산중"
+    assert student_file(svc.workspace, store, "최민준", "1").is_file(), "확인하면 판독본을 쓴다"
+    assert "roster" not in {n["id"].split(":")[0] for n in exam_notices(store)}
     assert main([*w, "student", store.exam_id, "최민준", "--name", "김다원"]) == 1, (
         "같은 반 같은 이름"
     )
+
+
+def test_name_fix_rematches_roster_or_accepts_off_roster(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path
+) -> None:
+    """표지 오독(이태오 → 이타요): 강사가 이름을 고치면 명부와 다시 맞춰 잇는다. 명부에 없는
+    학생(전학 온 학생 등)은 그대로 확정할 수 있다."""
+    covers = [_cover("이타요", "2반"), _cover("최민준", "2반")]
+    reads = [_lines("답 1"), _lines("답 2")]
+    exe = make_fake("script", script=[{"response": json.dumps(r, ensure_ascii=False)}
+                                      for r in covers + reads])  # fmt: skip
+    svc = _services(app_paths, tmp_path, exe)
+    roster = Roster(svc.workspace)
+    roster.import_rows([{"name": "이태오", "class_name": "2반", "school": "포항제철중"}])
+    store = _exam(svc)
+    res = workflow.scan_batch(svc, store, _pdf(tmp_path / "a.pdf", 4), per_student=2)
+    assert [p.name for p in res.export.written if p.suffix == ".hwpx"] == ["(반별)_2반_1.hwpx"]
+    pending = store.student_record("이타요")
+    assert pending is not None and pending.name_pending
+
+    fixed = workflow.rename_student(svc, store, "이타요", name="이태오")
+    assert fixed.record.roster_id == "S0001" and fixed.record.school == "포항제철중"
+    assert not fixed.record.name_pending
+    assert student_file(svc.workspace, store, "이태오", "1").name == "2반_이태오_1.hwpx"
+    assert student_file(svc.workspace, store, "이태오", "1").is_file()
+
+    still = workflow.rename_student(svc, store, "최민준", name="최민준")
+    assert still.record.roster_note is not None, "명부에 없는 이름으로 고치면 확인이 남는다"
+    kept = workflow.rename_student(svc, store, "최민준", off_roster=True)
+    assert kept.record.roster_note is None and kept.record.roster_id is None
+    assert student_file(svc.workspace, store, "최민준", "1").is_file()
+    assert not [n for n in exam_notices(store) if n["id"].startswith(("roster", "rename"))]
 
 
 def test_api_confirm_files_and_identity(app_paths: AppPaths, tmp_path: Path) -> None:

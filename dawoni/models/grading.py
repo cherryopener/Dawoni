@@ -525,6 +525,14 @@ class StudentRecord(DawoniModel):
         description="같은 반에 같은 이름의 시험지가 또 있음 — 강사가 김다원A·김다원B처럼 이름을 "
         "바꾸기 전에는 HWPX를 만들지 않는다 (PLAN.md §5-1 3단계)",
     )
+
+    @property
+    def name_pending(self) -> bool:
+        """이름 확인 전 — 같은 반 동명이인이거나, 명부가 있는데 명부와 맞추지 못함. 판독·채점은
+        계속하되 강사가 이름을 확인하기 전에는 HWPX를 쓰지 않는다 (잘못된 이름으로 파일이
+        생기지 않게, 2026-11-05 사용자 결정)."""
+        return self.needs_rename or self.roster_note is not None
+
     teacher_marks: dict[str, dict[str, float | None]] = Field(
         default_factory=lambda: dict[str, dict[str, float | None]](),
         description="답안 쪽 점수 칸에 강사가 (빨간 펜으로) 적은 소문항 점수: 문항 → 소문항 → 점수 "

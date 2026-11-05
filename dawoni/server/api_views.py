@@ -99,6 +99,16 @@ def exam_notices(store: ExamStore) -> list[dict[str, Any]]:
                     "detail": f"{', '.join(names)} — 이름을 나눠야 판독본을 만듭니다",
                     "link": ["exams", exam.id, "scan"]})  # fmt: skip
 
+    off = [r for r in store.student_records() if r.roster_note is not None and not r.needs_rename]
+    if off:
+        names = sorted({f"{r.class_name or ''} {r.name or r.student_id}".strip() for r in off})
+        more = f" 외 {len(names) - 4}명" if len(names) > 4 else ""
+        out.append({**base, "id": f"roster:{exam.id}", "kind": "rename",
+                    "title": f"명부에 없는 이름 {len(off)}명", "count": len(off),
+                    "detail": f"{', '.join(names[:4])}{more} — 이름을 확인해야 판독본을 만듭니다"
+                              " (판독·채점은 계속)",
+                    "link": ["exams", exam.id, "scan"]})  # fmt: skip
+
     review = [
         (s, q.number)
         for s in store.students()

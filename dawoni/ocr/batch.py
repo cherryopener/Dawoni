@@ -220,16 +220,27 @@ def settle_rotations(
     ]
 
 
+MAX_ROSTER_NAMES = 400
+"""표지 읽기에 넘기는 명부 이름 수 한도 (프롬프트가 너무 길어지지 않게 — 넘으면 넘기지 않음)."""
+
+
 def read_cover(
-    engine: ContextEngine, exam: Exam, cover: Path, classes: list[str] | None
+    engine: ContextEngine,
+    exam: Exam,
+    cover: Path,
+    classes: list[str] | None,
+    names: dict[str, list[str]] | None = None,
 ) -> CoverRead:
+    """`names`: 명부의 반 → 이름. 주면 성명 칸을 이 중에서 고르게 한다 (없으면 적힌 그대로)."""
+
     def check(c: CoverRead) -> list[str]:
         return check_cover(c, exam, classes)
 
+    roster = names if names and sum(map(len, names.values())) <= MAX_ROSTER_NAMES else {}
     return engine.run(
         dataclasses.replace(COVER, validator=check),
         TaskInput(
-            variables={"classes": classes or []},
+            variables={"classes": classes or [], "roster": roster},
             material="이 시험의 문항 번호: " + ", ".join(q.number for q in exam.questions),
             attachments=(cover,),
         ),

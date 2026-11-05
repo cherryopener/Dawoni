@@ -62,7 +62,7 @@ SCAN_PDF = ROOT / "real_data" / "20261028172150.pdf"
 DAWONI_WS = Path(r"D:\Downloads\Dawoni-windows\temp")
 DAWONI_EXAM = DAWONI_WS / "exams" / "exam-01a19b388c2a75f58e8cc7ffe047c0e2"
 PER_STUDENT = 3
-ROLE_OF = {"exam": "exam_reader", "key": "key_reader", "cover": "cover_reader",
+ROLE_OF = {"exam": "exam_reader", "key": "key_reader", "cover": "cover_reader", "cover_roster": "cover_reader+명부",
            "read": "handwriting_reader", "grade": "grader"}  # fmt: skip
 _print_lock = threading.Lock()
 
@@ -180,6 +180,26 @@ def run_cover(model: str, set_no: int) -> Any:
     return batch.read_cover(engine_for(model), exam, img, None).model_dump(mode="json")
 
 
+M3_STUDENTS = ROOT / "experiments" / "out" / "m3" / "ws" / "exams" / DAWONI_EXAM.name / "students"
+
+
+def roster_names() -> dict[str, list[str]]:
+    """M3 학생 기록(사람이 확인한 이름)의 24명을 명부로 — 학원이 명부 xlsx를 넣은 경우."""
+    out: dict[str, list[str]] = {}
+    for f in sorted(M3_STUDENTS.glob("*.json")):
+        d = json.loads(f.read_text(encoding="utf-8"))
+        out.setdefault(d.get("class_name") or "", []).append(d["name"])
+    return {k: sorted(v) for k, v in out.items()}
+
+
+def run_cover_roster(model: str, set_no: int) -> Any:
+    """2026-11-05: 표지 이름을 명부 안에서 고르게 하면 claude의 한글 이름 오독이 줄어드는가."""
+    exam = load_exam()
+    img = scan_images(set_no, [1], 0)[0]
+    out = batch.read_cover(engine_for(model), exam, img, None, roster_names())
+    return out.model_dump(mode="json")
+
+
 def reference_rotation(set_no: int) -> int:
     ref = load_reference("covers").get(str(set_no))
     if ref and ref.get("rotation") is not None:
@@ -254,6 +274,7 @@ TASKS: dict[str, Callable[[str, int], Any]] = {
     "exam": run_exam,
     "key": run_key,
     "cover": run_cover,
+    "cover_roster": run_cover_roster,
     "read": run_read,
     "rubric": run_rubric,
 }
@@ -473,6 +494,7 @@ def report() -> str:
     ]
     scorers: dict[str, Callable[[dict[int, Any], str], tuple[float, str]]] = {
         "cover": lambda r, _: score_cover(r),
+        "cover_roster": lambda r, _: score_cover(r),
         "read": score_read,
         "grade": lambda r, _: score_grade(r),
     }

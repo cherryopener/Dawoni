@@ -137,7 +137,7 @@ export function ExamsPage() {
                 </div>
                 <div className="flex gap-1.5">
                   {s.needs_input > 0 && <Badge tone="bad">입력 대기 {s.needs_input}</Badge>}
-                  {s.needs_rename > 0 && <Badge tone="bad">이름 확인 {s.needs_rename}</Badge>}
+                  {s.needs_rename + s.not_in_roster > 0 && <Badge tone="bad">이름 확인 {s.needs_rename + s.not_in_roster}</Badge>}
                   {s.needs_review > 0 && <Badge tone="warn">검토 필요 {s.needs_review}</Badge>}
                 </div>
                 <ChevronRight className="size-4 text-text-3" />

@@ -8,7 +8,7 @@ import { Help } from "@/components/ui/help";
 import { Chips, Dropzone, ErrorNote, Input, Progress } from "@/components/ui/misc";
 import { api, enc, examFileUrl, onJobsChanged, useAction, useApi, waitJob } from "@/lib/api";
 import { useTeacher } from "@/lib/session";
-import type { ExamStudent, InboxPdf, Job } from "@/lib/types";
+import type { ExamStudent, InboxPdf, Job, RosterStudent } from "@/lib/types";
 import { useExam } from "../Exam";
 
 type Status = "이름 확인 대기" | "입력 대기" | "확인 전" | "확인 완료" | "판독 전";
@@ -18,11 +18,16 @@ const TONE: Record<Status, Tone> = { "이름 확인 대기": "bad", "입력 대�
 function statusOf(s: ExamStudent): { status: Status; unreadable: number } {
   const cells = Object.values(s.cells);
   const unreadable = cells.reduce((a, c) => a + (c.transcript?.unreadable ?? 0), 0);
-  if (s.record?.needs_rename) return { status: "이름 확인 대기", unreadable };
+  if (namePending(s)) return { status: "이름 확인 대기", unreadable };
   if (unreadable) return { status: "입력 대기", unreadable };
   const ts = cells.map((c) => c.transcript).filter((t) => t !== null);
   if (ts.length === 0) return { status: "판독 전", unreadable };
   return { status: ts.every((t) => t.confirmed) ? "확인 완료" : "확인 전", unreadable };
+}
+
+/** 이름 확인 전: 같은 반 동명이인, 또는 명부와 맞추지 못함 — 판독·채점은 하지만 판독본 HWPX는 확인 뒤에. */
+function namePending(s: ExamStudent): boolean {
+  return Boolean(s.record?.needs_rename || s.record?.roster_note);
 }
 
 /** 이 시험의 판독 작업 진행 (작업 목록에서). */
@@ -102,16 +107,27 @@ function BatchDialog({ pdf, onClose }: { pdf: InboxPdf | null; onClose: () => vo
   );
 }
 
+type Fix = { name?: string; off?: boolean };
+
 function RenameDialog({ open, onClose, students }: { open: boolean; onClose: () => void; students: ExamStudent[] }) {
   const { id, base } = useExam();
-  const [names, setNames] = useState<Record<string, string>>({});
+  const roster = useApi<{ students: RosterStudent[] }>(open ? "/students" : null, { refreshOnJobs: false });
+  const [fixes, setFixes] = useState<Record<string, Fix>>({});
   const act = useAction();
-  const dup = students.filter((s) => s.record?.needs_rename);
+  const pending = students.filter(namePending);
+  const everyone = roster.data?.students ?? [];
+  const inClass = (s: ExamStudent) => everyone.filter((r) => (r.class_name ?? "") === (s.record?.class_name ?? ""));
+  const set = (sid: string, f: Fix) => setFixes({ ...fixes, [sid]: { ...fixes[sid], ...f } });
   const save = () =>
     act.run(async () => {
-      for (const s of dup) {
-        const name = names[s.student]?.trim();
-        if (name && name !== s.record?.name) await api.put(`${base}/students/${enc(s.student)}/identity`, { name });
+      for (const s of pending) {
+        const f = fixes[s.student] ?? {};
+        const name = f.name?.trim();
+        const changed = Boolean(name && name !== s.record?.name);
+        if (!changed && !f.off) continue;
+        // 명부에서 고른 이름이면 그 학생과 잇는다 (서버도 이름·반으로 다시 맞춰 본다)
+        const hit = changed ? inClass(s).find((r) => r.name === name) : undefined;
+        await api.put(`${base}/students/${enc(s.student)}/identity`, hit ? { roster_id: hit.id } : { name: changed ? name : undefined, off_roster: Boolean(f.off) });
       }
       onClose();
     });
@@ -119,34 +135,61 @@ function RenameDialog({ open, onClose, students }: { open: boolean; onClose: () 
     <Dialog
       open={open}
       onOpenChange={(v) => !v && onClose()}
-      title="같은 반에 같은 이름"
-      desc="학원에서 쓰는 이름으로 나눠 주세요 (예: 김다원A, 김다원B)."
+      title="이름 확인"
+      desc="표지 그림을 보고 이름을 고르거나 고쳐 주세요. 같은 반에 같은 이름이면 김다원A, 김다원B처럼 나눕니다."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             나중에
           </Button>
           <Button variant="primary" disabled={act.busy} onClick={() => void save()}>
-            이름 바꾸기
+            {act.busy ? "판독본 다시 쓰는 중…" : "확인"}
           </Button>
         </>
       }
     >
-      <div className="flex max-h-[50vh] flex-col gap-3 overflow-auto">
-        {dup.map((s) => (
-          <div key={s.student} className="flex items-center gap-3">
-            <img
-              src={examFileUrl(id, `scans/${s.student}/page_01.png`)}
-              alt="표지"
-              className="h-20 w-28 rounded-lg bg-muted object-cover object-top"
-              onError={(e) => (e.currentTarget.style.visibility = "hidden")}
-            />
-            <div className="flex-1 text-[13px] text-text-2">
-              {s.record?.class_name} · {s.record?.school ?? "학교 모름"}
+      <div className="flex max-h-[55vh] flex-col gap-3 overflow-auto">
+        {pending.map((s) => {
+          const f = fixes[s.student] ?? {};
+          const list = `roster-${s.student}`;
+          return (
+            <div key={s.student} className="flex items-start gap-3">
+              <a href={examFileUrl(id, `scans/${s.student}/page_01.png`)} target="_blank" rel="noreferrer" title="표지 크게 보기" className="shrink-0">
+                <img
+                  src={examFileUrl(id, `scans/${s.student}/page_01.png`)}
+                  alt="표지"
+                  className="h-28 w-20 rounded-lg bg-white object-contain"
+                  onError={(e) => (e.currentTarget.style.visibility = "hidden")}
+                />
+              </a>
+              <div className="min-w-0 flex-1 text-[13px]">
+                <div className="text-text-2">
+                  {s.record?.class_name ?? "반 모름"} · {s.record?.school ?? "학교 모름"}
+                  {s.record?.cover_name && s.record.cover_name !== s.record.name && <span className="text-text-3"> · 표지: {s.record.cover_name}</span>}
+                </div>
+                <div className={s.record?.needs_rename ? "text-bad" : "text-warn"}>{s.record?.needs_rename ? "같은 반에 같은 이름이 또 있음" : s.record?.roster_note}</div>
+                {!s.record?.needs_rename && (
+                  <label className="mt-1 flex items-center gap-1.5 text-text-2">
+                    <input type="checkbox" checked={Boolean(f.off)} onChange={(e) => set(s.student, { off: e.target.checked })} />
+                    명부에 없는 학생으로 두기
+                  </label>
+                )}
+              </div>
+              <Input
+                list={list}
+                value={f.name ?? s.record?.name ?? ""}
+                onChange={(e) => set(s.student, { name: e.target.value })}
+                className="w-32"
+                aria-label={`${s.record?.name ?? s.student} 이름`}
+              />
+              <datalist id={list}>
+                {inClass(s).map((r) => (
+                  <option key={r.id} value={r.name} />
+                ))}
+              </datalist>
             </div>
-            <Input value={names[s.student] ?? s.record?.name ?? ""} onChange={(e) => setNames({ ...names, [s.student]: e.target.value })} className="w-32" />
-          </div>
-        ))}
+          );
+        })}
         {act.error && <ErrorNote message={act.error} />}
       </div>
     </Dialog>
@@ -169,6 +212,8 @@ export function ScanStep() {
   const rows = (students.data ?? []).map((s) => ({ s, ...statusOf(s) })).sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
   const waiting = rows.filter((r) => r.status === "입력 대기").length;
   const dup = rows.filter((r) => r.status === "이름 확인 대기").length;
+  const twins = rows.filter((r) => r.s.record?.needs_rename).length;
+  const offRoster = dup - twins;
 
   const upload = (files: File[]) =>
     act.run(async () => {
@@ -255,9 +300,12 @@ export function ScanStep() {
       {dup > 0 && (
         <div className="flex items-center gap-2 rounded-[var(--radius-card)] border border-line bg-bad-soft px-4 py-3 text-bad">
           <AlertTriangle className="size-4" />
-          <span className="flex-1">같은 반에 같은 이름의 시험지가 있습니다 ({dup}장). 이름을 나눠야 판독본을 만듭니다.</span>
+          <span className="flex-1">
+            이름을 확인할 시험지가 있습니다 ({dup}장{twins ? ` · 같은 반 같은 이름 ${twins}` : ""}{offRoster ? ` · 명부에 없음 ${offRoster}` : ""}). 판독·채점은
+            계속하고, 판독본은 이름을 확인하면 만듭니다.
+          </span>
           <Button size="sm" variant="outline" onClick={() => setRenameOpen(true)}>
-            이름 나누기
+            이름 확인
           </Button>
         </div>
       )}
@@ -334,6 +382,7 @@ export function ScanStep() {
         onClose={() => {
           setRenameOpen(false);
           students.reload();
+          fileMap.reload(); // 이름이 바뀌면 HWPX 파일 이름도 바뀐다
           reload();
         }}
         students={students.data ?? []}

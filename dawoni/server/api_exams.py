@@ -148,7 +148,7 @@ def current_step(exam: Exam, s: dict[str, Any]) -> str:
     """시험 화면 단계 표시줄의 '지금 단계' (PLAN.md §11-1): 강사가 다음에 할 일이 있는 곳."""
     if s["approved"] < len(exam.questions):
         return "rubric"
-    if s["students"] == 0 or s["needs_rename"] or s["graded"] == 0:
+    if s["students"] == 0 or s["needs_rename"] or s["not_in_roster"] or s["graded"] == 0:
         return "scan"
     if s["graded"] < s["students"] * len(exam.questions) or s["needs_review"]:
         return "grade"
@@ -462,6 +462,7 @@ class IdentityBody(BaseModel):
     name: str | None = Field(default=None, description="새 이름 (동명이인은 김다원A처럼)")
     class_name: str | None = None
     roster_id: str | None = Field(default=None, description="명부 학생 ID — 명부의 이름·반을 쓴다")
+    off_roster: bool = Field(default=False, description="명부에 없는 학생으로 확정 (이름 확인 끝)")
 
 
 @router.put("/{exam_id}/students/{student}/identity")
@@ -472,8 +473,9 @@ def identity(
     새 이름으로 옮기고 판독본 HWPX를 다시 쓴다."""
     svc, store = _store(st, exam_id)
     res = workflow.rename_student(
-        svc, store, student, name=body.name, class_name=body.class_name, roster_id=body.roster_id
-    )
+        svc, store, student, name=body.name, class_name=body.class_name, roster_id=body.roster_id,
+        off_roster=body.off_roster,
+    )  # fmt: skip
     return {
         "record": res.record.model_dump(mode="json"),
         "warnings": res.warnings,

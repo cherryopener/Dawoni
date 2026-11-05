@@ -9,8 +9,8 @@
   해시를 받아들여 다음부터 다시 쓴다.
 - 반별 묶음 `(반별)_반_문항.hwpx`는 학생 파일이 바뀔 때마다 다시 만든다. 판독문이 없는 학생은 안내
   쪽으로 넣는다. 앱은 묶음을 다시 읽지 않는다 — 묶음을 고쳐 두었으면 다시 만들지 않고 알린다.
-- 같은 반에 같은 이름의 시험지가 둘 이상이면(`needs_rename`) 강사가 이름을 바꾸기 전까지 그
-  학생 파일을 쓰지 않는다 (§5-1 3단계).
+- 같은 반에 같은 이름의 시험지가 둘 이상이면(`needs_rename`), 또는 명부가 있는데 명부와 맞추지
+  못했으면(`roster_note`) 강사가 이름을 확인하기 전까지 그 학생 파일을 쓰지 않는다 (§5-1 3단계).
 - 엑셀 점수표 `(점수표)_<시험>.xlsx`(`export.xlsx`, §9-2)도 파일을 쓸 때마다 전체를 다시 만든다 —
   엑셀에서 고쳐 둔 점수표는 덮어쓰지 않고 알린다 (앱은 점수표를 읽지 않는다).
 
@@ -101,7 +101,7 @@ def score_table(store: ExamStore) -> tuple[list[Column], list[Row]]:
             g = store.grade(student, q.number)
             t = store.transcript(student, q.number)
             state: State
-            if (r is not None and r.needs_rename) or t is None or t.unreadable or g is None:
+            if (r is not None and r.name_pending) or t is None or t.unreadable or g is None:
                 state = "ungraded"
             elif g.status == "needs_review":
                 state = "review"
@@ -202,10 +202,12 @@ class _Sheets:
         안내 쪽."""
         head = self.head(student)
         r = self.store.student_record(student)
-        if r is not None and r.needs_rename:
+        if r is not None and r.name_pending:
             wait = (
                 "이름 확인 대기: 같은 반에 같은 이름의 시험지가 또 있음 — "
                 "김다원A·김다원B처럼 바꾸면 만듦"
+                if r.needs_rename
+                else f"이름 확인 대기: {r.roster_note} — 화면에서 이름을 확인하면 만듦"
             )
             return Sheet(head=head, lines=[], waiting=wait)
         t = self.store.transcript(student, q)
