@@ -5,7 +5,7 @@ import { JobsButton } from "@/components/Jobs";
 import { NotificationsButton } from "@/components/Notifications";
 import { Count } from "@/components/ui/count";
 import { ErrorNote } from "@/components/ui/misc";
-import { api, errorText } from "@/lib/api";
+import { api, ApiError, errorText } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { navCounts, useNotices } from "@/lib/notices";
 import { go, href, useRoute } from "@/lib/router";
@@ -72,12 +72,21 @@ export function App() {
     api.get<AuthStatus>("/auth/status").then(setAuth).catch((e: unknown) => setErr(errorText(e)));
   }, []);
   const loadStatus = useCallback(() => {
-    api.get<Status>("/status").then(setStatus).catch((e: unknown) => setErr(errorText(e)));
-  }, []);
+    api
+      .get<Status>("/status")
+      .then(setStatus)
+      .catch((e: unknown) => {
+        // 로그인이 풀렸으면(오프라인 기한 지남 등) 오류가 아니라 로그인 화면으로
+        if (e instanceof ApiError && e.code === "needs_login") loadAuth();
+        else setErr(errorText(e));
+      });
+  }, [loadAuth]);
+  useEffect(loadAuth, [loadAuth]);
+  // 로그인 전에는 /api/auth/* 말고는 서버가 needs_login으로 거절한다 — 로그인이 끝난 뒤에 읽는다
+  const signedIn = auth !== null && (!auth.required || auth.state === "ok");
   useEffect(() => {
-    loadAuth();
-    loadStatus();
-  }, [loadAuth, loadStatus]);
+    if (signedIn) loadStatus();
+  }, [signedIn, loadStatus]);
   // 로그인을 기다리는 동안은 기본 브라우저에서 끝났는지 2초마다 본다
   useEffect(() => {
     if (!auth || auth.state === "ok" || auth.state === "off") return;
@@ -92,6 +101,7 @@ export function App() {
       </div>
     );
   }
+  if (auth && !signedIn) return <LoginPage auth={auth} />;
   if (!auth || !status) {
     return (
       <div className="grid h-full place-items-center text-text-3">
@@ -99,7 +109,6 @@ export function App() {
       </div>
     );
   }
-  if (auth.required && auth.state !== "ok") return <LoginPage auth={auth} />;
   const session = { status, reload: loadStatus };
   if (!status.workspace_ok || !status.teacher) {
     return (
