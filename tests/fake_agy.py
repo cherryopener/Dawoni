@@ -65,10 +65,17 @@ def main() -> int:
     if mode == "script":
         state = Path(os.environ["FAKE_STATE_DIR"])
         state.mkdir(parents=True, exist_ok=True)
-        counter = state / "count"
-        n = int(counter.read_text()) + 1 if counter.exists() else 1
-        counter.write_text(str(n))
-        (state / f"prompt_{n}.txt").write_text(content, encoding="utf-8")
+        # 호출 번호는 prompt_N.txt를 배타 생성해서 잡는다. 번호 파일을 읽고 쓰면
+        # 동시 실행(workers>1)에서 쓰는 중인 빈 파일을 읽어 int('')로 죽었다 (2026-11-05, Windows)
+        n = 1
+        while True:
+            try:
+                fd = os.open(state / f"prompt_{n}.txt", os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                break
+            except FileExistsError:
+                n += 1
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
         (state / f"args_{n}.json").write_text(json.dumps(args), encoding="utf-8")
         script = json.loads(Path(os.environ["FAKE_SCRIPT"]).read_text(encoding="utf-8"))
         entry = script[min(n, len(script)) - 1]
