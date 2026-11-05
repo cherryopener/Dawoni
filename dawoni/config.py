@@ -144,7 +144,10 @@ class ScannerSettings(_Settings):
 class AppConfig(_Settings):
     schema_version: int = 1
     workspace: Path | None = None
-    default_agent: AgentName = "agy"
+    default_agent: AgentName = "claude"
+    """기본 AI. 2026-11-05 사용자 결정: claude(sonnet) — 강사들이 주로 claude를 쓰고, 채점 실측에서
+    sonnet이 강사 빨간 펜과 95%로 가장 잘 맞았다 (README "flash-medium ↔ claude 견주기").
+    예전 기본은 agy."""
     teacher: str | None = None
     """이 PC를 쓰는 강사 이름 — 문항 맡기·확정·승인 기록에 남는다 (처음 실행 마법사에서 묻는다)."""
     coordinator_agent: AgentName | None = None

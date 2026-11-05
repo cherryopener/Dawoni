@@ -717,7 +717,10 @@ effort를 고르는 데 쓴다. 기준: **틀려도 조용히 지나가는 일**
    gemini-3.8-flash-low (오류가 너무 많으면 flash-medium)
 7. `real_data/` → 옮겼다 (git 제외)
 
-그 밖의 모델 결정: 실측은 flash-medium으로 한다. agy 기본 등급은 fast·standard = flash-medium,
+**기본 AI → claude (sonnet)** (2026-11-05 사용자 결정: 강사들이 주로 claude를 쓰고, 채점 실측에서 sonnet이
+강사와 95%로 가장 잘 맞음 — README "flash-medium ↔ claude 견주기"). 실측은 flash-medium과 claude에 한 번씩.
+
+그 밖의 모델 결정 (예전): 실측은 flash-medium으로 한다. agy 기본 등급은 fast·standard = flash-medium,
 strong = argon-low (flash와 argon은 구독 한도가 따로라 나눠 쓴다). Windows가 주력이고 macOS 설치·호환성은
 뒤로 미룬다 (README "나중에 할 일").
 

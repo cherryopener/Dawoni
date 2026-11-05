@@ -24,13 +24,14 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _sequential_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """가짜 CLI(script)는 호출 순서대로 답하므로 테스트의 기본 설정은 학생·채점을 차례로 부른다.
-    동시 실행을 시험하는 테스트는 설정에 수를 직접 넣는다."""
+    동시 실행을 시험하는 테스트는 설정에 수를 직접 넣는다. 기본 AI도 가짜 CLI를 두는 agy로."""
     from dawoni.config import AppConfig
 
     original = AppConfig.__init__
 
     def init(self: AppConfig, **kw: Any) -> None:
         kw.setdefault("parallel_students", 1)
+        kw.setdefault("default_agent", "agy")  # 가짜 CLI는 agy 자리에 둔다 (앱 기본은 claude)
         kw.setdefault("parallel_grading", 1)
         original(self, **kw)
 

@@ -35,8 +35,9 @@ def test_sha256_file(tmp_path: Path) -> None:
 
 def test_config_defaults_when_missing(app_paths: AppPaths) -> None:
     cfg = load_config(app_paths)
-    assert cfg.default_agent == "agy"
     assert cfg.agent("agy").model
+    assert AppConfig.model_fields["default_agent"].default == "claude", "앱 기본 AI (2026-11-05)"
+    assert cfg.tier_model("claude", "standard").model == "claude-sonnet-5-5"
 
 
 def test_config_roundtrip(app_paths: AppPaths, tmp_path: Path) -> None:
