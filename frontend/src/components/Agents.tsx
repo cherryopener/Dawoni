@@ -1,10 +1,10 @@
 import { CheckCircle2, CircleAlert, CircleDashed, Loader2, XCircle } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { api, errorText, useApi, waitJob } from "@/lib/api";
 import type { DetectedAgent, Job } from "@/lib/types";
 
-const LABEL: Record<string, string> = {
+export const AGENT_NAMES: Record<string, string> = {
   agy: "agy (Gemini)",
   claude: "Claude Code",
   codex: "Codex (ChatGPT)",
@@ -20,10 +20,22 @@ const INSTALL: Record<string, string> = {
 
 type Test = { state: "running" | "passed" | "failed"; text: string };
 
-/** CLI 연결 마법사 (PLAN §11-1): 설치·로그인 감지 → 안내 → 동봉 그림으로 연결 시험. */
-export function AgentList() {
+/** CLI 연결 마법사 (PLAN §11-1): 설치·로그인 감지 → 안내 → 동봉 그림으로 연결 시험.
+ * `onUsable`: 쓸 수 있는 AI(초록 체크인 것) 이름이 바뀔 때마다. */
+export function AgentList({ onUsable }: { onUsable?: (names: string[]) => void } = {}) {
   const { data, loading, reload } = useApi<DetectedAgent[]>("/agents/detect", { refreshOnJobs: false });
   const [tests, setTests] = useState<Record<string, Test>>({});
+  const usable = (data ?? [])
+    .filter((a) => {
+      const t = tests[a.name]?.state;
+      // 아래 초록 체크와 같은 조건: 설치·로그인 + (켜져 있거나 연결 시험 통과), 시험에서 떨어지지 않음
+      return a.installed && a.logged_in !== false && t !== "failed" && (a.enabled || t === "passed");
+    })
+    .map((a) => a.name)
+    .join(",");
+  useEffect(() => {
+    if (data) onUsable?.(usable ? usable.split(",") : []);
+  }, [data, usable, onUsable]);
   const test = async (name: string) => {
     setTests((t) => ({ ...t, [name]: { state: "running", text: "시험 문제(그림 1장) 보내는 중" } }));
     try {
@@ -68,7 +80,7 @@ export function AgentList() {
           <div key={a.name} className="flex items-center gap-3 border-t border-line py-3 first:border-t-0">
             {icon}
             <div className="min-w-0 flex-1">
-              <div>{LABEL[a.name] ?? a.name}</div>
+              <div>{AGENT_NAMES[a.name] ?? a.name}</div>
               <div className={"text-[12px] " + (t?.state === "failed" ? "text-bad" : "text-text-2")}>{note}</div>
             </div>
             {a.installed ? (

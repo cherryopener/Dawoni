@@ -1,5 +1,6 @@
 import { BookOpenCheck, GraduationCap, Loader2, Moon, Search, Settings, Sparkles, Sun, Users } from "lucide-react";
 import { Activity, useCallback, useEffect, useState, type ReactNode } from "react";
+import logoMark from "@/assets/logo-mark.png";
 import { Coordinator } from "@/components/Coordinator";
 import { JobsButton } from "@/components/Jobs";
 import { NotificationsButton } from "@/components/Notifications";
@@ -146,7 +147,7 @@ function Shell({ dark, toggleTheme, teacher, email }: { dark: boolean; toggleThe
     <div className="flex h-full flex-col">
       <header className="flex h-14 shrink-0 items-center gap-1 border-b border-line bg-card px-4">
         <a href={href("exams")} className="mr-4 flex items-center gap-2 text-[15px] font-medium text-text no-underline">
-          <span className="grid size-7 place-items-center rounded-lg bg-accent text-[13px] text-accent-fg">다</span>
+          <img src={logoMark} alt="" className="size-7 object-contain" />
           다워니
         </a>
         {NAV.map((n) => (

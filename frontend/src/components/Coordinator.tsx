@@ -1,5 +1,5 @@
 import * as D from "@radix-ui/react-dialog";
-import { ArrowRight, CornerDownLeft, Loader2, Sparkles, Stethoscope, Wand2 } from "lucide-react";
+import { ArrowRight, CornerDownLeft, Loader2, Sparkles, Stethoscope, Wand2, X } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,7 +75,10 @@ export function Coordinator({ open, onOpenChange }: { open: boolean; onOpenChang
     <D.Root open={open} onOpenChange={close}>
       <D.Portal>
         <D.Overlay className="fixed inset-0 z-40 bg-black/40" />
-        <D.Content className="fixed left-1/2 top-[14vh] z-50 w-[min(620px,92vw)] -translate-x-1/2 overflow-hidden rounded-[var(--radius-card)] border border-line bg-card text-text">
+        <D.Content
+          onInteractOutside={(e) => e.preventDefault()} // 바깥을 눌러도 적던 부탁을 잃지 않게
+          className="fixed left-1/2 top-[14vh] z-50 w-[min(620px,92vw)] -translate-x-1/2 overflow-hidden rounded-[var(--radius-card)] border border-line bg-card text-text"
+        >
           <D.Title className="sr-only">총괄 AI에게 부탁하기</D.Title>
           <form
             className="flex items-center gap-2 border-b border-line px-4"
@@ -96,6 +99,9 @@ export function Coordinator({ open, onOpenChange }: { open: boolean; onOpenChang
               className="h-14 flex-1 bg-transparent text-[15px] outline-none placeholder:text-text-3"
             />
             <CornerDownLeft className="size-4 text-text-3" />
+            <D.Close type="button" className="ml-1 cursor-pointer text-text-3 hover:text-text" aria-label="닫기">
+              <X className="size-4" />
+            </D.Close>
           </form>
           {act.error && (
             <div className="p-4">

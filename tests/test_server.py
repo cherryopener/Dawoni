@@ -544,9 +544,12 @@ def test_levels_and_from_file_needs_scope_or_level(app_paths: AppPaths, tmp_path
     c = _client(app_paths)
     c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
     levels = c.get("/api/levels").json()
-    h1 = next(lv for lv in levels if lv["id"] == "h1_phys")
-    assert h1["label"] == "고1 물리" and "미분" in h1["forbidden"]
-    assert len(levels) == 30
+    assert [lv["label"] for lv in levels] == [
+        "물리", "화학", "생물학", "지구과학", "대수", "정수", "기하", "조합"
+    ]  # fmt: skip
+    phys = levels[0]
+    assert phys["id"] == "g_phys" and "미분" in phys["forbidden"]
+    assert phys["scope_id"] == "scope_preset_g_phys"
 
     def upload(**data: str) -> Any:
         return c.post("/api/exams/from-file", files={"file": ("t.hwpx", b"x")},

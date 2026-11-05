@@ -419,7 +419,9 @@ def test_hwp_without_hangul_is_refused(tmp_path: Path, monkeypatch: pytest.Monke
 @pytest.mark.parametrize(
     ("spec", "want"),
     [("고1 물리", Level("h1", "phys")), ("h1_phys", Level("h1", "phys")),
-     ("중3수학", Level("m3", "math")), ("고2 생명", Level("h2", "bio"))],
+     ("중3수학", Level("m3", "math")), ("고2 생명", Level("h2", "bio")),
+     ("물리", Level("g", "phys")), ("g_geometry", Level("g", "geometry")),
+     ("생물학", Level("g", "bio")), ("조합", Level("g", "combi"))],
 )  # fmt: skip
 def test_parse_level(spec: str, want: Level) -> None:
     assert parse_level(spec) == want
@@ -438,6 +440,12 @@ def test_presets_block_calculus_below_university(tmp_path: Path) -> None:
     assert {"미분", "판별식"} <= m3 and "삼각비" not in m3, "중3 수학은 삼각비를 배운다"
     h3 = {f.name for f in preset_scope(Level("h3", "math")).forbidden}
     assert "미분" not in h3 and "편미분" in h3
+    gifted = preset_scope(Level("g", "geometry"))
+    assert gifted.subject == "기하" and gifted.id == "scope_preset_g_geometry"
+    assert {"미분", "편미분"} <= {f.name for f in gifted.forbidden}
+    assert "삼각함수" not in {f.name for f in gifted.forbidden}, (
+        "영재 과목은 학년보다 앞선 내용을 쓴다"
+    )
 
     ws = create_workspace(tmp_path / "ws")
     store = ScopeStore(ws)

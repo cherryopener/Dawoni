@@ -1,5 +1,5 @@
 import { ChevronRight, FileText, Plus } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -11,13 +11,48 @@ import { go, href } from "@/lib/router";
 import { STEPS, stepIndex } from "@/lib/steps";
 import type { ExamListItem, Job, Level } from "@/lib/types";
 
+const ACCEPTED = /\.(pdf|docx)$/i;
+const NEEDS_PDF = /\.(hwp|hwpx)$/i;
+
+/** HWP·HWPX는 한글 자동화(개발자 도구·보안 모듈)가 있어야 읽으므로 받지 않는다 (2026-11-05 사용자 결정). */
+function fileProblem(f: File): string | null {
+  if (NEEDS_PDF.test(f.name))
+    return `${f.name}: HWP·HWPX는 한글 개발자 도구가 있어야 읽을 수 있습니다. 한글에서 [파일 → PDF로 저장하기]로 PDF를 만들어 넣어 주세요.`;
+  if (!ACCEPTED.test(f.name)) return `${f.name}: PDF 또는 DOCX만 넣을 수 있습니다.`;
+  return null;
+}
+
 function NewExam({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const levels = useApi<Level[]>(open ? "/levels" : null, { refreshOnJobs: false });
   const [title, setTitle] = useState("");
-  const [level, setLevel] = useState("고1 물리");
+  const [level, setLevel] = useState("물리");
   const [file, setFile] = useState<File | null>(null);
+  const [fileErr, setFileErr] = useState<string | null>(null);
   const [msg, setMsg] = useState("");
   const act = useAction();
+  // 읽는 중에 창을 닫아도 작업은 서버에서 계속된다. 닫혀 있으면 끝나도 화면을 옮기지 않는다
+  // (끝난 소식은 작업·알림 버튼에, 시험은 목록에 나온다)
+  const openRef = useRef(open);
+  openRef.current = open;
+  const reset = () => {
+    setTitle("");
+    setFile(null);
+    setFileErr(null);
+    setMsg("");
+  };
+  const pick = (files: File[]) => {
+    const f = files[0];
+    if (!f) return;
+    const problem = fileProblem(f);
+    setFileErr(problem);
+    setFile(problem ? null : f);
+  };
+  const finish = (examId: string) => {
+    reset();
+    if (!openRef.current) return;
+    onOpenChange(false);
+    go("exams", examId, "read");
+  };
   const start = () =>
     act.run(async () => {
       if (!file) throw new Error("시험지 파일을 넣어 주세요.");
@@ -28,12 +63,10 @@ function NewExam({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
       try {
         const job = await api.upload<Job>("/exams/from-file", form);
         const done = await waitJob(job, (j) => setMsg(j.progress.message));
-        onOpenChange(false);
-        go("exams", String(done.result?.exam_id), "read");
+        finish(String(done.result?.exam_id));
       } catch (e) {
         if (e instanceof ApiError && e.code === "already_ingested") {
-          onOpenChange(false);
-          go("exams", String(e.extra.exam_id), "read");
+          finish(String(e.extra.exam_id));
           return;
         }
         throw e;
@@ -42,13 +75,13 @@ function NewExam({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
   return (
     <Dialog
       open={open}
-      onOpenChange={(v) => !act.busy && onOpenChange(v)}
+      onOpenChange={onOpenChange}
       title="새 시험"
       desc="시험지와 해설지를 넣으면 문항·배점·해설을 읽습니다. 한 파일이어도 됩니다."
       footer={
         <>
-          <Button variant="ghost" disabled={act.busy} onClick={() => onOpenChange(false)}>
-            취소
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            {act.busy ? "닫기" : "취소"}
           </Button>
           <Button variant="primary" disabled={act.busy || !file} onClick={() => void start()}>
             {act.busy ? "읽는 중…" : "시험 읽기"}
@@ -59,10 +92,10 @@ function NewExam({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
       <div className="flex flex-col gap-4">
         <label className="flex flex-col gap-1.5">
           <span className="text-[13px] text-text-2">시험 이름</span>
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 11월 중간고사 물리" />
+          <Input value={title} disabled={act.busy} onChange={(e) => setTitle(e.target.value)} placeholder="예: 2610 월례, 2611 공통, 2612 서울" />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="text-[13px] text-text-2">학년 · 과목</span>
+          <span className="text-[13px] text-text-2">과목</span>
           <Select value={level} onChange={setLevel} options={(levels.data ?? []).map((l) => ({ value: l.label, label: l.label }))} />
         </label>
         {file ? (
@@ -76,8 +109,14 @@ function NewExam({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
             )}
           </div>
         ) : (
-          <Dropzone title="시험지 · 해설지를 끌어다 놓기" hint="PDF · DOCX · HWPX · HWP" accept=".pdf,.docx,.hwpx,.hwp" onFiles={(f) => setFile(f[0] ?? null)} />
+          <Dropzone
+            title="시험지 · 해설지를 끌어다 놓기"
+            hint="PDF · DOCX (HWP·HWPX는 한글에서 PDF로 저장해 넣어 주세요)"
+            accept=".pdf,.docx"
+            onFiles={pick}
+          />
         )}
+        {fileErr && <ErrorNote message={fileErr} />}
         {act.busy && (
           <div>
             <Progress value={30} />

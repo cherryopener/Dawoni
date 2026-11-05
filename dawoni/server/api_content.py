@@ -221,11 +221,11 @@ def list_scopes(st: AppState = State) -> list[dict[str, Any]]:
 
 @router.get("/levels")
 def list_levels() -> list[dict[str, Any]]:
-    """시험을 만들 때 고르는 수준 프리셋 (학년 × 과목) — 고르면 범위 프로필이 생긴다."""
+    """시험을 만들 때 고르는 과목 프리셋 (영재 8과목) — 고르면 범위 프로필이 생긴다."""
     from dawoni.levels import all_levels
 
     return [
-        {"id": f"{lv.grade}_{lv.subject}", "label": lv.label, "scope_id": lv.scope_id,
+        {"id": lv.id, "label": lv.label, "scope_id": lv.scope_id,
          "forbidden": list(lv.forbidden())}
         for lv in all_levels()
     ]  # fmt: skip

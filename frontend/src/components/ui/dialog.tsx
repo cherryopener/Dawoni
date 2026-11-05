@@ -21,7 +21,11 @@ export function Dialog({
     <D.Root open={open} onOpenChange={onOpenChange}>
       <D.Portal>
         <D.Overlay className="fixed inset-0 z-40 bg-black/40" />
-        <D.Content className="fixed left-1/2 top-1/2 z-50 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-card)] border border-line bg-card p-6 text-text">
+        <D.Content
+          // 바깥을 눌러도 닫지 않는다 — 적던 내용이 사라지지 않게 (2026-11-05). 닫기는 ×·취소·Esc로
+          onInteractOutside={(e) => e.preventDefault()}
+          className="fixed left-1/2 top-1/2 z-50 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-card)] border border-line bg-card p-6 text-text"
+        >
           <D.Title className="m-0 text-[16px] font-medium">{title}</D.Title>
           {desc && <D.Description className="m-0 mt-1.5 text-text-2">{desc}</D.Description>}
           <div className="mt-4">{children}</div>

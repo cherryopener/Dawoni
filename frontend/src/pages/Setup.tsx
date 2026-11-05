@@ -1,10 +1,11 @@
 import { ArrowRight, Check } from "lucide-react";
-import { useState } from "react";
-import { AgentList } from "@/components/Agents";
+import { useCallback, useState } from "react";
+import { AGENT_NAMES, AgentList } from "@/components/Agents";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ErrorNote, Input } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/segmented";
+import { Select } from "@/components/ui/select";
 import { api, ApiError, useAction } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/session";
@@ -22,6 +23,14 @@ export function SetupWizard() {
   const [mode, setMode] = useState<"personal" | "team">("personal");
   const [path, setPath] = useState(status.workspace ?? "");
   const act = useAction();
+  // 기본 AI는 이 PC에서 쓸 수 있는 것 중에서 고른다 (설정 기본값 claude를 그대로 두지 않게 — agy만 있는 PC)
+  const [usable, setUsable] = useState<string[] | null>(null);
+  const [agent, setAgent] = useState<string>("");
+  // 하나뿐이면 그것으로, 여럿이면 강사가 고르게 비워 둔다
+  const onUsable = useCallback((names: string[]) => {
+    setUsable(names);
+    setAgent((cur) => (names.includes(cur) ? cur : names.length === 1 ? names[0]! : ""));
+  }, []);
 
   const locked = status.teacher_locked === true;
 
@@ -29,8 +38,11 @@ export function SetupWizard() {
     act.run(async () => {
       if (!locked) {
         if (!name.trim()) throw new Error("강사 이름을 적어 주세요.");
-        await api.patch("/config", { teacher: name.trim() });
       }
+      if (usable !== null && usable.length === 0)
+        throw new Error("쓸 수 있는 AI가 없습니다. 위 안내대로 하나를 설치·로그인한 뒤 '다시 찾기'를 누르세요.");
+      if (!agent) throw new Error("기본 AI를 골라 주세요.");
+      await api.patch("/config", locked ? { default_agent: agent } : { teacher: name.trim(), default_agent: agent });
       setStep(status.workspace_ok ? 2 : 1);
     });
 
@@ -88,8 +100,22 @@ export function SetupWizard() {
             <h3 className="m-0 mt-6 text-[15px]">쓰고 있는 AI</h3>
             <p className="m-0 mt-1 text-[13px] text-text-2">이 PC에서 찾은 AI 프로그램입니다. 하나만 연결되면 시작할 수 있습니다.</p>
             <div className="mt-2">
-              <AgentList />
+              <AgentList onUsable={onUsable} />
             </div>
+            {usable !== null && usable.length > 0 && (
+              <div className="mt-3 flex items-center gap-3 border-t border-line pt-3">
+                <span className="flex-1">
+                  기본 AI
+                  <span className="block text-[12px] text-text-2">시험 읽기·판독·채점에 먼저 쓰는 AI입니다. 설정에서 바꿀 수 있습니다.</span>
+                </span>
+                <Select
+                  value={agent}
+                  placeholder="고르세요"
+                  onChange={setAgent}
+                  options={usable.map((n) => ({ value: n, label: AGENT_NAMES[n] ?? n }))}
+                />
+              </div>
+            )}
           </>
         )}
         {step === 1 && (
