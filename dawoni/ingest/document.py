@@ -28,8 +28,6 @@ from lxml import etree
 from dawoni.ingest.layout import (
     _ANCHOR,  # pyright: ignore[reportPrivateUsage]
     _KEY_MARK,  # pyright: ignore[reportPrivateUsage]
-    _POINTS,  # pyright: ignore[reportPrivateUsage]
-    _TOTAL,  # pyright: ignore[reportPrivateUsage]
     SET_MARK,
     DocumentLayout,
     Figure,
@@ -37,6 +35,7 @@ from dawoni.ingest.layout import (
     Rect,
     Region,
     _anchor_label,  # pyright: ignore[reportPrivateUsage]
+    marked_points,
     number_chain,
 )
 from dawoni.mathx.omml import M as MATH
@@ -530,9 +529,7 @@ def analyze_document(path: Path, work_dir: Path) -> DocAnalysis:
             notes.setdefault(owner, []).append(p)
 
     for r in regions:
-        text = r.text
-        m = _TOTAL.search(text) or _POINTS.search(text)
-        r.points = float(m.group(1)) if m else None
+        r.points = marked_points(r.text)
         for k, f in enumerate(r.figures, start=1):
             f.id = f"F{k}"
     _chunk(regions)

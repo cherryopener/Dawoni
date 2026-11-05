@@ -39,6 +39,18 @@ def test_real_exam_three_questions() -> None:
     ] == [("1", [3]), ("2", [4]), ("3", [5])]
 
 
+def test_real_exam_list_inside_question() -> None:
+    """공통형3회: 3번 안의 [실험 단서] 1.~4.가 문항이 아님. 배점은 조각난 "총 점 [ 8 ]"에서."""
+    pdf = need(REAL / "공통형3회.pdf")
+    k = find_key_pages(pdf)
+    assert k == [6, 7]
+    assert [(r.label, r.pages, r.points) for r in analyze(pdf, exclude=k).regions] == [
+        ("1", [3], 8),
+        ("2", [4], 9),
+        ("3", [5], 8),
+    ]
+
+
 @pytest.mark.parametrize(
     ("lo", "hi", "first", "last"),
     [(4, 20, 1, 30), (23, 34, 31, 48), (38, 70, 49, 108), (72, 85, 109, 131),

@@ -141,6 +141,53 @@ def test_repeated_point_fragments_do_not_hide_question_number(tmp_path: Path) ->
     assert [(r.label, r.points) for r in layout.regions] == [("1", 10), ("2", 10), ("3", 10)]
 
 
+def test_numbered_list_inside_question_is_not_questions(tmp_path: Path) -> None:
+    """실측 공통형3회: 3번 안의 [실험 단서] 1.~4.(들여 씀)가 3번까지의 줄기보다 길어 문항 1~4번이
+    되고 진짜 1·2번은 사라졌다. 단서 "1."이 새 묶음의 시작으로 3번을 끊어서도 안 된다."""
+    pdf = tmp_path / "nested.pdf"
+    doc = pymupdf.open()
+    for n in (1, 2, 3):
+        p = doc.new_page(width=595, height=842)
+        lines = [(50, 120, f"{n}. 다음 물음에 답하시오. [총 8점]"), (50, 160, "(1) 첫 소문항")]
+        if n == 3:
+            lines += [(58, 180 + 20 * k, f"{k}. 단서 {k}") for k in range(1, 5)]
+        lines.append((50, 400, "(2) 둘째 소문항 [단답형: 4점]"))
+        for x, y, s in lines:
+            p.insert_text((x, y), s, fontname="korea", fontsize=10)  # pyright: ignore[reportUnknownMemberType]
+    doc.save(str(pdf))  # pyright: ignore[reportUnknownMemberType]
+    layout = analyze(pdf)
+    assert [(r.label, r.pages) for r in layout.regions] == [("1", [1]), ("2", [2]), ("3", [3])]
+    q3 = layout.region("3")
+    assert "4. 단서 4" in q3.text and "(2) 둘째 소문항 [단답형: 4점]" in q3.text
+
+
+def test_nested_lists_only_restarting_indented_runs() -> None:
+    from dawoni.ingest.layout import nested_lists
+
+    # 3번 뒤에 들여 쓴 1.~4. → 목록
+    assert nested_lists([(1, 0), (2, 0), (3, 0), (1, 8), (2, 8), (3, 8), (4, 8)]) == {3, 4, 5, 6}
+    # 1번 안의 목록 뒤에 2번이 이어짐
+    assert nested_lists([(1, 0), (1, 8), (2, 8), (2, 0), (3, 0)]) == {1, 2}
+    # 오른쪽 정렬: 한 자리 번호가 두 자리보다 들여 써짐 — 다시 시작하지 않으니 문항
+    assert nested_lists([(8, 5), (9, 5), (10, 0), (11, 0)]) == set()
+    # 왼쪽에 걸친 글 때문에 들여 쓴 것처럼 보이는 진짜 문항 (번호가 이어짐)
+    assert nested_lists([(1, 0), (2, 0), (3, 12), (4, 0)]) == set()
+    # 바깥 번호가 하나뿐이면 (왼쪽에 걸친 그림 글자 "5." 등) 판단하지 않음
+    assert nested_lists([(5, 0), (1, 8), (2, 8), (3, 8)]) == set()
+    assert nested_lists([(1, 0), (2, 0), (3, 0)]) == set()
+
+
+def test_split_total_points() -> None:
+    """실측 공통형3회: "[총 8점]"이 "총 점 [ 8 ]", "[ 총 점 9 ]"로 조각나 배점을 못 읽음."""
+    from dawoni.ingest.layout import marked_points
+
+    assert marked_points("답하시오 . . 1) 총 점 [ 8 ]\n. [ 단답형 : 4 점 ]") == 8
+    assert marked_points("[ 총 점 9 ]\n[ 서술형점 :5 ]") == 9
+    assert marked_points(". 1) 총 [ 10 점 ] 를 따라") == 10
+    assert marked_points("[3점]") == 3
+    assert marked_points("[ 단답형 : 4 점 ]") is None
+
+
 # ---------------------------------------------------------------- 시험지 구조화 검증
 
 

@@ -49,6 +49,15 @@ MAX_STEP = 5
 _POINTS = re.compile(r"[\[［~]\s*(?:총\s*)?(\d+(?:\.\d+)?)\s*점\s*[\]］₩]")
 """배점 "[3점]" — 수능 PDF는 괄호가 글꼴 탓에 "~3점₩"로 나온다 (실측)."""
 _TOTAL = re.compile(r"\[\s*총\s*(\d+(?:\.\d+)?)\s*점\s*\]")
+_SPLIT_TOTAL = re.compile(r"총\s*점\s*\[?\s*(\d+(?:\.\d+)?)\s*\]")
+"""조각난 "[총 8점]": PDF가 "총 점"을 한 조각으로 두고 숫자·괄호를 따로 둬 "총 점 [ 8 ]",
+"[ 총 점 9 ]"로 읽힌다 (실측 공통형3회 — 배점을 못 읽어 소문항 배점 합을 확인하지 못함)."""
+
+
+def marked_points(text: str) -> float | None:
+    """문항 글에 적힌 배점 — 총점 표시가 있으면 총점, 없으면 첫 "[N점]"."""
+    m = _TOTAL.search(text) or _SPLIT_TOTAL.search(text) or _POINTS.search(text)
+    return float(m.group(1)) if m else None
 
 
 @dataclass(frozen=True)
@@ -392,8 +401,9 @@ def _anchor_label(text: str) -> str | None:
     return m.group(5)
 
 
-def _anchors(pages: list[PageInfo]) -> list[Anchor]:
-    found: list[Anchor] = []
+def _anchors(pages: list[PageInfo]) -> tuple[list[Anchor], set[int]]:
+    """(문항 번호 앵커, 문항 안 번호 목록 줄의 `id(line)`)."""
+    found: list[tuple[Anchor, float]] = []
     for p in pages:
         for col, (a, b) in enumerate(p.columns):
             col_lines = sorted(
@@ -405,14 +415,23 @@ def _anchors(pages: list[PageInfo]) -> list[Anchor]:
                 label = _anchor_label(ln.text)
                 if label is None or ln.rect.x0 > left + (b - a) * 0.12:
                     continue
-                found.append(Anchor(p.number, col, label, ln))
-    keep = number_chain([(i, int(x.label)) for i, x in enumerate(found) if x.label.isdigit()])
-    return [x for i, x in enumerate(found) if not x.label.isdigit() or i in keep]
+                found.append((Anchor(p.number, col, label, ln), ln.rect.x0 - left))
+    numbered = [(i, x) for i, (x, _) in enumerate(found) if x.label.isdigit()]
+    inner = {
+        numbered[k][0] for k in nested_lists([(int(x.label), found[i][1]) for i, x in numbered])
+    }
+    keep = number_chain([(i, int(x.label)) for i, x in numbered if i not in inner])
+    anchors = [x for i, (x, _) in enumerate(found) if not x.label.isdigit() or i in keep]
+    return anchors, {id(found[i][0].line) for i in inner}
 
 
-def _fences(pages: list[PageInfo], anchors: list[Anchor]) -> list[tuple[int, int, float]]:
+def _fences(
+    pages: list[PageInfo], anchors: list[Anchor], inner: set[int]
+) -> list[tuple[int, int, float]]:
     """문항 영역을 끊는 곳 (쪽, 단, y): 문제 묶음 제목, 그리고 번호 줄기 밖에서 다시 시작하는 "1."
-    (실측: 한 쪽에 "9. … 학습 과제 1. 2." — 9번 영역이 다음 묶음 문항까지 먹음)."""
+    (실측: 한 쪽에 "9. … 학습 과제 1. 2." — 9번 영역이 다음 묶음 문항까지 먹음).
+
+    `inner`(문항 안 번호 목록의 "1.")는 새 묶음이 아니다."""
     chosen = {id(a.line) for a in anchors}
     first = min(((a.page, a.line.rect.y0) for a in anchors), default=None)
     out: list[tuple[int, int, float]] = []
@@ -422,10 +441,50 @@ def _fences(pages: list[PageInfo], anchors: list[Anchor]) -> list[tuple[int, int
             if SET_MARK.match(ln.text) or (
                 first is not None
                 and id(ln) not in chosen
+                and id(ln) not in inner
                 and _anchor_label(ln.text) == "1"
                 and (p.number, ln.rect.y0) > first
             ):
                 out.append((p.number, col, ln.rect.y0))
+    return out
+
+
+NEST_INDENT = 2.0
+"""문항 번호보다 이만큼(pt) 넘게 들여 쓴 번호 줄은 문항 안의 번호 목록일 수 있다.
+실측한 시험지·교재의 문항 번호는 모두 단 왼쪽 끝(들여쓰기 0)."""
+
+
+def nested_lists(cands: list[tuple[int, float]]) -> set[int]:
+    """읽는 순서의 (번호, 들여쓰기) 중 문항 안의 번호 목록인 것의 위치.
+
+    바깥 번호(가장 덜 들여 쓴 번호들)의 줄기가 둘 이상일 때, 그 줄기의 번호 뒤에 더 들여 쓴
+    번호 줄이 이어지며 그 번호 이하로 다시 시작하면 ("3. … [실험 단서] 1. 2. 3. 4.") 그 줄들은
+    문항이 아니다. 실측(공통형3회): 3번 안의 단서 1.~4.가 3번까지의 줄기보다 길어 문항 1~4번이
+    되고, 1·2번 쪽은 어느 문항에도 들지 않았다.
+
+    다시 시작하지 않는 들여 쓴 번호(왼쪽에 걸친 글 때문에 들여 쓴 것처럼 보이는 진짜 문항,
+    오른쪽 정렬된 한 자리 번호)는 그대로 둔다."""
+    if not cands:
+        return set()
+    margin = min(indent for _, indent in cands)
+    outer = [i for i, (_, indent) in enumerate(cands) if indent <= margin + NEST_INDENT]
+    if len(outer) == len(cands):
+        return set()
+    chain = number_chain([(i, cands[i][0]) for i in outer])
+    if len(chain) < 2:
+        return set()
+    out: set[int] = set()
+    last: int | None = None  # 가장 최근 바깥 줄기 번호
+    run: list[int] = []
+    for i, (n, _) in enumerate([*cands, (0, margin)]):  # 끝의 가짜 바깥 줄: 마지막 묶음 닫기
+        if i < len(cands) and i not in outer:
+            run.append(i)
+            continue
+        if run and last is not None and cands[run[0]][0] <= last:
+            out.update(run)
+        run = []
+        if i in chain:
+            last = n
     return out
 
 
@@ -504,11 +563,11 @@ def analyze(path: Path, *, exclude: Collection[int] = ()) -> DocumentLayout:
         return layout
 
     question_pages = [p for p in pages if p.number not in exclude]
-    anchors = _anchors(question_pages)
+    anchors, inner = _anchors(question_pages)
     if not anchors:
         layout.warnings.append("문항 번호를 찾지 못했습니다.")
         return layout
-    fences = _fences(question_pages, anchors)
+    fences = _fences(question_pages, anchors, inner)
 
     regions: list[Region] = []
     current: Region | None = None
@@ -553,9 +612,7 @@ def analyze(path: Path, *, exclude: Collection[int] = ()) -> DocumentLayout:
                 ]
 
     for r in regions:
-        text = _reading_text(r.lines)
-        m = _TOTAL.search(text) or _POINTS.search(text)
-        r.points = float(m.group(1)) if m else None
+        r.points = marked_points(_reading_text(r.lines))
         r.figures.sort(key=lambda f: (f.page, round(f.rect.y0 / 20), f.rect.x0))
         for i, f in enumerate(r.figures, start=1):
             f.id = f"F{i}"
