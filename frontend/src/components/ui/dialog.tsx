@@ -1,0 +1,36 @@
+import * as D from "@radix-ui/react-dialog";
+import { X } from "lucide-react";
+import type { ReactNode } from "react";
+
+export function Dialog({
+  open,
+  onOpenChange,
+  title,
+  desc,
+  children,
+  footer,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  title: ReactNode;
+  desc?: ReactNode;
+  children?: ReactNode;
+  footer?: ReactNode;
+}) {
+  return (
+    <D.Root open={open} onOpenChange={onOpenChange}>
+      <D.Portal>
+        <D.Overlay className="fixed inset-0 z-40 bg-black/40" />
+        <D.Content className="fixed left-1/2 top-1/2 z-50 w-[min(520px,92vw)] -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-card)] border border-line bg-card p-6 text-text">
+          <D.Title className="m-0 text-[16px] font-medium">{title}</D.Title>
+          {desc && <D.Description className="m-0 mt-1.5 text-text-2">{desc}</D.Description>}
+          <div className="mt-4">{children}</div>
+          {footer && <div className="mt-6 flex justify-end gap-2">{footer}</div>}
+          <D.Close className="absolute right-4 top-4 cursor-pointer text-text-3 hover:text-text" aria-label="닫기">
+            <X className="size-4" />
+          </D.Close>
+        </D.Content>
+      </D.Portal>
+    </D.Root>
+  );
+}

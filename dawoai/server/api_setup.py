@@ -57,6 +57,8 @@ def status(st: AppState = State) -> dict[str, Any]:
         "workspace_subjects": subjects,
         "machine": st.machine,
         "default_agent": cfg.default_agent,
+        "teacher": cfg.teacher,
+        "access_required": bool(st.access and st.access.required),
         "agents": {
             n: cfg.agent(n).model_dump(mode="json", exclude={"api_key"}) for n in AGENT_NAMES
         },

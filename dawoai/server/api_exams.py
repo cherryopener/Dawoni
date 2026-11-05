@@ -119,7 +119,7 @@ def exam_summary(store: ExamStore, exam: Exam) -> dict[str, Any]:
     students = store.students()
     cells = [_cell(store, s, q) for s in students for q in exam.questions]
     records = store.student_records()
-    return {
+    out: dict[str, Any] = {
         "questions": len(exam.questions),
         "solved": sum(store.solution(q.number) is not None for q in exam.questions),
         "approved": sum(
@@ -140,6 +140,19 @@ def exam_summary(store: ExamStore, exam: Exam) -> dict[str, Any]:
         "needs_rename": sum(r.needs_rename for r in records),
         "not_in_roster": sum(r.roster_note is not None for r in records),
     }
+    out["step"] = current_step(exam, out)
+    return out
+
+
+def current_step(exam: Exam, s: dict[str, Any]) -> str:
+    """시험 화면 단계 표시줄의 '지금 단계' (PLAN.md §11-1): 강사가 다음에 할 일이 있는 곳."""
+    if s["approved"] < len(exam.questions):
+        return "rubric"
+    if s["students"] == 0 or s["needs_rename"] or s["graded"] == 0:
+        return "scan"
+    if s["graded"] < s["students"] * len(exam.questions) or s["needs_review"]:
+        return "grade"
+    return "export"
 
 
 @router.get("")

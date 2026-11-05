@@ -32,6 +32,7 @@ RoleName = Literal[
     "solver_verifier",
     "calibrator",
     "light_helper",
+    "coordinator",
 ]
 
 
@@ -79,6 +80,8 @@ ROLES: dict[RoleName, Role] = {
              ("suggest_rubric",)),
         Role("light_helper", "가벼운 도우미", "fast", 1, 600, 24_000,
              ("match_candidates", "check_short_answers", "refine_rule", "learn_lesson")),
+        # 총괄 AI: 부탁 → 작업 하나 (원문을 보지 않으므로 프롬프트가 짧다, PLAN.md §2-2)
+        Role("coordinator", "총괄 AI", "fast", 1, 180, 8_000, ("coordinate",)),
     )
 }  # fmt: skip
 

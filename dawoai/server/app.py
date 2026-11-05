@@ -25,6 +25,7 @@ from dawoai.server import (
     api_exams,
     api_setup,
     api_students,
+    api_views,
 )
 from dawoai.server.files import PathRefused
 from dawoai.server.security import COOKIE, LocalOnly
@@ -100,6 +101,7 @@ def create_app(
     app.include_router(api_students.router)
     app.include_router(api_calibration.router)
     app.include_router(api_auth.router)
+    app.include_router(api_views.router)
 
     @app.get("/login")
     def login(t: str = "") -> Response:  # pyright: ignore[reportUnusedFunction]

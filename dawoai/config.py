@@ -145,6 +145,10 @@ class AppConfig(_Settings):
     schema_version: int = 1
     workspace: Path | None = None
     default_agent: AgentName = "agy"
+    teacher: str | None = None
+    """이 PC를 쓰는 강사 이름 — 문항 맡기·확정·승인 기록에 남는다 (처음 실행 마법사에서 묻는다)."""
+    coordinator_agent: AgentName | None = None
+    """총괄 AI를 맡을 AI (강사마다 구독이 달라 강사가 고른다, PLAN.md §15-6). None = 기본 AI."""
     agents: dict[AgentName, AgentSettings] = Field(default_factory=_default_agents)
     tiers: dict[AgentName, dict[TierName, TierModel]] = Field(default_factory=_default_tiers)
     """등급 → AI별 모델. 없는 칸은 그 AI 설정의 `model`을 쓴다 (모델 이름을 짐작하지 않는다)."""

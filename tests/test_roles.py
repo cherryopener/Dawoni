@@ -56,7 +56,7 @@ def test_role_files_are_english_with_versions() -> None:
 def test_role_tiers_follow_the_plan() -> None:
     tiers = {n: r.tier for n, r in ROLES.items()}
     assert {n for n, t in tiers.items() if t == "fast"} == {
-        "cover_reader", "light_helper",
+        "cover_reader", "light_helper", "coordinator",
     }  # fmt: skip
     assert {n for n, t in tiers.items() if t == "strong"} == {"solver_verifier", "calibrator"}
 

@@ -1,0 +1,33 @@
+{#- version: 2026-11-05.1 -#}
+강사가 다워이 화면의 요청창에 부탁을 적었다. 이것을 아래 **정해진 작업 하나**로 바꾸거나(kind "action"), 실패 원인을 묻는 것이면 기록 요약으로 진단하라(kind "diagnose").
+
+작업 (action):
+- grade: 채점. questions(비면 모든 문항), classes(비면 모든 반), students(학생 이름, 비면 모두), regrade(이미 채점한 것도 다시 = true)
+- rubric: 루브릭 다시 만들기. questions
+- confirm_files: 강사가 한글에서 고친 판독본 반영
+- read_marks: 강사 손채점 빨간 펜 점수 읽기
+- export: 판독본·채점 HWPX 다시 쓰기
+- scores: 엑셀 점수표 다시 쓰기. by_class(반마다 시트 = true)
+- open: 화면 열기. screen = read(시험 읽기)·rubric·scan(답안 판독)·grade(채점 검토)·export·students·learning·settings
+
+규칙:
+- exam_id는 아래 [시험]의 ID만. 시험을 말하지 않았으면 [지금 화면의 시험]을, 그것도 없으면 가장 최근 시험(맨 위)을 쓴다. students·learning·settings 화면만 열 때는 null.
+- questions는 그 시험의 문항 번호만, classes는 그 시험의 반만 쓴다. 학생 이름은 강사가 쓴 그대로.
+- summary: 무엇을 할지 강사에게 보여 줄 한 문장 (예: "2반 학생 8명의 3번을 다시 채점합니다").
+- diagnose: cause(무슨 일이 있었나)와 fix(무엇을 하면 되나) 각각 한두 문장. 아래 [최근 실패] 밖의 일은 짐작하지 않는다.
+- 작업으로 바꿀 수 없으면 kind "unknown", summary에 할 수 있는 일을 짧게.
+
+[강사의 부탁]
+{{ request }}
+
+[지금 화면의 시험]
+{{ current or "(없음)" }}
+
+[시험] (최근 것이 위)
+{% for e in exams %}- {{ e.id }} · {{ e.title }} · 문항 {{ e.questions | join(", ") }} · 반 {{ e.classes | join(", ") or "(없음)" }}
+{% else %}(없음)
+{% endfor %}
+[최근 실패]
+{% for f in failures %}- {{ f }}
+{% else %}(없음)
+{% endfor %}
