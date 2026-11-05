@@ -26,16 +26,16 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from dawoai.config import AGENT_NAMES, TIER_NAMES, AppConfig, TierModel, save_config
-from dawoai.export.exam_files import exam_dir, is_edited, student_file
-from dawoai.grading import workflow
-from dawoai.grading.store import ExamStore, ScopeStore
-from dawoai.models.grading import Exam
-from dawoai.models.scope import ScopeProfile
-from dawoai.paths import WORKSPACE_MARKER, AppPaths
-from dawoai.services import Services, open_services
-from dawoai.students import Roster
-from dawoai.workspace import create_workspace
+from dawoni.config import AGENT_NAMES, TIER_NAMES, AppConfig, TierModel, save_config
+from dawoni.export.exam_files import exam_dir, is_edited, student_file
+from dawoni.grading import workflow
+from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.models.grading import Exam
+from dawoni.models.scope import ScopeProfile
+from dawoni.paths import WORKSPACE_MARKER, AppPaths
+from dawoni.services import Services, open_services
+from dawoni.students import Roster
+from dawoni.workspace import create_workspace
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "experiments" / "out" / "m3"

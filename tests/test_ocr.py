@@ -14,14 +14,14 @@ import pytest
 from PIL import Image
 from tests_support import fake_prompts
 
-from dawoai.agents import AgentClient
-from dawoai.cli import main
-from dawoai.config import AppConfig, OcrSettings, save_config
-from dawoai.context import ContextEngine
-from dawoai.fsio import read_json
-from dawoai.grading.pipeline import SecondOpinion
-from dawoai.grading.store import ExamStore
-from dawoai.models.grading import (
+from dawoni.agents import AgentClient
+from dawoni.cli import main
+from dawoni.config import AppConfig, OcrSettings, save_config
+from dawoni.context import ContextEngine
+from dawoni.fsio import read_json
+from dawoni.grading.pipeline import SecondOpinion
+from dawoni.grading.store import ExamStore
+from dawoni.models.grading import (
     UNREADABLE,
     Exam,
     TranscribedLine,
@@ -29,13 +29,13 @@ from dawoai.models.grading import (
     TranscriptionDraft,
     TranscriptLine,
 )
-from dawoai.ocr.crosscheck import cross_check
-from dawoai.ocr.hints import ClovaOcr, MathpixOcr, collect_hints, providers_from
-from dawoai.ocr.pages import PageError, prepare_pages
-from dawoai.ocr.review import REVIEW, confirm_problems, review_lines
-from dawoai.ocr.transcribe import check_transcription, transcribe_student
-from dawoai.paths import AppPaths
-from dawoai.workspace import create_workspace
+from dawoni.ocr.crosscheck import cross_check
+from dawoni.ocr.hints import ClovaOcr, MathpixOcr, collect_hints, providers_from
+from dawoni.ocr.pages import PageError, prepare_pages
+from dawoni.ocr.review import REVIEW, confirm_problems, review_lines
+from dawoni.ocr.transcribe import check_transcription, transcribe_student
+from dawoni.paths import AppPaths
+from dawoni.workspace import create_workspace
 
 FIX = Path(__file__).parent / "fixtures" / "grading"
 SCAN = FIX / "scans" / "F_q1.jpg"

@@ -12,25 +12,25 @@ import pytest
 from test_grading import GRADE_A, RUBRIC_OK, approved_rubric
 from tests_support import fake_prompts
 
-from dawoai.agents.base import RATE_LIMIT_WARNING, AgentError, AgentErrorCode
-from dawoai.agents.claude import ClaudeAdapter
-from dawoai.config import AppConfig, save_config
-from dawoai.fsio import read_json
-from dawoai.grading import assign, workflow
-from dawoai.grading.store import ExamStore, ScopeStore
-from dawoai.models.grading import Exam, ExamQuestion, Transcript, TranscriptLine
-from dawoai.models.scope import ScopeProfile
-from dawoai.parallel import Throttle, each_in_parallel
-from dawoai.paths import AppPaths
-from dawoai.services import Services, open_services
-from dawoai.workspace import create_workspace
+from dawoni.agents.base import RATE_LIMIT_WARNING, AgentError, AgentErrorCode
+from dawoni.agents.claude import ClaudeAdapter
+from dawoni.config import AppConfig, save_config
+from dawoni.fsio import read_json
+from dawoni.grading import assign, workflow
+from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.models.grading import Exam, ExamQuestion, Transcript, TranscriptLine
+from dawoni.models.scope import ScopeProfile
+from dawoni.parallel import Throttle, each_in_parallel
+from dawoni.paths import AppPaths
+from dawoni.services import Services, open_services
+from dawoni.workspace import create_workspace
 
 FIX = Path(__file__).parent / "fixtures" / "grading"
 
 
 def test_throttle_slows_down_on_rate_signal() -> None:
     """한도 신호마다 동시 호출을 하나씩 줄이고, 1 밑으로는 줄이지 않는다."""
-    from dawoai.parallel import RATE_SIGNAL
+    from dawoni.parallel import RATE_SIGNAL
 
     th = Throttle(3)
     peak = 0
@@ -157,7 +157,7 @@ def test_grade_exam_parallel_respects_assignment(
 
 def test_learning_from_hwpx_confirm_collects_changed_lines() -> None:
     """한글에서 고쳐 확인 완료한 판독본들은 고친 줄만 모아 배우기 한 번으로 (M3에서 남긴 것)."""
-    from dawoai.server.learning import confirmed_files_correction
+    from dawoni.server.learning import confirmed_files_correction
 
     def t(s: str, text: str) -> Transcript:
         lines = [

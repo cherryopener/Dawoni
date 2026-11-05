@@ -150,7 +150,7 @@ wheels = [
 ]
 
 [[package]]
-name = "dawoai"
+name = "dawoni"
 version = "0.8.0"
 source = { editable = "." }
 dependencies = [

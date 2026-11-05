@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from dawoai.cli import main
-from dawoai.config import AppConfig, load_config, save_config
-from dawoai.fsio import read_json, sha256_file, write_json_atomic
-from dawoai.models import JobProgress
-from dawoai.paths import AppPaths, WorkspacePaths
-from dawoai.workspace import WorkspaceError, create_workspace, open_workspace
+from dawoni.cli import main
+from dawoni.config import AppConfig, load_config, save_config
+from dawoni.fsio import read_json, sha256_file, write_json_atomic
+from dawoni.models import JobProgress
+from dawoni.paths import AppPaths, WorkspacePaths
+from dawoni.workspace import WorkspaceError, create_workspace, open_workspace
 
 
 def test_atomic_write_leaves_no_temp_files(tmp_path: Path) -> None:
@@ -29,8 +29,8 @@ def test_atomic_write_leaves_no_temp_files(tmp_path: Path) -> None:
 
 def test_sha256_file(tmp_path: Path) -> None:
     p = tmp_path / "x.bin"
-    p.write_bytes(b"dawoai" * 1000)
-    assert sha256_file(p, chunk_size=7) == hashlib.sha256(b"dawoai" * 1000).hexdigest()
+    p.write_bytes(b"dawoni" * 1000)
+    assert sha256_file(p, chunk_size=7) == hashlib.sha256(b"dawoni" * 1000).hexdigest()
 
 
 def test_config_defaults_when_missing(app_paths: AppPaths) -> None:
@@ -87,7 +87,7 @@ def test_open_non_workspace_fails(tmp_path: Path) -> None:
 
 def test_cli_version(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["version"]) == 0
-    assert capsys.readouterr().out.startswith("dawoai ")
+    assert capsys.readouterr().out.startswith("dawoni ")
 
 
 def test_cli_schema(capsys: pytest.CaptureFixture[str]) -> None:
@@ -98,14 +98,14 @@ def test_cli_schema(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_cli_workspace_init(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["workspace", "init", str(tmp_path / "ws")]) == 0
-    assert (tmp_path / "ws" / "dawoai-workspace.json").exists()
+    assert (tmp_path / "ws" / "dawoni-workspace.json").exists()
 
 
 def test_cancel_queued_job_is_immediate() -> None:
     """앞 작업이 도는 동안 대기 중인 작업을 취소하면 바로 취소된다 (Windows 보고)."""
     import threading
 
-    from dawoai.server.jobs import JobContext, JobManager
+    from dawoni.server.jobs import JobContext, JobManager
 
     release = threading.Event()
 
@@ -125,8 +125,8 @@ def test_cancel_queued_job_is_immediate() -> None:
 
 
 def test_parallel_cancel_ends_as_cancelled() -> None:
-    from dawoai.agents.base import AgentError, AgentErrorCode
-    from dawoai.parallel import each_in_parallel
+    from dawoni.agents.base import AgentError, AgentErrorCode
+    from dawoni.parallel import each_in_parallel
 
     def fn(x: int) -> int:
         raise AgentError(AgentErrorCode.CANCELLED)

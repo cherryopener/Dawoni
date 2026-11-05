@@ -1,8 +1,8 @@
-# Dawoai (다워이)
+# Dawoni (다워니)
 
 학원 강사가 이미 구독 중인 AI의 공식 CLI(Antigravity `agy`, Claude Code, Codex CLI, 로컬 LLM)를 일꾼으로 부려
 **손글씨 서술형 답안을 해설지 기준으로, 토큰을 적게 쓰면서 일관되게 채점**하는 도구.
-다워니(`~/Dev/Dawoni`, 커밋 `b3902b4`)에서 채점 기능만 떼어 왔다.
+옛 다워니(`~/Dev/Dawoni-old`, 커밋 `b3902b4`)에서 채점 기능만 떼어 왔다.
 
 설계와 진행 순서는 [PLAN.md](PLAN.md)를 본다.
 
@@ -17,14 +17,14 @@ uv run pyright
 
 - **Windows가 주력**이다 (학원 PC). 개발·확인은 Windows에서 먼저 하고, macOS 설치·호환성은 나중에 한다
   (아래 "나중에 할 일").
-- Python 3.13 (`.python-version`). 다워니(3.15)에서 낮췄다 — PLAN.md §12
+- Python 3.13 (`.python-version`). 옛 다워니(3.15)에서 낮췄다 — PLAN.md §12
 - 실제 AI CLI를 호출하는 테스트는 기본 제외: `uv run pytest -m agent`
-- 실제 자료 회귀 테스트는 `real_data/`(git 제외, 다워니 실측 시험·답안)가 있을 때만 돈다.
+- 실제 자료 회귀 테스트는 `real_data/`(git 제외, 옛 다워니 실측 시험·답안)가 있을 때만 돈다.
   `real_data/docs/`에는 학원 시험지 원본(HWP 3개를 한글로 HWPX·PDF로 저장한 것, DOCX 1개)을 둔다.
 - Windows에서 한글·Word COM을 쓰는 기능(선택): `uv sync --extra windows`
   (그 뒤 `uv run`은 `uv run --extra windows`로 — 그냥 `uv run`은 pywin32를 지운다)
-- 화면(`frontend/`, M7): `npm --prefix frontend install`, `npm --prefix frontend run build`(→ `dawoai/web/`)
-  후 `uv run python -m dawoai ui`. 화면을 고치는 중이면 `uv run python -m dawoai ui --no-window`를 켜 두고
+- 화면(`frontend/`, M7): `npm --prefix frontend install`, `npm --prefix frontend run build`(→ `dawoni/web/`)
+  후 `uv run python -m dawoni ui`. 화면을 고치는 중이면 `uv run python -m dawoni ui --no-window`를 켜 두고
   `npm --prefix frontend run dev`(http://localhost:5173, API는 8765로 프록시). 화면 테스트 `npm --prefix frontend test`.
 - 가짜 AI CLI(`tests/fake_agy.py`)는 macOS·Linux에서 셸 스크립트, Windows에서 `.cmd`로 만든다.
   그래서 Windows에서도 테스트를 건너뛰지 않는다.
@@ -46,8 +46,8 @@ uv run --extra windows python experiments/hwpx_probe.py --hancom
 | 채점본: 점수표, 파란/빨간 코멘트, 맞은 근거 연두 형광펜(M6에서 인쇄되는 글자 음영으로 바꿈), 틀린 곳 빨간 밑줄 (이유 속 식은 한글 수식, 메모는 쓰지 않음) | 만들기·스키마 검사 통과 |
 | 판독본을 다시 읽기 (머리·소문항·줄·수식) | 쓴 것과 같음 |
 | 강사가 판독문 한 줄을 고친 파일을 다시 읽기 | 고친 내용 반영 |
-| LaTeX → 한글 수식 (실제 자료 식 81개: 다워니 해설지·픽스처) | 81개 모두 바뀜. 되돌렸다 다시 바꿔도 같은 스크립트. `\quad`·`\ `는 미리 공백으로 바꿔야 함 |
-| 학생 × 문항 파일 1개 (`2반_김다원_1.hwpx`): 원본 그림 → 학생이 쓴 글 → 쪽 나눔 → 채점 (PLAN.md §15-4) | 한글에서 2쪽으로 열림. 다시 읽기는 채점 머리(`다워이 채점` 스타일)에서 멈춰 판독문만 같게 읽음. 한글이 다시 저장해도 같음 |
+| LaTeX → 한글 수식 (실제 자료 식 81개: 옛 다워니 해설지·픽스처) | 81개 모두 바뀜. 되돌렸다 다시 바꿔도 같은 스크립트. `\quad`·`\ `는 미리 공백으로 바꿔야 함 |
+| 학생 × 문항 파일 1개 (`2반_김다원_1.hwpx`): 원본 그림 → 학생이 쓴 글 → 쪽 나눔 → 채점 (PLAN.md §15-4) | 한글에서 2쪽으로 열림. 다시 읽기는 채점 머리(`다워니 채점` 스타일)에서 멈춰 판독문만 같게 읽음. 한글이 다시 저장해도 같음 |
 | 반별 묶음 (`(반별)_2반_1.hwpx`): 학생 파일을 이름순으로, 학생마다 새 쪽 | 한글에서 2명 → 4쪽. 탐색기 이름순에서 학생 파일보다 위 |
 | 한글 2024에서 열기 (강사 확인) | 깨짐 없이 열림 |
 | 한글 2024 COM으로 열기 → PDF·HWPX 다시 저장 → 다시 읽기 (`--hancom`) | 판독본·채점본 모두 저장됨. 한글이 다시 저장한 판독본도 쓴 것과 같음 |
@@ -58,15 +58,15 @@ uv run --extra windows python experiments/hwpx_probe.py --hancom
 - 한글은 **한 번 띄워 여러 파일에 쓴다.** 파일마다 띄우고 끄면 두 번째 연결이 아직 꺼지는 중인 한글에
   붙어 `The server threw an exception` → `The RPC server is unavailable`로 죽는다.
 - python-hwpx의 `add_paragraph`는 기본으로 앞 문단 스타일을 물려받는다 (`inherit_style=True`). 그러면 머리 다음
-  문단까지 '다워이 머리'가 되어 다시 읽기가 헷갈리므로 `inherit_style=False`로 쓴다.
+  문단까지 '다워니 머리'가 되어 다시 읽기가 헷갈리므로 `inherit_style=False`로 쓴다.
 - 한글 PDF에서 점수표 글자가 바탕 글꼴(명조)로 나온다 — 표 칸 문단에도 맑은 고딕을 줄 것 (M4).
 - 다시 읽을 때 수식은 한글 수식 스크립트 → LaTeX로 되돌리므로 표기가 조금 바뀐다(`^2` → `^{2}`,
   `\ge` → `\geq`). 강사가 고치지 않은 식은 앱 데이터에 둔 원래 LaTeX를 쓰면 된다 (M3에서).
 
 ## 역할별 모델 실측 (M0, 2026-11-04, agy 1.4.12)
 
-`experiments/measure_agy.py`로 다워이 엔진(실제 프롬프트·검증·수리 루프)을 그대로 쓰고 agy 모델만 바꿔
-같은 실제 자료를 돌렸다: 다워니 실측 시험(`real_data/test.pdf`, 3문항·소문항 8개, 해설지 1쪽)과 그 시험의
+`experiments/measure_agy.py`로 다워니 엔진(실제 프롬프트·검증·수리 루프)을 그대로 쓰고 agy 모델만 바꿔
+같은 실제 자료를 돌렸다: 옛 다워니 실측 시험(`real_data/test.pdf`, 3문항·소문항 8개, 해설지 1쪽)과 그 시험의
 학생 답안 스캔 6명분(표지 + 답안 2쪽). claude 모델은 손글씨 판독만 한 번 쟀다(아래). agy 호출 101건, 약 246만 토큰.
 
 | 역할 | 모델 | 시간 중앙값(초) | 토큰 중앙값 | 재요청 | 정확도 |
@@ -92,7 +92,7 @@ uv run --extra windows python experiments/hwpx_probe.py --hancom
 | | **argon-low** | **38** | **13k** | 0% | 8/10 (3점) |
 | | argon-medium | 46 | 13k | 0% | 8/10 (3점) |
 
-- 기준값: 시험지는 다워니 판독(강사 확인), 해설지는 강사가 확인한 다워니 해설지(인쇄본이 틀려 강사가 고친
+- 기준값: 시험지는 옛 다워니 판독(강사 확인), 해설지는 강사가 확인한 옛 다워니 해설지(인쇄본이 틀려 강사가 고친
   3(2)는 뺌 — PLAN.md §1-3), 표지는 사람이 그림을 보고 적은 값(읽기 애매한 이름·학교는 뺌), 채점은 표지의
   빨간 펜 문항 점수. 손글씨는 흐려 사람이 옮긴 기준을 만들지 못해 모델끼리의 일치도만 쟀다.
 - **claude 손글씨 판독 (2026-11-04, 한 번만):** "claude는 한글 손글씨를 못 읽는다"는 강사들 말을 체계적
@@ -112,7 +112,7 @@ uv run --extra windows python experiments/hwpx_probe.py --hancom
     결과는 `results/read_new_prompt/`(위 표는 첫 실측 그대로).
 - 위 표의 유사도(93%)는 claude를 넣기 전 값이다. 넣은 뒤 `report`는 gemini 4개가 90~91%로 나온다
   (비교 대상에 claude가 들어가서).
-- 채점은 다워니의 **초안** 루브릭(보정 전)으로 했으므로 일치도는 보정 전 값이다.
+- 채점은 옛 다워니의 **초안** 루브릭(보정 전)으로 했으므로 일치도는 보정 전 값이다.
 - 작은 표본(시험 1개, 학생 6명)이다. 결론은 "argon-low가 어느 역할에서도 flash-medium보다 나쁘지 않고
   3~7배 빠르며 토큰은 약 1/3"까지다.
 
@@ -124,15 +124,15 @@ argon-low로 보내 두 한도를 나눠 쓴다. flash-low는 쓰지 않는다. 
 ## 시험 읽기 실측 (M1, 2026-11-04, agy 1.4.12, 전부 flash-medium)
 
 ```bash
-uv run python -m dawoai ingest exam 시험지.hwpx --title 주말반 --level "고1 물리"
-uv run python -m dawoai ingest layout 시험지.hwpx     # AI 없이: 문항·그림·미주 해설 나누기만
+uv run python -m dawoni ingest exam 시험지.hwpx --title 주말반 --level "고1 물리"
+uv run python -m dawoni ingest layout 시험지.hwpx     # AI 없이: 문항·그림·미주 해설 나누기만
 ```
 
 | 시험지 | 결과 | 호출 (시간·토큰) | 전체 |
 |---|---|---|---|
 | 학원 주말반 전기2 (HWP → 한글로 HWPX) | 7문항, 그림 13개(3번 선지 그림 ①~⑤ 짝 맞음), 미주 해설 7문항 + 개념 목록 | 문항 2회(274초 10만, 516초 13만), 해설 2회(143초 5만, 333초 9만), 재요청 0 | 851초 |
 | 학원 1월 월례 (DOCX, 자동 번호·Word 수식) | 3문항, 미주 해설 3문항 + 개념 목록 | 문항 2회(209초 8만, 226초 8만), 해설 1회(189초 4만), 재요청 0 | 415초 |
-| 다워니 실측 `test.pdf` (해설지 6쪽 합본) | 소문항 8개·배점이 다워니와 같음 (1: 5/5, 2: 2/2/2/4, 3: 4/6), 부분 점수 표기 θ 2/T₂ 3, (가) 2/(나) 2, 과정 4/답 2 | 문항 3회(174~301초, 5~11만), 해설 2회(두 번 읽기, 196·175초) | 675초 |
+| 옛 다워니 실측 `test.pdf` (해설지 6쪽 합본) | 소문항 8개·배점이 옛 다워니와 같음 (1: 5/5, 2: 2/2/2/4, 3: 4/6), 부분 점수 표기 θ 2/T₂ 3, (가) 2/(나) 2, 과정 4/답 2 | 문항 3회(174~301초, 5~11만), 해설 2회(두 번 읽기, 196·175초) | 675초 |
 
 - 문서는 해설을 **한 번만** 읽는다 (PDF는 두 번 — 세 문항 모두 (2)의 숫자가 두 번 사이에 달라 '원본과 비교' 표시).
 - 실측에서 고친 것 (뒤 판에 들어감, AI 다시 돌리지 않고 캐시로 확인): 배점 표시가 없는 문서는 AI가 배점을
@@ -146,12 +146,12 @@ uv run python -m dawoai ingest layout 시험지.hwpx     # AI 없이: 문항·�
 ## 루브릭 실측 (M2, 2026-11-04, agy 1.4.12, flash-medium)
 
 ```bash
-uv run python -m dawoai exam rubric <시험>                       # 서술형은 해설지 넓히기, 객관식·단답형은 코드
-uv run python -m dawoai exam answers <시험> -q 4 --answer 3 --answer 4   # 복수 정답 (--answer 2,4 = 둘 다 써야, --all-correct)
+uv run python -m dawoni exam rubric <시험>                       # 서술형은 해설지 넓히기, 객관식·단답형은 코드
+uv run python -m dawoni exam answers <시험> -q 4 --answer 3 --answer 4   # 복수 정답 (--answer 2,4 = 둘 다 써야, --all-correct)
 uv run python experiments/measure_agy.py rubric                  # 아래 표
 ```
 
-다워니 실측 시험(`real_data/test.pdf`, 3문항·소문항 8개)의 강사 확인 해설지로 해설지 넓히기를 돌렸다. 범위는
+옛 다워니 실측 시험(`real_data/test.pdf`, 3문항·소문항 8개)의 강사 확인 해설지로 해설지 넓히기를 돌렸다. 범위는
 수준 프리셋 "고1 물리"(미분·적분·극한·벡터 외적·라그랑지안 … 금지).
 
 | 문항 | 호출 | 시간 | 토큰 | 결과 |
@@ -172,17 +172,17 @@ uv run python experiments/measure_agy.py rubric                  # 아래 표
 ## 답안지 → HWPX 실측 (M3, 2026-11-04, agy 1.4.12, flash-medium)
 
 ```bash
-uv run python -m dawoai students import 명부.xlsx                 # 이름/성명·반·학교 (전화번호는 읽지 않음)
-uv run python -m dawoai exam scan-batch <시험> 답안지.pdf --per-student 3   # 표지 → 명부 → 판독 → 판독본 HWPX
-uv run python -m dawoai exam students <시험>                       # 명부 연결·이름 확인 대기
-uv run python -m dawoai exam student <시험> 김다원#5 --name 김다원B  # 같은 반 동명이인 가르기
-uv run python -m dawoai exam confirm <시험> --by 김선생              # 확인 완료: 한글에서 고친 판독본 → 확정 판독문
+uv run python -m dawoni students import 명부.xlsx                 # 이름/성명·반·학교 (전화번호는 읽지 않음)
+uv run python -m dawoni exam scan-batch <시험> 답안지.pdf --per-student 3   # 표지 → 명부 → 판독 → 판독본 HWPX
+uv run python -m dawoni exam students <시험>                       # 명부 연결·이름 확인 대기
+uv run python -m dawoni exam student <시험> 김다원#5 --name 김다원B  # 같은 반 동명이인 가르기
+uv run python -m dawoni exam confirm <시험> --by 김선생              # 확인 완료: 한글에서 고친 판독본 → 확정 판독문
 uv run python experiments/m3_batch.py scan --parallel 4           # 아래 표 (24명)
 uv run --extra windows python experiments/m3_batch.py hancom-edit # 한글(COM)로 고쳐 저장 → 확인 완료
 uv run --extra windows python experiments/m3_resave_probe.py      # 한글로 다시 저장만 한 파일이 같게 읽히는지
 ```
 
-다워니 실측 답안지 스캔(`real_data/20261028172150.pdf`, 72쪽 = 3쪽 × 24명, 옆으로 돌아간 쪽)을 앱 모듈
+옛 다워니 실측 답안지 스캔(`real_data/20261028172150.pdf`, 72쪽 = 3쪽 × 24명, 옆으로 돌아간 쪽)을 앱 모듈
 (`workflow.scan_batch`)로 끝까지 돌렸다. 학생 4명씩 동시에(`parallel_students=4`), 교차 판독 없음.
 
 | 확인한 것 | 결과 |
@@ -211,24 +211,24 @@ uv run --extra windows python experiments/m3_resave_probe.py      # 한글로 �
 ## 채점 실측 (M4, 2026-11-05, agy 1.5.0, 동시 4개)
 
 ```bash
-uv run python -m dawoai exam grade <시험> --by 김선생      # 맡은 문항만, 4개씩 동시에
-uv run python -m dawoai exam assign <시험> -q 2 --by 김선생 [--take]
-uv run python -m dawoai exam board <시험>
+uv run python -m dawoni exam grade <시험> --by 김선생      # 맡은 문항만, 4개씩 동시에
+uv run python -m dawoni exam assign <시험> -q 2 --by 김선생 [--take]
+uv run python -m dawoni exam board <시험>
 uv run python experiments/m4_grade.py grade               # 아래 실측 (결과: experiments/out/m4/)
 uv run python experiments/m4_grade.py grade --regrade --model gemini-4-argon-low --label argon-low
 ```
 
-M3 판독문(학생 24명, 강사 확인 전)을 다워니 **초안** 루브릭(1·2번, 보정 전)으로 채점하고, 표지의 빨간 펜
-문항 점수(표지 판독 — 다워니 실측 68/72)와 비교했다. 3번은 인쇄 해설지가 틀려 뺐다. 1번은 판독문이 있는
+M3 판독문(학생 24명, 강사 확인 전)을 옛 다워니 **초안** 루브릭(1·2번, 보정 전)으로 채점하고, 표지의 빨간 펜
+문항 점수(표지 판독 — 옛 다워니 실측 68/72)와 비교했다. 3번은 인쇄 해설지가 틀려 뺐다. 1번은 판독문이 있는
 학생이 21명이라 채점은 45건.
 
 | | flash-medium (첫 실측) | argon-low (채점만 strong, 재채점 조건 줄인 뒤) | 목표 (§2-5, §13) |
 |---|---|---|---|
-| 강사 점수와 같음 (문항 점수) | **32/45**, ±1점 안 39/45, 차이 합 21점 | **32/45**, ±1점 안 36/45, 차이 합 28점 | 다워니 95% — 비교 불가 (아래) |
+| 강사 점수와 같음 (문항 점수) | **32/45**, ±1점 안 39/45, 차이 합 21점 | **32/45**, ±1점 안 36/45, 차이 합 28점 | 옛 다워니 95% — 비교 불가 (아래) |
 | AI가 강사와 다른 13건 | 11건 낮음, 2건 높음 | **13건 모두 낮음** | |
 | 재요청 | 0/72 (0%) | 0/45 (0%) | 10% 이하 ✅ |
 | 호출 | 72번 = 첫 채점 45 + 재채점 27 | 45번 (재채점 0) | |
-| 토큰 | 학생당 6.8만 (첫 채점만이면 약 4.1만) | **학생당 2.3만** | 다워니(2.8만)보다 적게 — argon ✅ |
+| 토큰 | 학생당 6.8만 (첫 채점만이면 약 4.1만) | **학생당 2.3만** | 옛 다워니(2.8만)보다 적게 — argon ✅ |
 | 호출 하나 시간 (중앙값) | 56초 (재채점 없는 것) | **22초** | 15초 ❌ (argon은 가까움) |
 | 전체 (24명 × 2문항, 동시 4개) | 1,674초 (28분) | **274초 (4.6분)** | |
 | 한도 신호·실패 | 0·0 (agy 일시 오류 `permission_denied` 5번은 새 세션 재시도로 통과) | 0·0 | |
@@ -242,7 +242,7 @@ M3 판독문(학생 24명, 강사 확인 전)을 다워니 **초안** 루브릭(
 - **재채점 조건을 줄였다.** 처음 기준(확신도 낮음·수리·AI가 적은 확인할 점)에서 27건이 모두 "확인할 점"으로
   다시 채점됐다. 점수가 달라진 것은 5건, 강사와 같은 비율은 재채점한 쪽이 더 낮았다(15/27, 안 한 쪽 17/18).
   이제 확신도 < 0.6이거나 수리한 채점만 다시 본다 — 확인할 점은 '검토 필요'로 강사에게 간다.
-- **일치도는 다워니 95%와 견줄 수 없다.** 다워니 95%(182/192)는 **보정한** 루브릭으로 잰 **소문항** 일치도다.
+- **일치도는 옛 다워니 95%와 견줄 수 없다.** 옛 다워니 95%(182/192)는 **보정한** 루브릭으로 잰 **소문항** 일치도다.
   여기는 보정 전 초안 루브릭, 강사 점수는 표지에서 읽은 **문항** 총점(소문항 점수는 M5에서 읽음), 판독문도
   강사 확인 전이다. M0의 같은 모델·루브릭 6명 실측(8/10)과 비슷한 수준이다. AI가 강사보다 짜게 주는 쪽으로
   기울었다(11/13) — 보정(M5)에서 볼 것.
@@ -253,16 +253,16 @@ M3 판독문(학생 24명, 강사 확인 전)을 다워니 **초안** 루브릭(
 ## 보정 실측 (M5, 2026-11-05, agy 1.5.0)
 
 ```bash
-uv run python -m dawoai exam read-marks <시험>                  # 빨간 펜 소문항 점수 읽기
-uv run python -m dawoai exam marks <시험> 김다원 -q 2 --part "(1)②=2"   # 고치기
-uv run python -m dawoai exam marks <시험> 김다원 --confirm --by 김선생   # 강사 채점으로 확정
-uv run python -m dawoai exam suggest-rubric <시험> -q 2 --apply  # calibrator 개선안 → 다시 승인
-uv run python -m dawoai exam compare <시험> --cases              # 소문항 일치도
-uv run python -m dawoai exam calibration <시험> -q 2 --finalize --by 김선생
+uv run python -m dawoni exam read-marks <시험>                  # 빨간 펜 소문항 점수 읽기
+uv run python -m dawoni exam marks <시험> 김다원 -q 2 --part "(1)②=2"   # 고치기
+uv run python -m dawoni exam marks <시험> 김다원 --confirm --by 김선생   # 강사 채점으로 확정
+uv run python -m dawoni exam suggest-rubric <시험> -q 2 --apply  # calibrator 개선안 → 다시 승인
+uv run python -m dawoni exam compare <시험> --cases              # 소문항 일치도
+uv run python -m dawoni exam calibration <시험> -q 2 --finalize --by 김선생
 uv run python experiments/m5_calibrate.py setup|marks|crops|before|calibrate|after|report
 ```
 
-M3 판독문(강사 확인 전)·다워니 초안 루브릭(v1)·M4 채점을 그대로 두고, 스캔 순서로 앞 **5명**을 손채점
+M3 판독문(강사 확인 전)·옛 다워니 초안 루브릭(v1)·M4 채점을 그대로 두고, 스캔 순서로 앞 **5명**을 손채점
 답안지로 보정한 뒤 **나머지 19명**(1·2번, 소문항 112칸)을 다시 채점했다. 3번은 M4처럼 뺐다(인쇄 해설지 오류).
 기준값은 Claude가 답안 쪽 점수 칸 그림을 보고 적은 소문항 점수다(`out/m5/marks_reference.json`, 24명 모두
 소문항 합 = 표지 문항 총점).
@@ -304,8 +304,8 @@ M3 판독문(강사 확인 전)·다워니 초안 루브릭(v1)·M4 채점을 �
 ## 출력 실측 (M6, 2026-11-05, 토큰 0)
 
 ```bash
-uv run python -m dawoai exam export <시험>                  # 판독본·채점 HWPX + 엑셀 점수표 (보통은 저절로)
-uv run python -m dawoai exam scores <시험> [--by-class | --one-sheet]   # 점수표만, 반별 시트 켜고 끄기
+uv run python -m dawoni exam export <시험>                  # 판독본·채점 HWPX + 엑셀 점수표 (보통은 저절로)
+uv run python -m dawoni exam scores <시험> [--by-class | --one-sheet]   # 점수표만, 반별 시트 켜고 끄기
 uv run python experiments/m6_output.py quotes|render 김민규 … --hancom|xlsx   # 아래 실측 (out/m6/)
 ```
 
@@ -349,17 +349,17 @@ npm --prefix frontend run build
 uv run python packaging/build_bundle.py --access access.json   # 없으면 로그인 없는 묶음
 ```
 
-→ `dist/Dawoai/`(약 300 MB)와 `dist/Dawoai-<버전>-windows.zip`(약 110 MB). 강사는 zip을 풀고 `Dawoai.exe`를
+→ `dist/Dawoni/`(약 300 MB)와 `dist/Dawoni-<버전>-windows.zip`(약 110 MB). 강사는 zip을 풀고 `Dawoni.exe`를
 두 번 누른다. 배포는 태그로: `git tag v0.8.0 && git push origin v0.8.0` → Actions `build-windows`가 시험·화면
-빌드·묶음·켜 보기 뒤 Release에 zip을 붙인다 (비밀값 `DAWOAI_ACCESS_JSON` 필요).
+빌드·묶음·켜 보기 뒤 Release에 zip을 붙인다 (비밀값 `DAWONI_ACCESS_JSON` 필요).
 
 실측 (개발 PC, 스마트 앱 컨트롤 켜짐):
 
 | 방식 | 인터넷 표시(MOTW) 붙임 | 결과 |
 |---|---|---|
-| PyInstaller `Dawoai.exe` (서명 없음) | 없음 | **막힘** — "An Application Control policy has blocked this file" |
+| PyInstaller `Dawoni.exe` (서명 없음) | 없음 | **막힘** — "An Application Control policy has blocked this file" |
 | `run.cmd` → 묶음 python.exe | 있음 | **막힘** — "Dangerous file extension from the web" |
-| 서명된 pythonw.exe를 `Dawoai.exe`로 복사 | 있음 | **열림** — PyPI 패키지 .pyd(pydantic_core·lxml·pymupdf·numpy·pywin32)도 모두 불러옴 |
+| 서명된 pythonw.exe를 `Dawoni.exe`로 복사 | 있음 | **열림** — PyPI 패키지 .pyd(pydantic_core·lxml·pymupdf·numpy·pywin32)도 모두 불러옴 |
 
 ## 나중에 할 일
 

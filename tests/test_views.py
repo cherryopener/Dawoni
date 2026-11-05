@@ -11,9 +11,9 @@ from fastapi.testclient import TestClient
 from test_grading import FIX, GRADE_A, RUBRIC_OK, SOL_OK
 from test_server import _client, _wait  # pyright: ignore[reportPrivateUsage]
 
-from dawoai.config import AppConfig, save_config
-from dawoai.fsio import read_json
-from dawoai.paths import AppPaths
+from dawoni.config import AppConfig, save_config
+from dawoni.fsio import read_json
+from dawoni.paths import AppPaths
 
 
 def _exam(c: TestClient, title: str, questions: list[dict[str, Any]]) -> str:

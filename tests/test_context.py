@@ -12,10 +12,10 @@ import pytest
 from pydantic import Field, ValidationError
 from tests_support import fake_prompts
 
-from dawoai.agents import AgentClient, AgentError, AgentErrorCode
-from dawoai.cli import main
-from dawoai.config import AppConfig, save_config
-from dawoai.context import (
+from dawoni.agents import AgentClient, AgentError, AgentErrorCode
+from dawoni.cli import main
+from dawoni.config import AppConfig, save_config
+from dawoni.context import (
     ContextBudgetError,
     ContextEngine,
     GlobalRule,
@@ -26,13 +26,13 @@ from dawoai.context import (
     TaskInput,
     TemplateStore,
 )
-from dawoai.context.assembler import assemble, compact_schema, estimate_tokens
-from dawoai.context.calllog import CallLog
-from dawoai.context.extract import describe_validation_error, extract_json_object
-from dawoai.context.refine import RefinedRule, refine_rule
-from dawoai.models.base import DawoaiModel
-from dawoai.paths import AppPaths
-from dawoai.workspace import create_workspace
+from dawoni.context.assembler import assemble, compact_schema, estimate_tokens
+from dawoni.context.calllog import CallLog
+from dawoni.context.extract import describe_validation_error, extract_json_object
+from dawoni.context.refine import RefinedRule, refine_rule
+from dawoni.models.base import DawoniModel
+from dawoni.paths import AppPaths
+from dawoni.workspace import create_workspace
 
 MakeFake = Callable[..., Path]
 
@@ -58,7 +58,7 @@ def test_extract_json_object_none(text: str) -> None:
     assert extract_json_object(text) is None
 
 
-class _Out(DawoaiModel):
+class _Out(DawoniModel):
     title: str
     score: int = Field(ge=0, le=10)
 
@@ -136,7 +136,7 @@ def test_layer_order() -> None:
     ]
     positions = [p.text.index(h) for h in heads]
     assert positions == sorted(positions)
-    assert p.text.startswith("너는 학원 강사용 프로그램 Dawoai")
+    assert p.text.startswith("너는 학원 강사용 프로그램 Dawoni")
     assert "- [존댓말] 첨삭은 존댓말로 쓸 것." in p.text
     assert set(p.template_versions) == {"contract.md.j2", "refine_rule.md.j2"}
 
@@ -400,8 +400,8 @@ def test_cli_rules_without_workspace(
 
 
 def test_agent_schema_inlines_refs_and_drops_openapi_keywords() -> None:
-    from dawoai.context.schema import agent_schema
-    from dawoai.models import ItemContent
+    from dawoni.context.schema import agent_schema
+    from dawoni.models import ItemContent
 
     for model in (RefinedRule, ItemContent):
         text = json.dumps(agent_schema(model))
@@ -410,7 +410,7 @@ def test_agent_schema_inlines_refs_and_drops_openapi_keywords() -> None:
 
 
 def test_inline_refs_keeps_sibling_description_and_detects_cycles() -> None:
-    from dawoai.context.schema import SchemaError, inline_refs
+    from dawoni.context.schema import SchemaError, inline_refs
 
     s = {
         "type": "object",

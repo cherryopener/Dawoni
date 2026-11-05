@@ -1,4 +1,4 @@
-"""엑셀 점수표 (dawoai/export/xlsx.py, PLAN.md §9-2) — 정렬 규칙, 빈 칸 색, 반별 시트, 시험
+"""엑셀 점수표 (dawoni/export/xlsx.py, PLAN.md §9-2) — 정렬 규칙, 빈 칸 색, 반별 시트, 시험
 데이터에서."""
 
 from __future__ import annotations
@@ -9,10 +9,10 @@ from typing import Any, cast
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from dawoai.export.exam_files import export_scores, score_file, score_table, write_files
-from dawoai.export.xlsx import FILLS, NO_CLASS, Cell, Column, Row, build_scores
-from dawoai.grading.store import ExamStore
-from dawoai.models.grading import (
+from dawoni.export.exam_files import export_scores, score_file, score_table, write_files
+from dawoni.export.xlsx import FILLS, NO_CLASS, Cell, Column, Row, build_scores
+from dawoni.grading.store import ExamStore
+from dawoni.models.grading import (
     Exam,
     GradeResult,
     ItemJudgement,
@@ -21,8 +21,8 @@ from dawoai.models.grading import (
     Transcript,
     TranscriptLine,
 )
-from dawoai.paths import WorkspacePaths
-from dawoai.workspace import create_workspace
+from dawoni.paths import WorkspacePaths
+from dawoni.workspace import create_workspace
 
 COLS = [Column("1-(1)", 3), Column("1-(2)", 2), Column("2", 5)]
 

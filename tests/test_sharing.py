@@ -9,13 +9,13 @@ import pytest
 from test_grading import FIX
 from test_server import _client  # pyright: ignore[reportPrivateUsage]
 
-from dawoai.config import AppConfig, save_config
-from dawoai.fsio import read_json
-from dawoai.grading.store import ExamStore
-from dawoai.models.base import utcnow
-from dawoai.models.grading import Exam, ExamQuestion
-from dawoai.paths import AppPaths
-from dawoai.sharing import (
+from dawoni.config import AppConfig, save_config
+from dawoni.fsio import read_json
+from dawoni.grading.store import ExamStore
+from dawoni.models.base import utcnow
+from dawoni.models.grading import Exam, ExamQuestion
+from dawoni.paths import AppPaths
+from dawoni.sharing import (
     FRESH,
     WORK_FRESH,
     WorkInProgress,
@@ -27,19 +27,19 @@ from dawoai.sharing import (
     release,
     working_on,
 )
-from dawoai.workspace import create_workspace, open_workspace, set_mode
+from dawoni.workspace import create_workspace, open_workspace, set_mode
 
 
 @pytest.mark.parametrize(
     ("path", "name"),
     [
-        ("~/Library/CloudStorage/GoogleDrive-a@b.com/내 드라이브/다워이", "Google Drive"),
-        ("G:/My Drive/Dawoai", "Google Drive"),
-        ("C:/Users/kim/OneDrive - 학원/다워이", "OneDrive"),
-        ("~/Dropbox/dawoai", "Dropbox"),
-        ("~/Library/Mobile Documents/com~apple~CloudDocs/다워이", "iCloud Drive"),
-        ("~/Library/CloudStorage/Box-Box/다워이", "클라우드 폴더"),
-        ("~/Documents/다워이", None),
+        ("~/Library/CloudStorage/GoogleDrive-a@b.com/내 드라이브/다워니", "Google Drive"),
+        ("G:/My Drive/Dawoni", "Google Drive"),
+        ("C:/Users/kim/OneDrive - 학원/다워니", "OneDrive"),
+        ("~/Dropbox/dawoni", "Dropbox"),
+        ("~/Library/Mobile Documents/com~apple~CloudDocs/다워니", "iCloud Drive"),
+        ("~/Library/CloudStorage/Box-Box/다워니", "클라우드 폴더"),
+        ("~/Documents/다워니", None),
     ],
 )
 def test_cloud_provider(path: str, name: str | None) -> None:
@@ -119,7 +119,7 @@ def test_each_in_parallel() -> None:
     import contextvars
     import time
 
-    from dawoai.parallel import ParallelError, each_in_parallel
+    from dawoni.parallel import ParallelError, each_in_parallel
 
     var: contextvars.ContextVar[str] = contextvars.ContextVar("v", default="없음")
     var.set("작업")

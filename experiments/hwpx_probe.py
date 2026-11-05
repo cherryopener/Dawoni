@@ -37,17 +37,17 @@ from hwpx.equation.measure import measure_equation
 from hwpx.oxml.paragraph import HwpxOxmlParagraph
 from lxml import etree
 
-from dawoai.grading.checks import normalize_latex
-from dawoai.models.grading import TranscriptLine
+from dawoni.grading.checks import normalize_latex
+from dawoni.models.grading import TranscriptLine
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="hwpx")
 
 OUT = Path(__file__).resolve().parent / "out"
 FONT = "맑은 고딕"
 NORMAL = "0"  # 바탕글
-STYLE_HEAD = "다워이 머리"
-STYLE_PART = "다워이 소문항"
-STYLE_GRADED = "다워이 채점"  # 채점 부분의 첫 문단 (새 쪽). 다시 읽기는 여기서 멈춘다
+STYLE_HEAD = "다워니 머리"
+STYLE_PART = "다워니 소문항"
+STYLE_GRADED = "다워니 채점"  # 채점 부분의 첫 문단 (새 쪽). 다시 읽기는 여기서 멈춘다
 MARK = "■"
 PART_MARK = re.compile(rf"^{MARK}\s*(.+?)\s*$")
 UNASSIGNED = "문항을 알 수 없는 줄"
@@ -176,7 +176,7 @@ class Builder:
                 for r in p.runs:
                     r.char_pr_id_ref = char
         else:
-            # inherit_style=False: 기본값은 앞 문단 스타일을 물려받아 머리 다음 문단까지 '다워이 머리'가 됨
+            # inherit_style=False: 기본값은 앞 문단 스타일을 물려받아 머리 다음 문단까지 '다워니 머리'가 됨
             p = self.doc.add_paragraph(text, char_pr_id_ref=char or self.plain, inherit_style=False)
         if style is not None:
             p.style_id_ref = style
@@ -425,7 +425,7 @@ def write_graded(
             if why:
                 b.para(f"✕ {why}", char=b.red)
         if g.bad:
-            b.doc.notes.add_memo(g.bad[0][1], anchor=score, author="다워이")
+            b.doc.notes.add_memo(g.bad[0][1], anchor=score, author="다워니")
     return head
 
 

@@ -16,19 +16,19 @@ from openpyxl import Workbook
 from PIL import Image
 from tests_support import fake_prompts
 
-from dawoai.cli import main
-from dawoai.config import AppConfig, save_config
-from dawoai.export.exam_files import bundle_file, is_edited, student_file, write_files
-from dawoai.export.hwpx import count_heads, read_back
-from dawoai.fsio import read_json
-from dawoai.grading import workflow
-from dawoai.grading.store import ExamStore, ScopeStore
-from dawoai.models.grading import Exam, StudentRecord, Transcript, TranscriptLine
-from dawoai.models.scope import ScopeProfile
-from dawoai.paths import AppPaths
-from dawoai.services import Services, open_services
-from dawoai.students import Roster, natural_key, read_table
-from dawoai.workspace import create_workspace
+from dawoni.cli import main
+from dawoni.config import AppConfig, save_config
+from dawoni.export.exam_files import bundle_file, is_edited, student_file, write_files
+from dawoni.export.hwpx import count_heads, read_back
+from dawoni.fsio import read_json
+from dawoni.grading import workflow
+from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.models.grading import Exam, StudentRecord, Transcript, TranscriptLine
+from dawoni.models.scope import ScopeProfile
+from dawoni.paths import AppPaths
+from dawoni.services import Services, open_services
+from dawoni.students import Roster, natural_key, read_table
+from dawoni.workspace import create_workspace
 
 FIX = Path(__file__).parent / "fixtures" / "grading"
 MakeFake = Callable[..., Path]

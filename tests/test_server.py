@@ -12,12 +12,12 @@ from conftest import MakeFake
 from fastapi.testclient import TestClient
 from test_grading import FIX, GRADE_A, RUBRIC_OK, SOL_OK
 
-from dawoai.config import AppConfig, save_config
-from dawoai.export.hwpx import count_heads, read_back
-from dawoai.fsio import read_json
-from dawoai.paths import AppPaths
-from dawoai.server import files
-from dawoai.server.app import create_app
+from dawoni.config import AppConfig, save_config
+from dawoni.export.hwpx import count_heads, read_back
+from dawoni.fsio import read_json
+from dawoni.paths import AppPaths
+from dawoni.server import files
+from dawoni.server.app import create_app
 
 TOKEN = "test-token"
 BASE = "http://127.0.0.1"
@@ -356,8 +356,8 @@ def test_calibration_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Pat
     from test_calibration import SUGGESTION
     from test_grading import approved_rubric
 
-    from dawoai.grading.store import ExamStore
-    from dawoai.models.grading import ScopedSolution, SolutionDraft, Transcript, TranscriptLine
+    from dawoni.grading.store import ExamStore
+    from dawoni.models.grading import ScopedSolution, SolutionDraft, Transcript, TranscriptLine
 
     exe = make_fake("script", script=[{"response": json.dumps(SUGGESTION, ensure_ascii=False)}])
     cfg = AppConfig()
@@ -371,7 +371,7 @@ def test_calibration_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Pat
     eid = c.post(
         "/api/exams", json={"title": "보정", "scope_id": scope["id"], "questions": q1}
     ).json()["id"]
-    from dawoai.paths import WorkspacePaths
+    from dawoni.paths import WorkspacePaths
 
     store = ExamStore(WorkspacePaths(ws_root), eid)
     store.save_solution(ScopedSolution(**SolutionDraft.model_validate(SOL_OK).model_dump(),
@@ -407,7 +407,7 @@ def test_calibration_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Pat
     # 강사가 AI 점수를 고친 사례(D) → 개선 제안 → 새 루브릭 초안
     from test_calibration import ai_grade
 
-    from dawoai.grading.pipeline import teacher_review
+    from dawoni.grading.pipeline import teacher_review
 
     store.save_grade(teacher_review(ai_grade("D", 2, 1), approved_rubric(), {"R1": 1, "R2": 0}))
     job = _wait(c, c.post(f"{base}/calibration/1/suggest").json())
@@ -421,9 +421,9 @@ def test_calibration_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Pat
 
 
 def test_answer_key_fix_and_confirm(app_paths: AppPaths, tmp_path: Path) -> None:
-    from dawoai.grading.store import ExamStore
-    from dawoai.models.answer_key import AnswerKey
-    from dawoai.paths import WorkspacePaths
+    from dawoni.grading.store import ExamStore
+    from dawoni.models.answer_key import AnswerKey
+    from dawoni.paths import WorkspacePaths
 
     c = _client(app_paths)
     c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
@@ -457,9 +457,9 @@ def test_answer_key_fix_and_confirm(app_paths: AppPaths, tmp_path: Path) -> None
 def test_candidate_match_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path) -> None:
     from test_grading import approved_rubric
 
-    from dawoai.grading.store import ExamStore
-    from dawoai.models.grading import AnswerCandidate, PartCheck, Transcript, TranscriptLine
-    from dawoai.paths import WorkspacePaths
+    from dawoni.grading.store import ExamStore
+    from dawoni.models.grading import AnswerCandidate, PartCheck, Transcript, TranscriptLine
+    from dawoni.paths import WorkspacePaths
 
     sides = {"students": [
         {"student": "학생1", "side": "candidate", "candidate_id": "A1", "quote": "최솟값은 11"},
@@ -503,9 +503,9 @@ def test_candidate_match_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path:
 def test_same_pdf_opens_existing_exam(app_paths: AppPaths, tmp_path: Path) -> None:
     from pdfgen import make_exam_pdf
 
-    from dawoai.ingest.sources import register_source, update_source
-    from dawoai.models.source import SourceIngestState
-    from dawoai.paths import WorkspacePaths
+    from dawoni.ingest.sources import register_source, update_source
+    from dawoni.models.source import SourceIngestState
+    from dawoni.paths import WorkspacePaths
 
     c = _client(app_paths)
     ws_root = tmp_path / "ws"
@@ -532,8 +532,8 @@ def test_same_pdf_opens_existing_exam(app_paths: AppPaths, tmp_path: Path) -> No
     assert "중간고사" in body["detail"]
     import shutil
 
-    from dawoai.ingest.workflow import existing_exam
-    from dawoai.services import open_services
+    from dawoni.ingest.workflow import existing_exam
+    from dawoni.services import open_services
 
     svc = open_services(ws_root, paths=app_paths)
     assert existing_exam(svc, pdf) is not None
@@ -562,9 +562,9 @@ def test_rubric_with_key_is_one_call_and_ai_solve_keeps_old_path(
 ) -> None:
     from tests_support import fake_prompts
 
-    from dawoai.grading.store import ExamStore
-    from dawoai.models.answer_key import AnswerKey
-    from dawoai.paths import WorkspacePaths
+    from dawoni.grading.store import ExamStore
+    from dawoni.models.answer_key import AnswerKey
+    from dawoni.paths import WorkspacePaths
 
     expanded: dict[str, Any] = {
         "items": [{**i, "solution_steps": []} for i in RUBRIC_OK["items"]],
@@ -618,8 +618,8 @@ def test_diagnostics_bundle(app_paths: AppPaths, tmp_path: Path) -> None:
     (app_paths.logs / "error.log").write_text("boom", encoding="utf-8")
     (tmp_path / "ws" / "memory" / "n1.md").write_text("메모", encoding="utf-8")
     fail = app_paths.sandboxes / "20261102-grade-abc"
-    (fail / ".dawoai").mkdir(parents=True)
-    (fail / ".dawoai" / "stdout.jsonl").write_text("{}", encoding="utf-8")
+    (fail / ".dawoni").mkdir(parents=True)
+    (fail / ".dawoni" / "stdout.jsonl").write_text("{}", encoding="utf-8")
 
     plan = c.get("/api/diagnostics/plan").json()
     keys = {g["key"]: g for g in plan["groups"]}

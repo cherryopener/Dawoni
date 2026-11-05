@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
-from dawoai.cli import SCHEMAS
+from dawoni.cli import SCHEMAS
 
 
 def _walk(node: Any) -> list[dict[str, Any]]:
@@ -52,12 +52,12 @@ def _task_outputs() -> dict[str, type[BaseModel]]:
     import importlib
     import pkgutil
 
-    import dawoai
-    from dawoai.context.tasks import TaskDef
+    import dawoni
+    from dawoni.context.tasks import TaskDef
 
     out: dict[str, type[BaseModel]] = {}
-    for m in pkgutil.walk_packages(dawoai.__path__, "dawoai."):
-        if m.name.startswith(("dawoai.server", "dawoai.web")) or m.name.endswith("__main__"):
+    for m in pkgutil.walk_packages(dawoni.__path__, "dawoni."):
+        if m.name.startswith(("dawoni.server", "dawoni.web")) or m.name.endswith("__main__"):
             continue
         mod = importlib.import_module(m.name)
         for v in vars(mod).values():
@@ -68,7 +68,7 @@ def _task_outputs() -> dict[str, type[BaseModel]]:
 
 def test_no_number_enums_in_agent_schemas() -> None:
     """Gemini(agy)는 숫자 enum을 거부한다 (실측: 표지 회전 각도 Literal[0, 90, 180, 270])."""
-    from dawoai.context.schema import agent_schema
+    from dawoni.context.schema import agent_schema
 
     outputs = _task_outputs()
     assert {"read_cover", "derive_rubric", "extract_answer_key"} <= set(outputs)

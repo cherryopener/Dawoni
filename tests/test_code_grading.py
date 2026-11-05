@@ -16,10 +16,10 @@ from test_answer_key import EXPANDED, KEY
 from test_grading import FIX
 from tests_support import fake_prompts
 
-from dawoai.config import AppConfig, save_config
-from dawoai.fsio import read_json
-from dawoai.grading import workflow
-from dawoai.grading.answers import (
+from dawoni.config import AppConfig, save_config
+from dawoni.fsio import read_json
+from dawoni.grading import workflow
+from dawoni.grading.answers import (
     choice_labels,
     code_rubric,
     grade_by_code,
@@ -27,15 +27,15 @@ from dawoai.grading.answers import (
     set_answers,
     split_unit,
 )
-from dawoai.grading.pipeline import PipelineError, approve_rubric, edit_rubric, grade_answer
-from dawoai.grading.store import ExamStore, ScopeStore
-from dawoai.models.answer_key import AnswerKey
-from dawoai.models.grading import Exam, ExamQuestion, RubricDraft, Transcript, TranscriptLine
-from dawoai.models.item import ItemContent
-from dawoai.models.scope import ScopeProfile
-from dawoai.paths import AppPaths
-from dawoai.services import Services, open_services
-from dawoai.workspace import create_workspace
+from dawoni.grading.pipeline import PipelineError, approve_rubric, edit_rubric, grade_answer
+from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.models.answer_key import AnswerKey
+from dawoni.models.grading import Exam, ExamQuestion, RubricDraft, Transcript, TranscriptLine
+from dawoni.models.item import ItemContent
+from dawoni.models.scope import ScopeProfile
+from dawoni.paths import AppPaths
+from dawoni.services import Services, open_services
+from dawoni.workspace import create_workspace
 
 SCOPE = ScopeProfile.model_validate(read_json(FIX / "scope.json"))
 
@@ -175,8 +175,8 @@ EngineWith = Callable[[list[dict[str, Any]]], tuple[Any, Path]]
 
 @pytest.fixture
 def engine_with(app_paths: AppPaths, make_fake: MakeFake) -> EngineWith:
-    from dawoai.agents import AgentClient
-    from dawoai.context import ContextEngine
+    from dawoni.agents import AgentClient
+    from dawoni.context import ContextEngine
 
     def make(responses: list[dict[str, Any]]) -> tuple[Any, Path]:
         exe = make_fake(

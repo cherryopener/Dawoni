@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from dawoai.models.content import (
+from dawoni.models.content import (
     Block,
     BogiBlock,
     DisplayMathBlock,
@@ -105,14 +105,14 @@ def test_helpers_build_valid_models() -> None:
 )
 def test_fix_overescaped(src: str, expected: str) -> None:
     """AI가 한 번 더 이스케이프한 식(M7 실측: `\\\\text`)을 코드가 바로잡아 수리 왕복을 아낀다."""
-    from dawoai.models.content import fix_overescaped, math
+    from dawoni.models.content import fix_overescaped, math
 
     assert fix_overescaped(src) == expected
     assert math(src).v == expected
 
 
 def test_overescaped_fixed_in_solution_fields() -> None:
-    from dawoai.models.grading import SolutionDraft
+    from dawoni.models.grading import SolutionDraft
 
     d = SolutionDraft.model_validate(
         {

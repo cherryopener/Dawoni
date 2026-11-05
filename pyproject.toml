@@ -1,7 +1,7 @@
 [project]
-name = "dawoai"
+name = "dawoni"
 version = "0.8.0"
-description = "다워이 — 구독 중인 AI CLI를 일꾼으로 부려, 해설지 기준으로 손글씨 서술형 답안을 토큰 적게·일관되게 채점하는 학원 강사용 도구"
+description = "다워니 — 구독 중인 AI CLI를 일꾼으로 부려, 해설지 기준으로 손글씨 서술형 답안을 토큰 적게·일관되게 채점하는 학원 강사용 도구"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = "MIT"
@@ -13,7 +13,7 @@ dependencies = [
     "openpyxl>=3.1.5",
     "pillow>=11",
     "pydantic>=2.12",
-    # 다워니에서 1.28.2 고정: 이후 판은 새 Python용 빌드가 없는 onnxruntime을 요구 (2026-10-27)
+    # 옛 다워니에서 1.28.2 고정: 이후 판은 새 Python용 빌드가 없는 onnxruntime을 요구 (2026-10-27)
     "pymupdf==1.28.2",
     "python-docx>=1.2.0",
     "python-hwpx>=6.11,<7",
@@ -25,7 +25,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dawoai = "dawoai.cli:main"
+dawoni = "dawoni.cli:main"
 
 [project.optional-dependencies]
 local-ocr = [
@@ -51,9 +51,9 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["dawoai"]
-# 화면 빌드(frontend → dawoai/web/)는 .gitignore에 있지만 배포 묶음에는 들어가야 한다
-artifacts = ["dawoai/web/**"]
+packages = ["dawoni"]
+# 화면 빌드(frontend → dawoni/web/)는 .gitignore에 있지만 배포 묶음에는 들어가야 한다
+artifacts = ["dawoni/web/**"]
 
 [tool.ruff]
 line-length = 100
@@ -80,7 +80,7 @@ ignore = [
 "tests/test_document.py" = ["E501"]  # 문서 XML·응답 픽스처
 
 [tool.pyright]
-include = ["dawoai", "tests"]
+include = ["dawoni", "tests"]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
 venvPath = "."

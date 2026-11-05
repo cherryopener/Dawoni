@@ -17,18 +17,18 @@ from test_answer_key import GOOD, SOL
 from test_grading import FIX
 from tests_support import fake_prompts
 
-from dawoai.cli import main
-from dawoai.config import AppConfig, save_config
-from dawoai.fsio import read_json
-from dawoai.grading import calibration, workflow
-from dawoai.grading.pipeline import (
+from dawoni.cli import main
+from dawoni.config import AppConfig, save_config
+from dawoni.fsio import read_json
+from dawoni.grading import calibration, workflow
+from dawoni.grading.pipeline import (
     PipelineError,
     approve_rubric,
     spread_part_score,
     teacher_part_review,
 )
-from dawoai.grading.store import ExamStore, ScopeStore
-from dawoai.models.grading import (
+from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.models.grading import (
     Exam,
     ExamQuestion,
     GradeResult,
@@ -39,10 +39,10 @@ from dawoai.models.grading import (
     Transcript,
     TranscriptLine,
 )
-from dawoai.models.scope import ScopeProfile
-from dawoai.paths import AppPaths
-from dawoai.services import Services, open_services
-from dawoai.workspace import create_workspace
+from dawoni.models.scope import ScopeProfile
+from dawoni.paths import AppPaths
+from dawoni.services import Services, open_services
+from dawoni.workspace import create_workspace
 
 Setup = Callable[[list[dict[str, Any]]], tuple[Services, ExamStore, Path]]
 

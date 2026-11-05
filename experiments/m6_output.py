@@ -22,8 +22,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hwpx_probe import hancom, hancom_roundtrip  # pyright: ignore[reportPrivateUsage]
 
-from dawoai.export.exam_files import _Sheets, score_table  # pyright: ignore[reportPrivateUsage]
-from dawoai.export.hwpx import (
+from dawoni.export.exam_files import _Sheets, score_table  # pyright: ignore[reportPrivateUsage]
+from dawoni.export.hwpx import (
     Sheet,
     build_student,
     grade_spots,
@@ -32,11 +32,11 @@ from dawoai.export.hwpx import (
     reconcile,
     sheet_lines,
 )
-from dawoai.export.quotes import locate
-from dawoai.export.xlsx import build_scores
-from dawoai.grading.store import ExamStore
-from dawoai.models.grading import GradeResult
-from dawoai.paths import WorkspacePaths
+from dawoni.export.quotes import locate
+from dawoni.export.xlsx import build_scores
+from dawoni.grading.store import ExamStore
+from dawoni.models.grading import GradeResult
+from dawoni.paths import WorkspacePaths
 
 ROOT = Path(__file__).resolve().parents[1]
 M5 = ROOT / "experiments" / "out" / "m5"

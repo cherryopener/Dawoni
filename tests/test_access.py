@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from dawoai.access import (
+from dawoni.access import (
     TOKEN_URL,
     USERINFO_URL,
     Access,
@@ -19,9 +19,9 @@ from dawoai.access import (
     load_access_config,
     parse_allowlist,
 )
-from dawoai.fsio import read_json, write_json_atomic
-from dawoai.paths import AppPaths
-from dawoai.server.app import create_app
+from dawoni.fsio import read_json, write_json_atomic
+from dawoni.paths import AppPaths
+from dawoni.server.app import create_app
 
 LIST_URL = "https://example.test/allow.txt"
 CFG = AccessConfig(
@@ -170,7 +170,7 @@ def test_no_config_means_open(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) ->
     assert load_access_config() is None  # conftest가 없는 파일을 가리킴
     f = tmp_path / "a.json"
     f.write_text(json.dumps({"google_client_id": "x"}), encoding="utf-8")
-    monkeypatch.setenv("DAWOAI_ACCESS_FILE", str(f))
+    monkeypatch.setenv("DAWONI_ACCESS_FILE", str(f))
     cfg = load_access_config()
     assert cfg is not None and cfg.google_client_id == "x"
 
@@ -265,7 +265,7 @@ def test_every_recorded_name_goes_through_who() -> None:
     import re
     from pathlib import Path
 
-    server = Path(__file__).resolve().parents[1] / "dawoai" / "server"
+    server = Path(__file__).resolve().parents[1] / "dawoni" / "server"
     raw = re.compile(r"(?<!who\()\bbody\.(by|teacher)\b")
     bad = [
         f"{p.name}:{i}"
@@ -278,11 +278,11 @@ def test_every_recorded_name_goes_through_who() -> None:
 
 def test_bundle_ignores_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """배포 묶음에서는 환경 변수로 로그인 설정을 바꿔(꺼) 버릴 수 없다."""
-    import dawoai.access as access_mod
+    import dawoni.access as access_mod
 
     f = tmp_path / "a.json"
     f.write_text(json.dumps({"google_client_id": "x"}), encoding="utf-8")
-    monkeypatch.setenv("DAWOAI_ACCESS_FILE", str(f))
+    monkeypatch.setenv("DAWONI_ACCESS_FILE", str(f))
     assert load_access_config() is not None
     marker = tmp_path / "bundled.json"
     marker.write_text("{}", encoding="utf-8")
@@ -293,8 +293,8 @@ def test_bundle_ignores_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
 
 def test_main_without_args_opens_ui(monkeypatch: pytest.MonkeyPatch) -> None:
-    import dawoai.__main__ as entry
-    import dawoai.cli
+    import dawoni.__main__ as entry
+    import dawoni.cli
 
     seen: list[list[str]] = []
 
@@ -302,9 +302,9 @@ def test_main_without_args_opens_ui(monkeypatch: pytest.MonkeyPatch) -> None:
         seen.append(list(argv))
         return 0
 
-    monkeypatch.setattr(dawoai.cli, "main", fake_main)
-    monkeypatch.setattr("sys.argv", ["dawoai"])
+    monkeypatch.setattr(dawoni.cli, "main", fake_main)
+    monkeypatch.setattr("sys.argv", ["dawoni"])
     assert entry.run() == 0
-    monkeypatch.setattr("sys.argv", ["dawoai", "version"])
+    monkeypatch.setattr("sys.argv", ["dawoni", "version"])
     entry.run()
     assert seen == [["ui"], ["version"]]

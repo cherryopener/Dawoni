@@ -8,7 +8,7 @@
     uv run python experiments/m5_calibrate.py after [--model gemini-4-argon-low --label argon-low]
     uv run python experiments/m5_calibrate.py report
 
-- 작업공간: `experiments/out/m5/`(git 제외 — 학생 이름·답안). M3 판독문(강사 확인 전)·다워니 초안 루브릭·
+- 작업공간: `experiments/out/m5/`(git 제외 — 학생 이름·답안). M3 판독문(강사 확인 전)·옛 다워니 초안 루브릭·
   M4 채점(flash-medium: `out/m4/flash-medium-grades`, argon-low: M3 작업공간에 남은 것)을 그대로 쓴다.
 - 손채점 5명 = 스캔 순서로 앞 5명 (강사가 먼저 채점한 몇 장을 넣는 경우). 그 5명의 판독문은 강사가
   확인한 것으로 친다(고친 것 없이) — 실제로는 강사가 판독본을 확인한 뒤 확정한다.
@@ -30,17 +30,17 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from m3_batch import DAWONI_EXAM, MODEL  # pyright: ignore[reportPrivateUsage]
 
-from dawoai.config import AGENT_NAMES, TIER_NAMES, AppConfig, TierModel, save_config
-from dawoai.context.calllog import CallLog
-from dawoai.grading import marks, workflow
-from dawoai.grading.pipeline import approve_rubric, edit_rubric
-from dawoai.grading.store import ExamStore
-from dawoai.models.answer_key import AnswerKey
-from dawoai.models.calibration import PartAgreement
-from dawoai.models.grading import Exam, GradeResult, Rubric
-from dawoai.ocr.marks import problems
-from dawoai.paths import AppPaths
-from dawoai.services import Services, open_services
+from dawoni.config import AGENT_NAMES, TIER_NAMES, AppConfig, TierModel, save_config
+from dawoni.context.calllog import CallLog
+from dawoni.grading import marks, workflow
+from dawoni.grading.pipeline import approve_rubric, edit_rubric
+from dawoni.grading.store import ExamStore
+from dawoni.models.answer_key import AnswerKey
+from dawoni.models.calibration import PartAgreement
+from dawoni.models.grading import Exam, GradeResult, Rubric
+from dawoni.ocr.marks import problems
+from dawoni.paths import AppPaths
+from dawoni.services import Services, open_services
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "experiments" / "out" / "m5"

@@ -11,22 +11,22 @@ from typing import Any
 
 import pytest
 
-from dawoai.agents import client as client_mod
-from dawoai.agents import runner as runner_mod
-from dawoai.agents.agy import AgyAdapter
-from dawoai.agents.base import (
+from dawoni.agents import client as client_mod
+from dawoni.agents import runner as runner_mod
+from dawoni.agents.agy import AgyAdapter
+from dawoni.agents.base import (
     AgentError,
     AgentErrorCode,
     AgentRequest,
     AgentSwitchNeeded,
     classify_failure,
 )
-from dawoai.agents.claude import MAX_INLINE_SCHEMA_CHARS, ClaudeAdapter
-from dawoai.agents.codex import CodexAdapter
-from dawoai.agents.detect import extra_bin_dirs, find_executable, subprocess_env
-from dawoai.agents.runner import RunOptions, run_agent
-from dawoai.config import AgentName, AppConfig
-from dawoai.paths import AppPaths
+from dawoni.agents.claude import MAX_INLINE_SCHEMA_CHARS, ClaudeAdapter
+from dawoni.agents.codex import CodexAdapter
+from dawoni.agents.detect import extra_bin_dirs, find_executable, subprocess_env
+from dawoni.agents.runner import RunOptions, run_agent
+from dawoni.config import AgentName, AppConfig
+from dawoni.paths import AppPaths
 
 MakeFake = Callable[..., Path]
 SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
@@ -136,7 +136,7 @@ def test_stall_detected_quickly(make_fake: MakeFake, tmp_path: Path) -> None:
     t0 = time.monotonic()
     err = _err(make_fake("stall"), tmp_path / "sb", AgentErrorCode.STALLED, idle=1)
     assert time.monotonic() - t0 < 8
-    assert err.sandbox is not None and (err.sandbox / ".dawoai" / "stdin.txt").exists(), (
+    assert err.sandbox is not None and (err.sandbox / ".dawoni" / "stdin.txt").exists(), (
         "실패하면 기록 보존"
     )
 
@@ -434,7 +434,7 @@ def test_shrink_image_caps_long_edge_and_picks_smaller_format(tmp_path: Path) ->
     import numpy as np
     from PIL import Image, ImageDraw
 
-    from dawoai.agents.sandbox import shrink_image
+    from dawoni.agents.sandbox import shrink_image
 
     rng = np.random.default_rng(0)
     scan = tmp_path / "scan.png"  # 스캔 사진처럼 잡음이 많은 쪽 → JPEG가 훨씬 작다

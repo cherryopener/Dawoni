@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Job } from "./types";
 
-// 서버 API (다워니 api.ts 틀). 오류 응답은 {detail, code} — detail은 강사에게 보여 줄 한국어 한 문장.
+// 서버 API (옛 다워니 api.ts 틀). 오류 응답은 {detail, code} — detail은 강사에게 보여 줄 한국어 한 문장.
 
 export class ApiError extends Error {
   status: number;

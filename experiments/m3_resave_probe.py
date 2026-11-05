@@ -15,8 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from m3_batch import OUT, _hancom, exam_store, services  # pyright: ignore[reportPrivateUsage]
 
-from dawoai.export.exam_files import student_file
-from dawoai.export.hwpx import canon, expected_text, read_back, reconcile, sheet_lines
+from dawoni.export.exam_files import student_file
+from dawoni.export.hwpx import canon, expected_text, read_back, reconcile, sheet_lines
 
 
 def main(argv: list[str]) -> int:

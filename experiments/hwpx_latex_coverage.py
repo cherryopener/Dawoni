@@ -7,7 +7,7 @@ python-hwpx의 `latex_to_eqedit`(LaTeX → 한글 수식)과 `eqedit_to_latex`(�
 
 결과: 바뀐 비율, 실패 원인별 개수, 되돌렸다 다시 바꾸면 같은 스크립트가 되는 비율(안정),
 되돌린 식이 원래 식과 표기 차이(`^{2}`↔`^2`, `\\ge`↔`\\geq`)만 빼고 같은 비율.
-`\\quad`·`\\ `처럼 간격만 뜻하는 명령은 바꾸기 전에 공백으로 고친다 (다워이 변환기가 할 일).
+`\\quad`·`\\ `처럼 간격만 뜻하는 명령은 바꾸기 전에 공백으로 고친다 (다워니 변환기가 할 일).
 `experiments/out/latex_coverage.json`에 식마다 결과를 남긴다.
 """
 
@@ -24,8 +24,8 @@ from typing import Any
 from hwpx.equation.authoring import latex_to_eqedit
 from hwpx.equation.eqedit import eqedit_to_latex
 
-from dawoai.grading.checks import normalize_latex
-from dawoai.models.content import MathRun, runs_from_text
+from dawoni.grading.checks import normalize_latex
+from dawoni.models.content import MathRun, runs_from_text
 
 OUT = Path(__file__).resolve().parent / "out"
 BS = "\\"

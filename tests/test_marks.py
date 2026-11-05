@@ -14,14 +14,14 @@ from PIL import Image
 from test_teacher_scores import Setup, _ai, _q3, setup  # pyright: ignore[reportPrivateUsage]
 from tests_support import fake_prompts
 
-from dawoai.cli import main
-from dawoai.grading import marks
-from dawoai.grading.pipeline import PipelineError
-from dawoai.grading.store import ExamStore
-from dawoai.models.grading import Exam, StudentRecord
-from dawoai.ocr import marks as ocr_marks
-from dawoai.ocr.marks import MarksRead, ReadMark
-from dawoai.roles import role_for_task
+from dawoni.cli import main
+from dawoni.grading import marks
+from dawoni.grading.pipeline import PipelineError
+from dawoni.grading.store import ExamStore
+from dawoni.models.grading import Exam, StudentRecord
+from dawoni.ocr import marks as ocr_marks
+from dawoni.ocr.marks import MarksRead, ReadMark
+from dawoni.roles import role_for_task
 
 __all__ = ["setup"]  # 픽스처 (test_teacher_scores)
 
@@ -253,8 +253,8 @@ def test_suggest_for_key_based_rubric_without_solution(setup: Setup) -> None:
 
     from test_answer_key import GOOD
 
-    from dawoai.grading import workflow
-    from dawoai.models.answer_key import AnswerKey, KeyPart
+    from dawoni.grading import workflow
+    from dawoni.models.answer_key import AnswerKey, KeyPart
 
     revised = copy.deepcopy(GOOD)
     revised["items"][0]["criterion"] = "(n+1)개 구간 — n개로 쓰면 0점"

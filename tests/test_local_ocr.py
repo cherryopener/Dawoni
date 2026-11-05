@@ -10,8 +10,8 @@ import pymupdf
 import pytest
 from PIL import Image, ImageDraw
 
-from dawoai.ingest.layout import analyze
-from dawoai.ocr import local
+from dawoni.ingest.layout import analyze
+from dawoni.ocr import local
 
 
 def _scanned_pdf(path: Path) -> Path:

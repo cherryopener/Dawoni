@@ -3,7 +3,7 @@
 # - 태그 v*를 올리면: 시험 → 화면 빌드 → 묶음 → 묶음을 켜 보기 → Release에 zip
 # - Actions 탭 → build-windows → Run workflow: 같은 과정, Release 없이 artifact로만
 #
-# 비밀값 DAWOAI_ACCESS_JSON(access.json 내용 전체)이 로그인 설정이 된다. 태그 빌드는 이 값이
+# 비밀값 DAWONI_ACCESS_JSON(access.json 내용 전체)이 로그인 설정이 된다. 태그 빌드는 이 값이
 # 없으면 멈춘다 (로그인 없는 묶음이 퍼지지 않게). 값은 로그에 찍지 않는다.
 name: build-windows
 
@@ -51,7 +51,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: 화면 빌드 (→ dawoai/web/)
+      - name: 화면 빌드 (→ dawoni/web/)
         working-directory: frontend
         run: |
           npm ci
@@ -61,7 +61,7 @@ jobs:
       - name: 묶음 만들기
         shell: pwsh
         env:
-          DAWOAI_ACCESS_JSON: ${{ secrets.DAWOAI_ACCESS_JSON }}
+          DAWONI_ACCESS_JSON: ${{ secrets.DAWONI_ACCESS_JSON }}
         run: |
           $opts = @()
           if ("${{ github.ref }}".StartsWith("refs/tags/")) { $opts += "--require-access" }
@@ -70,13 +70,13 @@ jobs:
       - name: 묶음을 켜 보기 (설치된 파이썬 없이 묶음 안의 것으로)
         shell: pwsh
         run: |
-          $py = "dist\Dawoai\python.exe"
-          & $py -m dawoai version
+          $py = "dist\Dawoni\python.exe"
+          & $py -m dawoni version
           if ($LASTEXITCODE -ne 0) { throw "version 실패" }
-          & $py -c "import pydantic_core, lxml.etree, pymupdf, numpy, PIL.Image, win32com.client, hwpx, dawoai.server.app"
+          & $py -c "import pydantic_core, lxml.etree, pymupdf, numpy, PIL.Image, win32com.client, hwpx, dawoni.server.app"
           if ($LASTEXITCODE -ne 0) { throw "import 실패" }
-          $env:DAWOAI_HOME = "$env:RUNNER_TEMP\dawoai-home"
-          $p = Start-Process -FilePath $py -ArgumentList "-m","dawoai","ui","--no-window","--port","8799" -PassThru
+          $env:DAWONI_HOME = "$env:RUNNER_TEMP\dawoni-home"
+          $p = Start-Process -FilePath $py -ArgumentList "-m","dawoni","ui","--no-window","--port","8799" -PassThru
           $ok = $false
           for ($i = 0; $i -lt 60; $i++) {
             try { $r = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8799/" -TimeoutSec 2; $ok = $r.StatusCode -eq 200; break } catch { Start-Sleep -Milliseconds 500 }
@@ -85,13 +85,13 @@ jobs:
           Stop-Process -Id $p.Id -Force
           if (-not $ok) { throw "화면이 열리지 않음" }
           if ($open) { throw "토큰 없이 API가 열림" }
-          if (-not (Select-String -Path "dist\Dawoai\Lib\site-packages\dawoai\web\index.html" -Pattern "<title>" -Quiet)) { throw "화면 파일 없음" }
-          if ((Get-AuthenticodeSignature dist\Dawoai\Dawoai.exe).Status -ne "Valid") { throw "Dawoai.exe 서명 없음" }
+          if (-not (Select-String -Path "dist\Dawoni\Lib\site-packages\dawoni\web\index.html" -Pattern "<title>" -Quiet)) { throw "화면 파일 없음" }
+          if ((Get-AuthenticodeSignature dist\Dawoni\Dawoni.exe).Status -ne "Valid") { throw "Dawoni.exe 서명 없음" }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Dawoai-windows
-          path: dist/Dawoai-*-windows.zip
+          name: Dawoni-windows
+          path: dist/Dawoni-*-windows.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -104,8 +104,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: Dawoai-windows
+          name: Dawoni-windows
       - name: Release에 zip 붙이기
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" Dawoai-*-windows.zip --repo "${{ github.repository }}" --title "다워이 ${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" Dawoni-*-windows.zip --repo "${{ github.repository }}" --title "다워니 ${{ github.ref_name }}" --generate-notes

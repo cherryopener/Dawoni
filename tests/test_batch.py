@@ -17,15 +17,15 @@ import pytest
 from PIL import Image
 from tests_support import fake_prompts
 
-from dawoai.cli import main
-from dawoai.config import AppConfig, save_config
-from dawoai.fsio import read_json
-from dawoai.grading.store import ExamStore
-from dawoai.models.grading import Exam
-from dawoai.ocr import batch
-from dawoai.ocr.pages import PageError
-from dawoai.paths import AppPaths, WorkspacePaths
-from dawoai.workspace import create_workspace
+from dawoni.cli import main
+from dawoni.config import AppConfig, save_config
+from dawoni.fsio import read_json
+from dawoni.grading.store import ExamStore
+from dawoni.models.grading import Exam
+from dawoni.ocr import batch
+from dawoni.ocr.pages import PageError
+from dawoni.paths import AppPaths, WorkspacePaths
+from dawoni.workspace import create_workspace
 
 FIX = Path(__file__).parent / "fixtures" / "grading"
 MakeFake = Callable[..., Path]
@@ -219,8 +219,8 @@ def test_question_scan_needs_pages_and_covers_only(
 
 
 def test_scanner_addresses() -> None:
-    from dawoai.config import ScannerSettings
-    from dawoai.scanner import finder_url, windows_unc
+    from dawoni.config import ScannerSettings
+    from dawoni.scanner import finder_url, windows_unc
 
     s = ScannerSettings(smb_url="smb://192.168.0.100/scan/", username="Administrator")
     assert s.smb_url == "smb://192.168.0.100/scan"
@@ -236,8 +236,8 @@ def test_open_scan_folders_mac(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     import subprocess
     import sys
 
-    from dawoai import scanner
-    from dawoai.config import ScannerSettings
+    from dawoni import scanner
+    from dawoni.config import ScannerSettings
 
     calls: list[list[str]] = []
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -257,8 +257,8 @@ def test_open_scanner_without_workspace(monkeypatch: pytest.MonkeyPatch) -> None
     import subprocess
     import sys
 
-    from dawoai import scanner
-    from dawoai.config import ScannerSettings
+    from dawoni import scanner
+    from dawoni.config import ScannerSettings
 
     calls: list[list[str]] = []
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -268,7 +268,7 @@ def test_open_scanner_without_workspace(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_scanner_defaults() -> None:
-    from dawoai.config import AppConfig
+    from dawoni.config import AppConfig
 
     s = AppConfig().scanner
     assert s.smb_url == "smb://192.168.0.100/share/folder" and s.username == "Administrator"

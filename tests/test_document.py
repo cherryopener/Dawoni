@@ -15,20 +15,20 @@ from lxml import etree
 from PIL import Image
 from tests_support import fake_prompts
 
-from dawoai.agents import AgentClient
-from dawoai.cli import main
-from dawoai.config import AppConfig, save_config
-from dawoai.context import ContextEngine
-from dawoai.export.hwpx import from_eqedit
-from dawoai.grading.store import ExamStore, ScopeStore
-from dawoai.ingest.answer_key import DocKey, extract_answer_key
-from dawoai.ingest.document import analyze_document, read_document
-from dawoai.ingest.exam import extract_exam
-from dawoai.levels import Level, ensure_preset, parse_level, preset_scope
-from dawoai.mathx.latex import latex_error
-from dawoai.mathx.omml import omml_to_latex
-from dawoai.paths import AppPaths
-from dawoai.workspace import create_workspace
+from dawoni.agents import AgentClient
+from dawoni.cli import main
+from dawoni.config import AppConfig, save_config
+from dawoni.context import ContextEngine
+from dawoni.export.hwpx import from_eqedit
+from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.ingest.answer_key import DocKey, extract_answer_key
+from dawoni.ingest.document import analyze_document, read_document
+from dawoni.ingest.exam import extract_exam
+from dawoni.levels import Level, ensure_preset, parse_level, preset_scope
+from dawoni.mathx.latex import latex_error
+from dawoni.mathx.omml import omml_to_latex
+from dawoni.paths import AppPaths
+from dawoni.workspace import create_workspace
 
 MakeFake = Callable[..., Path]
 REAL = Path(__file__).parent.parent / "real_data" / "docs"
@@ -270,7 +270,7 @@ def test_hwpx_key_section_after_mark(tmp_path: Path) -> None:
 
 
 def test_chunks_group_questions_for_calls(tmp_path: Path) -> None:
-    from dawoai.ingest.document import QUESTIONS_PER_CALL, region_call
+    from dawoni.ingest.document import QUESTIONS_PER_CALL, region_call
 
     paras = "".join(_hp(_ht(f"{n}. 문항 {n}")) for n in range(1, 10))
     path = tmp_path / "many.hwpx"
@@ -355,7 +355,7 @@ def test_answer_key_from_document_reads_once(
     doc = analyze_document(make_hwpx(tmp_path / "t.hwpx"), tmp_path / "work")
     engine, exe = _engine(app_paths, make_fake, EXAM, KEYS)
     exam_res = extract_exam(engine, doc.layout, tmp_path / "work")
-    from dawoai.models.grading import Exam
+    from dawoni.models.grading import Exam
 
     exam = Exam(title="t", scope_id="s", questions=exam_res.questions)
     res = extract_answer_key(engine, DocKey(tmp_path / "t.hwpx", doc.keys), None, exam,
@@ -401,8 +401,8 @@ def test_cli_ingest_hwpx_with_level(
 
 
 def test_hwp_without_hangul_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from dawoai.ingest import convert
-    from dawoai.ingest.workflow import IngestRefused, readable_copy
+    from dawoni.ingest import convert
+    from dawoni.ingest.workflow import IngestRefused, readable_copy
 
     monkeypatch.setattr(convert.sys, "platform", "linux")
     hwp = tmp_path / "시험.hwp"
@@ -491,8 +491,8 @@ def test_read_document_rejects_other_suffix(tmp_path: Path) -> None:
 
 def test_unmarked_document_points_are_not_invented() -> None:
     """배점 표시가 없는 문서 문항: AI 배점은 버리고, 소문항은 본문 (1)(2) 줄에서 (실측 주말반)."""
-    from dawoai.ingest.exam import ExtractedQuestion, sub_labels, unmarked_points
-    from dawoai.ingest.layout import Line, Rect, Region
+    from dawoni.ingest.exam import ExtractedQuestion, sub_labels, unmarked_points
+    from dawoni.ingest.layout import Line, Rect, Region
 
     r = Region(label="5", lines=[Line(1, Rect(0, 0, 0, 0), t) for t in
                                  ("5. 두 물체가 만난다.", "(1) 거리를 구하시오.", "(2) 속력을 구하시오.")])  # fmt: skip

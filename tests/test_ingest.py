@@ -14,18 +14,18 @@ import pytest
 from pdfgen import make_exam_pdf
 from tests_support import fake_prompts
 
-from dawoai.agents import AgentClient
-from dawoai.cli import main
-from dawoai.cli_ingest import parse_pages
-from dawoai.config import AppConfig, save_config
-from dawoai.context import ContextEngine
-from dawoai.grading.store import ExamStore, ScopeStore
-from dawoai.ingest.exam import PageExtraction, check_page, extract_exam, to_item
-from dawoai.ingest.grounding import hangul_outside
-from dawoai.ingest.layout import analyze
-from dawoai.models.scope import Concept, ScopeProfile
-from dawoai.paths import AppPaths
-from dawoai.workspace import create_workspace
+from dawoni.agents import AgentClient
+from dawoni.cli import main
+from dawoni.cli_ingest import parse_pages
+from dawoni.config import AppConfig, save_config
+from dawoni.context import ContextEngine
+from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.ingest.exam import PageExtraction, check_page, extract_exam, to_item
+from dawoni.ingest.grounding import hangul_outside
+from dawoni.ingest.layout import analyze
+from dawoni.models.scope import Concept, ScopeProfile
+from dawoni.paths import AppPaths
+from dawoni.workspace import create_workspace
 
 MakeFake = Callable[..., Path]
 FIX = Path(__file__).parent / "fixtures"
@@ -109,7 +109,7 @@ def test_out_of_sequence_number_is_not_anchor(tmp_path: Path) -> None:
 def test_number_chain_not_starting_at_one(tmp_path: Path) -> None:
     """문제집 구간은 31번부터 — 앞의 개념 설명 속 "1.~4."가 아니라 가장 길게 이어지는 번호를 문항으로.
     세 자리 번호(132.)도 읽고, 소수("1.5 m")는 번호가 아니다."""
-    from dawoai.ingest.layout import number_chain
+    from dawoni.ingest.layout import number_chain
 
     pdf = tmp_path / "chunk.pdf"
     doc = pymupdf.open()

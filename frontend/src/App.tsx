@@ -47,7 +47,7 @@ function useTheme(): [boolean, () => void] {
   return [dark, () => setDark(!dark)];
 }
 
-/** 화면을 오갈 때 입력·스크롤을 잃지 않게 한 번 연 화면은 숨겨 둔다 (다워니 `Activity` 틀). */
+/** 화면을 오갈 때 입력·스크롤을 잃지 않게 한 번 연 화면은 숨겨 둔다 (옛 다워니 `Activity` 틀). */
 function Keep({ show, children }: { show: boolean; children: ReactNode }) {
   const [seen, setSeen] = useState(show);
   useEffect(() => {
@@ -88,7 +88,7 @@ export function App() {
   if (err) {
     return (
       <div className="mx-auto max-w-md p-10">
-        <ErrorNote message="다워이 서버에 연결하지 못했습니다. 앱을 다시 열어 주세요." detail={err} />
+        <ErrorNote message="다워니 서버에 연결하지 못했습니다. 앱을 다시 열어 주세요." detail={err} />
       </div>
     );
   }
@@ -138,7 +138,7 @@ function Shell({ dark, toggleTheme, teacher, email }: { dark: boolean; toggleThe
       <header className="flex h-14 shrink-0 items-center gap-1 border-b border-line bg-card px-4">
         <a href={href("exams")} className="mr-4 flex items-center gap-2 text-[15px] font-medium text-text no-underline">
           <span className="grid size-7 place-items-center rounded-lg bg-accent text-[13px] text-accent-fg">다</span>
-          다워이
+          다워니
         </a>
         {NAV.map((n) => (
           <a

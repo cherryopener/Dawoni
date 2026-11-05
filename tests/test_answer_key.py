@@ -20,12 +20,12 @@ import pytest
 from pydantic import ValidationError
 from tests_support import fake_prompts
 
-from dawoai.agents import AgentClient
-from dawoai.config import AppConfig
-from dawoai.context import ContextEngine, TaskFailed
-from dawoai.fsio import read_json
-from dawoai.grading import checks
-from dawoai.grading.pipeline import (
+from dawoni.agents import AgentClient
+from dawoni.config import AppConfig
+from dawoni.context import ContextEngine, TaskFailed
+from dawoni.fsio import read_json
+from dawoni.grading import checks
+from dawoni.grading.pipeline import (
     PipelineError,
     answer_sides,
     approve_rubric,
@@ -36,11 +36,11 @@ from dawoai.grading.pipeline import (
     grade_answer,
     prematch_side,
 )
-from dawoai.grading.render import rubric_text
-from dawoai.ingest.answer_key import check_key
-from dawoai.ingest.layout import analyze, find_key_pages
-from dawoai.models.answer_key import AnswerKey, KeyExtraction, KeyPart, KeyQuestion
-from dawoai.models.grading import (
+from dawoni.grading.render import rubric_text
+from dawoni.ingest.answer_key import check_key
+from dawoni.ingest.layout import analyze, find_key_pages
+from dawoni.models.answer_key import AnswerKey, KeyExtraction, KeyPart, KeyQuestion
+from dawoni.models.grading import (
     ExamQuestion,
     Rubric,
     RubricDraft,
@@ -49,8 +49,8 @@ from dawoai.models.grading import (
     Transcript,
     TranscriptLine,
 )
-from dawoai.models.scope import ScopeProfile
-from dawoai.paths import AppPaths
+from dawoni.models.scope import ScopeProfile
+from dawoni.paths import AppPaths
 
 FIX = Path(__file__).parent / "fixtures" / "grading"
 MakeFake = Callable[..., Path]
@@ -201,7 +201,7 @@ def _extraction(parts: list[dict[str, Any]], number: str = "3") -> KeyExtraction
 
 
 def test_check_key(q3: ExamQuestion) -> None:
-    from dawoai.models.grading import Exam
+    from dawoni.models.grading import Exam
 
     exam = Exam(title="t", scope_id="s", questions=[q3])
     source = "수평 이동 시간과 연직 운동 시간이 일치해야 한다. 세 번 반사하여 P로 되돌아오려면"
@@ -228,8 +228,8 @@ def test_check_key(q3: ExamQuestion) -> None:
 
 def test_numbered_answer_must_not_be_skipped(q3: ExamQuestion) -> None:
     """실측: 해설 166쪽에 63~67번 번호 줄이 있는데 AI가 62번만 옮김 → 번호 줄로 잡아 다시 시킨다."""
-    from dawoai.ingest.answer_key import numbered_on_page
-    from dawoai.models.grading import Exam
+    from dawoni.ingest.answer_key import numbered_on_page
+    from dawoni.models.grading import Exam
 
     text = "62\n해설\n63 \n힘의 평형\n2\n64\n토크\n65\n끝"
     numbers = {str(n) for n in range(60, 70)}
@@ -253,7 +253,7 @@ def test_numbered_answer_must_not_be_skipped(q3: ExamQuestion) -> None:
 
 def test_type_mismatch(q3: ExamQuestion) -> None:
     """다른 묶음의 같은 번호 답: 서술형에 '⑤'만, 객관식에 선지 번호 없는 답 → 버린다."""
-    from dawoai.ingest.answer_key import type_mismatch
+    from dawoni.ingest.answer_key import type_mismatch
 
     def kq(answer: str) -> KeyQuestion:
         part = KeyPart(label="", answer=answer, credit_policy="none")
@@ -516,7 +516,7 @@ def test_answer_sides_before_deciding_candidate(
     assert "v_0=nR" not in first, "다른 소문항 줄은 보내지 않는다"
     assert "학생3이 빠졌다" in repair and "학생2: 인용" in repair and "그대로 없다" in repair
 
-    from dawoai.cli_exam import sides_lines
+    from dawoni.cli_exam import sides_lines
 
     text = "\n".join(sides_lines(p, ["이둘"]))
     assert "후보 A1 (\\(\\sin\\theta=1\\)): 1명" in text and "빈 답: 1명" in text
@@ -541,8 +541,8 @@ def test_edit_keeps_review_notes(q3: ExamQuestion) -> None:
 def test_extract_answer_key_from_pdf(
     engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path
 ) -> None:
-    from dawoai.ingest.answer_key import extract_answer_key
-    from dawoai.models.grading import Exam
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
 
     pdf = tmp_path / "key.pdf"
     doc = pymupdf.open()
@@ -611,8 +611,8 @@ def test_lone_choice_answer_without_number_is_kept(
 ) -> None:
     """수능 해설은 객관식 답을 선지 번호 없이 끝낸다 — 같은 번호의 다른 답이 없으면 버리지 않는다
     (실측: 버린 뒤 '10, 12번이 빠졌다'고 수리 요청을 되풀이해 쪽을 잃음)."""
-    from dawoai.ingest.answer_key import extract_answer_key
-    from dawoai.models.grading import Exam
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
 
     pdf = _key_pdf(tmp_path / "key.pdf", SUNEUNG)
     out = {"questions": [_kq("10", "b와 c"), _kq("12", "\\(\\rho_B=\\rho\\)", "B의 저항")]}
@@ -629,8 +629,8 @@ def test_odd_answer_dropped_when_fitting_one_exists(
     engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path
 ) -> None:
     """같은 쪽에 다른 묶음의 같은 번호 해설: 모양이 맞는 답이 있으면 그것만 쓴다."""
-    from dawoai.ingest.answer_key import extract_answer_key
-    from dawoai.models.grading import Exam
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
 
     pdf = _key_pdf(tmp_path / "key.pdf", SUNEUNG)
     out = {"questions": [_kq("10", "③"), _kq("10", "b와 c"), _kq("12", "②")]}
@@ -651,8 +651,8 @@ def test_ungrounded_key_kept_only_where_text_may_be_outside_pdf(
 ) -> None:
     """수리해도 'PDF 글자에 없는 한글'만 남을 때: 쪽에 그림 이미지(또는 깨진 글자)가 있으면
     받아들이고 강사 확인 메모, PDF 글자가 멀쩡한 쪽이면 여전히 실패 (지어낸 해설 차단)."""
-    from dawoai.ingest.answer_key import extract_answer_key
-    from dawoai.models.grading import Exam
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
 
     pdf = _key_pdf(tmp_path / "key.pdf", ["3) (1) 수평 이동 시간"], image=image)
     q = q3.model_copy(update={"parts": []})

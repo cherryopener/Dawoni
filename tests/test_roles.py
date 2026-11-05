@@ -13,21 +13,21 @@ import pytest
 from conftest import MakeFake
 from tests_support import fake_args, fake_prompts
 
-import dawoai
-from dawoai.agents import AgentClient
-from dawoai.config import AppConfig
-from dawoai.context import ContextEngine, TaskDef, TaskFailed, TaskInput
-from dawoai.models.base import DawoaiModel
-from dawoai.paths import AppPaths
-from dawoai.roles import ROLES, instructions, role_for_task, version
+import dawoni
+from dawoni.agents import AgentClient
+from dawoni.config import AppConfig
+from dawoni.context import ContextEngine, TaskDef, TaskFailed, TaskInput
+from dawoni.models.base import DawoniModel
+from dawoni.paths import AppPaths
+from dawoni.roles import ROLES, instructions, role_for_task, version
 
 
 def _all_tasks() -> list[TaskDef[Any]]:
     # 모듈에 정의된 작업만 — gc로 찾으면 다른 테스트가 실행 중에 만든 사본
     # (`grade_answer_2` 등)이 남아 있을 때 섞인다 (실행 순서·GC 시점에 따라 CI에서만 실패)
     tasks: list[TaskDef[Any]] = []
-    for m in pkgutil.walk_packages(dawoai.__path__, "dawoai."):
-        if not m.name.startswith(("dawoai.web", "dawoai.__main__")):
+    for m in pkgutil.walk_packages(dawoni.__path__, "dawoni."):
+        if not m.name.startswith(("dawoni.web", "dawoni.__main__")):
             mod = importlib.import_module(m.name)
             tasks += [v for v in vars(mod).values() if isinstance(v, TaskDef)]
     return tasks
@@ -61,7 +61,7 @@ def test_role_tiers_follow_the_plan() -> None:
     assert {n for n, t in tiers.items() if t == "strong"} == {"solver_verifier", "calibrator"}
 
 
-class _Out(DawoaiModel):
+class _Out(DawoniModel):
     ok: bool
 
 

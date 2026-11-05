@@ -20,7 +20,7 @@ export function LoginPage({ auth }: { auth: AuthStatus }) {
     <div className="grid min-h-full place-items-center px-6">
       <Card className="w-full max-w-sm p-8 text-center">
         <div className="mx-auto grid size-12 place-items-center rounded-xl bg-accent text-[18px] text-accent-fg">다</div>
-        <h1 className="m-0 mt-4 text-[18px] font-medium">다워이</h1>
+        <h1 className="m-0 mt-4 text-[18px] font-medium">다워니</h1>
         {auth.state === "checking" ? (
           <p className="m-0 mt-2 text-text-2">로그인 확인 중…</p>
         ) : (

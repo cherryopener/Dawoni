@@ -16,16 +16,16 @@ import pytest
 from conftest import MakeFake
 from tests_support import fake_prompts
 
-from dawoai.agents import AgentClient
-from dawoai.config import AppConfig
-from dawoai.context import ContextEngine
-from dawoai.grading import checks
-from dawoai.grading.pipeline import expand_key_rubric
-from dawoai.levels import parse_level, preset_scope
-from dawoai.models.answer_key import AnswerKey
-from dawoai.models.grading import ExamQuestion, GradeOutput, KeyRubricDraft, RubricDraft
-from dawoai.models.scope import ScopeProfile
-from dawoai.paths import AppPaths
+from dawoni.agents import AgentClient
+from dawoni.config import AppConfig
+from dawoni.context import ContextEngine
+from dawoni.grading import checks
+from dawoni.grading.pipeline import expand_key_rubric
+from dawoni.levels import parse_level, preset_scope
+from dawoni.models.answer_key import AnswerKey
+from dawoni.models.grading import ExamQuestion, GradeOutput, KeyRubricDraft, RubricDraft
+from dawoni.models.scope import ScopeProfile
+from dawoni.paths import AppPaths
 
 H1_PHYS = preset_scope(parse_level("고1 물리"))
 M3_MATH = preset_scope(parse_level("중3 수학"))
@@ -228,7 +228,7 @@ def test_deduction_for_unrequired_method() -> None:
 
 
 def test_check_grade_flags_unrequired_method() -> None:
-    from dawoai.models.grading import Rubric, Transcript, TranscriptLine
+    from dawoni.models.grading import Rubric, Transcript, TranscriptLine
 
     rubric = Rubric(
         **KeyRubricDraft.model_validate(CLEAN).to_rubric_draft().model_dump(), question_number="1"

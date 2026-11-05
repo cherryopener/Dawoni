@@ -106,7 +106,7 @@ export function SetupWizard() {
                 ]}
               />
               <div className="flex gap-2">
-                <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\다워이" className="flex-1" />
+                <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder="D:\다워니" className="flex-1" />
                 <Button variant="outline" onClick={choose}>
                   폴더 고르기
                 </Button>

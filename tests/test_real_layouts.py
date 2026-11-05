@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from dawoai.ingest.layout import analyze, find_key_pages
+from dawoni.ingest.layout import analyze, find_key_pages
 
 REAL = Path(__file__).resolve().parent.parent / "real_data"
 KIM = REAL / "2027 중등 영재 물리학 1(역학)_김승규.pdf"

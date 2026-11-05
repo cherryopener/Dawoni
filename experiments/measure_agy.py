@@ -1,8 +1,8 @@
 """실험 (M0): 역할마다 agy 후보 모델로 같은 실제 자료를 돌려 시간·토큰·재요청·정확도를 잰다 (PLAN.md §2-5).
 
-다워이 엔진(실제 프롬프트, 검증·수리 루프, 호출 기록)을 그대로 쓰고 모델만 바꾼다. 자료는 다워니
+다워니 엔진(실제 프롬프트, 검증·수리 루프, 호출 기록)을 그대로 쓰고 모델만 바꾼다. 자료는 옛 다워니
 실측 시험(`real_data/test.pdf`: 시험지 + 해설지)과 그 시험의 학생 답안 스캔(`real_data/20261028172150.pdf`,
-학생 1명 = 3쪽, 첫 쪽 표지), 다워니가 읽고 강사가 확인한 시험·해설지(`--dawoni-exam` 폴더)다.
+학생 1명 = 3쪽, 첫 쪽 표지), 옛 다워니가 읽고 강사가 확인한 시험·해설지(`--old-dawoni-exam` 폴더)다.
 
     uv run python experiments/measure_agy.py exam  --models gemini-3.8-flash-medium,gemini-4-argon-low
     uv run python experiments/measure_agy.py key   --models ...
@@ -39,21 +39,21 @@ from typing import Any
 
 from rapidfuzz import fuzz
 
-from dawoai.agents import AgentClient
-from dawoai.config import AGENT_NAMES, TIER_NAMES, AgentName, AppConfig, TierModel
-from dawoai.context import ContextEngine
-from dawoai.context.calllog import CallLog
-from dawoai.grading.pipeline import grade_answer
-from dawoai.ingest.answer_key import _NUMBER as _NUM  # pyright: ignore[reportPrivateUsage]
-from dawoai.ingest.answer_key import _numbers, extract_answer_key  # pyright: ignore[reportPrivateUsage]
-from dawoai.ingest.exam import extract_exam
-from dawoai.ingest.layout import analyze, find_key_pages
-from dawoai.models.answer_key import AnswerKey
-from dawoai.models.grading import Exam, Rubric, Transcript
-from dawoai.models.scope import ScopeProfile
-from dawoai.ocr import batch
-from dawoai.ocr.transcribe import transcribe_student
-from dawoai.paths import AppPaths
+from dawoni.agents import AgentClient
+from dawoni.config import AGENT_NAMES, TIER_NAMES, AgentName, AppConfig, TierModel
+from dawoni.context import ContextEngine
+from dawoni.context.calllog import CallLog
+from dawoni.grading.pipeline import grade_answer
+from dawoni.ingest.answer_key import _NUMBER as _NUM  # pyright: ignore[reportPrivateUsage]
+from dawoni.ingest.answer_key import _numbers, extract_answer_key  # pyright: ignore[reportPrivateUsage]
+from dawoni.ingest.exam import extract_exam
+from dawoni.ingest.layout import analyze, find_key_pages
+from dawoni.models.answer_key import AnswerKey
+from dawoni.models.grading import Exam, Rubric, Transcript
+from dawoni.models.scope import ScopeProfile
+from dawoni.ocr import batch
+from dawoni.ocr.transcribe import transcribe_student
+from dawoni.paths import AppPaths
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "experiments" / "out" / "measure"
@@ -78,7 +78,7 @@ def say(*a: object) -> None:
 
 def engine_for(model: str) -> ContextEngine:
     """AI 하나만, 모든 등급이 이 모델. 한도에 걸려도 다른 AI로 넘어가지 않는다.
-    claude 모델은 앱의 standard 등급처럼 effort medium. 실행 파일은 자동 탐지, 또는 DAWOAI_CLAUDE_EXE."""
+    claude 모델은 앱의 standard 등급처럼 effort medium. 실행 파일은 자동 탐지, 또는 DAWONI_CLAUDE_EXE."""
     agent: AgentName = "claude" if model.startswith("claude") else "agy"
     cfg = AppConfig()
     cfg.default_agent = agent
@@ -87,7 +87,7 @@ def engine_for(model: str) -> ContextEngine:
         cfg.agents[name].enabled = name == agent
     tier = TierModel(model=model, effort="medium" if agent == "claude" else None)
     cfg.tiers[agent] = {t: tier for t in TIER_NAMES}
-    if agent == "claude" and (exe := os.environ.get("DAWOAI_CLAUDE_EXE")):
+    if agent == "claude" and (exe := os.environ.get("DAWONI_CLAUDE_EXE")):
         cfg.agents["claude"].executable = exe
     paths = AppPaths(OUT / "app")
     paths.ensure()
@@ -103,7 +103,7 @@ def load_scope(exam: Exam) -> ScopeProfile:
     return ScopeProfile.model_validate_json(p.read_text(encoding="utf-8"))
 
 
-def dawoni_keys() -> dict[str, AnswerKey]:
+def old_dawoni_keys() -> dict[str, AnswerKey]:
     out: dict[str, AnswerKey] = {}
     for p in sorted((DAWONI_EXAM / "keys").glob("*.json")):
         k = AnswerKey.model_validate_json(p.read_text(encoding="utf-8"))
@@ -226,9 +226,9 @@ def run_grade(model: str, set_no: int, *, source_model: str) -> Any:
 
 def run_rubric(model: str, _: int) -> Any:
     """M2: 강사가 확인한 해설지로 해설지 넓히기 — 문항마다 호출 1번이어야 한다 (수리 포함해 셈).
-    범위는 수준 프리셋(고1 물리: 미분·적분 … 금지)으로 — 다워니 범위 프로필에는 금지 목록이 없다."""
-    from dawoai.grading.pipeline import expand_key_rubric
-    from dawoai.levels import parse_level, preset_scope
+    범위는 수준 프리셋(고1 물리: 미분·적분 … 금지)으로 — 옛 다워니 범위 프로필에는 금지 목록이 없다."""
+    from dawoni.grading.pipeline import expand_key_rubric
+    from dawoni.levels import parse_level, preset_scope
 
     exam = load_exam()
     scope = preset_scope(parse_level("고1 물리"))
@@ -236,7 +236,7 @@ def run_rubric(model: str, _: int) -> Any:
     before = len(CallLog(CALLS).read())
     out: dict[str, Any] = {"rubrics": {}, "errors": {}}
     for q in exam.questions:
-        key = dawoni_keys().get(q.number)
+        key = old_dawoni_keys().get(q.number)
         if key is None:
             continue
         try:
@@ -303,7 +303,7 @@ def load_reference(name: str) -> dict[str, Any]:
 
 
 def score_exam(data: Any) -> tuple[float, str]:
-    """다워니 결과(강사 확인)와 문항 번호·소문항 표시·배점이 같은 비율."""
+    """옛 다워니 결과(강사 확인)와 문항 번호·소문항 표시·배점이 같은 비율."""
     want = {q.number: [(p.label, p.points) for p in q.parts] for q in load_exam().questions}
     got = {q["number"]: [(p["label"], p["points"]) for p in q.get("parts", [])] for q in data}
     total = sum(len(v) or 1 for v in want.values())
@@ -318,11 +318,11 @@ TEACHER_FIXED_KEY = {("3", "(2)")}
 
 
 def score_key(data: Any) -> tuple[float, str]:
-    """강사가 확인한 다워니 해설지와 비교 (§1-4: 숫자를 바꿔 읽는 실수).
+    """강사가 확인한 옛 다워니 해설지와 비교 (§1-4: 숫자를 바꿔 읽는 실수).
 
     맞음 = 답의 숫자가 같고, 확인된 해설의 숫자가 하나도 빠지거나 바뀌지 않음. 모델이 해설을 더
     길게 옮겨 숫자가 더 있는 것은 틀림이 아니라 '더 옮김'으로 따로 센다."""
-    want = dawoni_keys()
+    want = old_dawoni_keys()
     got = {k["question_number"]: AnswerKey.model_validate(k) for k in data["keys"]}
     total = ok = 0
     diffs: list[str] = []

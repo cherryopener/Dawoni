@@ -1,4 +1,4 @@
-"""채점 HWPX (dawoai/export) — 한글 없이: 스키마 검사, 다시 읽기, 수식 바꾸기."""
+"""채점 HWPX (dawoni/export) — 한글 없이: 스키마 검사, 다시 읽기, 수식 바꾸기."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import pytest
 from hwpx.document import HwpxDocument
 from lxml import etree
 
-from dawoai.export.hwpx import (
+from dawoni.export.hwpx import (
     PartGrade,
     Sheet,
     build_bundle,
@@ -22,8 +22,8 @@ from dawoai.export.hwpx import (
     sheet_lines,
     to_eqedit,
 )
-from dawoai.export.quotes import Spots, locate, segments
-from dawoai.models.grading import TranscriptLine
+from dawoni.export.quotes import Spots, locate, segments
+from dawoni.models.grading import TranscriptLine
 
 LINES = sheet_lines(
     "2",

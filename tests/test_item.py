@@ -6,8 +6,8 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from dawoai.models import InclineSpec, Item, ItemContent
-from dawoai.models.figure import Figure, FunctionGraphSpec
+from dawoni.models import InclineSpec, Item, ItemContent
+from dawoni.models.figure import Figure, FunctionGraphSpec
 
 
 def _bad(data: dict[str, Any], fragment: str) -> None:

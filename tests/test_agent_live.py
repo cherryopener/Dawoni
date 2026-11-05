@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from dawoai.agents import AgentClient
-from dawoai.agents.detect import find_executable
-from dawoai.agents.selftest import evaluate, selftest_request
-from dawoai.config import AppConfig
-from dawoai.paths import AppPaths
+from dawoni.agents import AgentClient
+from dawoni.agents.detect import find_executable
+from dawoni.agents.selftest import evaluate, selftest_request
+from dawoni.config import AppConfig
+from dawoni.paths import AppPaths
 
 pytestmark = [
     pytest.mark.agent,
@@ -31,8 +31,8 @@ def test_agy_reads_image_without_permission_prompt(app_paths: AppPaths) -> None:
 
 
 def test_agy_refines_rule_and_flags_conflict(app_paths: AppPaths, tmp_path: Path) -> None:
-    from dawoai.context import ContextEngine, GlobalRule, RuleStore
-    from dawoai.context.refine import refine_rule
+    from dawoni.context import ContextEngine, GlobalRule, RuleStore
+    from dawoni.context.refine import refine_rule
 
     store = RuleStore(tmp_path / "rules")
     short = store.save(

@@ -13,18 +13,18 @@ from conftest import MakeFake
 from test_grading import FIX, GRADE_A, RUBRIC_OK, SOL_OK, approved_rubric, transcript_of
 from tests_support import fake_prompts
 
-from dawoai.config import AppConfig, save_config
-from dawoai.fsio import read_json
-from dawoai.grading import calibration, workflow
-from dawoai.grading.pipeline import (
+from dawoni.config import AppConfig, save_config
+from dawoni.fsio import read_json
+from dawoni.grading import calibration, workflow
+from dawoni.grading.pipeline import (
     PipelineError,
     check_suggestion,
     teacher_grade,
     teacher_review,
 )
-from dawoai.grading.store import ExamStore, ScopeStore
-from dawoai.models.calibration import CalibrationSettings, RubricSuggestion
-from dawoai.models.grading import (
+from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.models.calibration import CalibrationSettings, RubricSuggestion
+from dawoni.models.grading import (
     Exam,
     ExamQuestion,
     GradeResult,
@@ -33,10 +33,10 @@ from dawoai.models.grading import (
     ScopedSolution,
     SolutionDraft,
 )
-from dawoai.models.scope import ScopeProfile
-from dawoai.paths import AppPaths
-from dawoai.services import Services, open_services
-from dawoai.workspace import create_workspace
+from dawoni.models.scope import ScopeProfile
+from dawoni.paths import AppPaths
+from dawoni.services import Services, open_services
+from dawoni.workspace import create_workspace
 
 
 def ai_grade(student: str, r1: float, r2: float, *, status: str = "auto") -> GradeResult:

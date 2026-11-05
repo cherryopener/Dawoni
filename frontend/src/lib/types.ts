@@ -1,4 +1,4 @@
-// 서버 응답 꼴 (화면이 쓰는 필드만). 원본은 dawoai/models·dawoai/server.
+// 서버 응답 꼴 (화면이 쓰는 필드만). 원본은 dawoni/models·dawoni/server.
 
 export type StepKey = "read" | "rubric" | "scan" | "grade" | "export";
 

@@ -13,10 +13,10 @@ frontend/dist/
 /workspace/
 /scratch/
 .claude/settings.local.json
-/dawoai/web/
+/dawoni/web/
 # 로그인 설정 (Google 클라이언트 비밀값) — 빌드 때 비밀값으로 만든다
-/dawoai/assets/access.json
-# 다워니 실측 시험·학생 답안 (회귀 시험 자료, 개인정보) — 올리지 않는다
+/dawoni/assets/access.json
+# 옛 다워니 실측 시험·학생 답안 (회귀 시험 자료, 개인정보) — 올리지 않는다
 /real_data/
 # 실험 스크립트가 만든 결과물 (HWPX·측정 기록)
 /experiments/out/

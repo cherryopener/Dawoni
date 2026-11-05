@@ -14,9 +14,9 @@ from fastapi.testclient import TestClient
 from test_server import _client, _wait  # pyright: ignore[reportPrivateUsage]
 from tests_support import fake_prompts
 
-from dawoai.agents import AgentClient
-from dawoai.config import AppConfig, save_config
-from dawoai.context import (
+from dawoni.agents import AgentClient
+from dawoni.config import AppConfig, save_config
+from dawoni.context import (
     ContextEngine,
     MemoryNote,
     MemoryStore,
@@ -27,15 +27,15 @@ from dawoai.context import (
     TaskInput,
     situation,
 )
-from dawoai.context.calllog import CallLog
-from dawoai.context.learn import Correction, learn, propose
-from dawoai.context.memory import MemoryFull
-from dawoai.context.skills import parse_skill
-from dawoai.models.base import DawoaiModel
-from dawoai.paths import AppPaths
+from dawoni.context.calllog import CallLog
+from dawoni.context.learn import Correction, learn, propose
+from dawoni.context.memory import MemoryFull
+from dawoni.context.skills import parse_skill
+from dawoni.models.base import DawoniModel
+from dawoni.paths import AppPaths
 
 
-class _Out(DawoaiModel):
+class _Out(DawoniModel):
     title: str
 
 
@@ -83,7 +83,7 @@ def test_skill_file_round_trip_and_foreign_skill_md(tmp_path: Path) -> None:
     assert text.startswith("---\n") and "2. 둘째" in text
     assert store.get(s.id) == s
 
-    # 다른 곳에서 가져온 SKILL.md (YAML 문자열, 다워이 필드 없음)
+    # 다른 곳에서 가져온 SKILL.md (YAML 문자열, 다워니 필드 없음)
     d = tmp_path / "skills" / "pdf-tables"
     d.mkdir()
     (d / "SKILL.md").write_text(
@@ -124,7 +124,7 @@ def test_skill_injected_only_when_situation_matches(
 
 
 def test_situation_nests_and_resets() -> None:
-    from dawoai.context.engine import _SITUATION  # pyright: ignore[reportPrivateUsage]
+    from dawoni.context.engine import _SITUATION  # pyright: ignore[reportPrivateUsage]
 
     with situation("바깥.pdf", None):
         with situation("안쪽"):
@@ -221,7 +221,7 @@ def test_learn_needs_note_or_correction(tmp_path: Path) -> None:
 
 
 def test_learn_task_is_internal() -> None:
-    from dawoai.context.learn import LEARN
+    from dawoni.context.learn import LEARN
 
     assert LEARN.rule_target is None
     assert dataclasses.replace(LEARN).role == "light_helper"
@@ -267,7 +267,7 @@ def test_learning_api(app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path) 
 
 
 def test_diff_text_keeps_only_changed_parts() -> None:
-    from dawoai.context.learn import diff_text
+    from dawoni.context.learn import diff_text
 
     before = {"stem": "다음을 구하시오", "choices": ["①", "②"], "id": "a", "orig": "x.png"}
     after = {"stem": "다음을 구하시오", "choices": ["1)", "②"], "id": "b", "orig": "y.png"}
@@ -280,8 +280,8 @@ def test_diff_text_keeps_only_changed_parts() -> None:
 def test_grade_correction_shows_changed_items_with_criterion() -> None:
     from test_grading import GRADE_A, approved_rubric
 
-    from dawoai.models.grading import GradeResult
-    from dawoai.server.learning import grade_correction
+    from dawoni.models.grading import GradeResult
+    from dawoni.server.learning import grade_correction
 
     r = approved_rubric()
     g = GradeResult.model_validate(
@@ -307,7 +307,7 @@ def test_transcript_edit_with_learn_submits_lesson(
 ) -> None:
     from test_grading import FIX
 
-    from dawoai.fsio import read_json
+    from dawoni.fsio import read_json
 
     lesson = {
         "kind": "memory", "reason": "판독 습관",

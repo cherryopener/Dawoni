@@ -10,22 +10,22 @@ from typing import Any
 
 import pytest
 
-from dawoai.paths import ENV_HOME, AppPaths
+from dawoni.paths import ENV_HOME, AppPaths
 
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """앱 데이터 폴더(캐시 등)는 늘 테스트 임시 폴더로 — 사용자 폴더에 쓰지 않게."""
     monkeypatch.setenv(ENV_HOME, str(tmp_path / "app"))
-    # 개발 PC에 로그인 설정(dawoai/assets/access.json)이 있어도 테스트는 로그인 없이
-    monkeypatch.setenv("DAWOAI_ACCESS_FILE", str(tmp_path / "no-access.json"))
+    # 개발 PC에 로그인 설정(dawoni/assets/access.json)이 있어도 테스트는 로그인 없이
+    monkeypatch.setenv("DAWONI_ACCESS_FILE", str(tmp_path / "no-access.json"))
 
 
 @pytest.fixture(autouse=True)
 def _sequential_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """가짜 CLI(script)는 호출 순서대로 답하므로 테스트의 기본 설정은 학생·채점을 차례로 부른다.
     동시 실행을 시험하는 테스트는 설정에 수를 직접 넣는다."""
-    from dawoai.config import AppConfig
+    from dawoni.config import AppConfig
 
     original = AppConfig.__init__
 

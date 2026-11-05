@@ -12,13 +12,13 @@ from typing import Any
 
 import pytest
 
-from dawoai.agents import AgentClient, AgentError, AgentErrorCode
-from dawoai.agents.base import AgentRequest
-from dawoai.agents.detect import detect_local
-from dawoai.agents.local import fix_latex_escapes
-from dawoai.agents.selftest import SELFTEST_IMAGE
-from dawoai.config import AgentSettings, AppConfig
-from dawoai.paths import AppPaths
+from dawoni.agents import AgentClient, AgentError, AgentErrorCode
+from dawoni.agents.base import AgentRequest
+from dawoni.agents.detect import detect_local
+from dawoni.agents.local import fix_latex_escapes
+from dawoni.agents.selftest import SELFTEST_IMAGE
+from dawoni.config import AgentSettings, AppConfig
+from dawoni.paths import AppPaths
 
 Handler = Callable[[BaseHTTPRequestHandler, dict[str, Any]], None]
 Server = tuple[str, list[dict[str, Any]], list[Handler]]

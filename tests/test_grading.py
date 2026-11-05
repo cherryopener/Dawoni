@@ -12,13 +12,13 @@ from typing import Any
 import pytest
 from tests_support import fake_prompts
 
-from dawoai.agents import AgentClient
-from dawoai.cli import main
-from dawoai.config import AppConfig, save_config
-from dawoai.context import ContextEngine
-from dawoai.fsio import read_json
-from dawoai.grading import checks
-from dawoai.grading.pipeline import (
+from dawoni.agents import AgentClient
+from dawoni.cli import main
+from dawoni.config import AppConfig, save_config
+from dawoni.context import ContextEngine
+from dawoni.fsio import read_json
+from dawoni.grading import checks
+from dawoni.grading.pipeline import (
     PipelineError,
     SecondOpinion,
     approve_rubric,
@@ -26,8 +26,8 @@ from dawoai.grading.pipeline import (
     grade_answer,
     solve_question,
 )
-from dawoai.grading.store import ExamStore, safe_name
-from dawoai.models.grading import (
+from dawoni.grading.store import ExamStore, safe_name
+from dawoni.models.grading import (
     DEFAULT_NEVER_DEDUCT,
     ExamQuestion,
     FinalAnswer,
@@ -39,9 +39,9 @@ from dawoai.models.grading import (
     Transcript,
     TranscriptLine,
 )
-from dawoai.models.scope import ScopeProfile
-from dawoai.paths import AppPaths
-from dawoai.workspace import create_workspace
+from dawoni.models.scope import ScopeProfile
+from dawoni.paths import AppPaths
+from dawoni.workspace import create_workspace
 
 FIX = Path(__file__).parent / "fixtures" / "grading"
 MakeFake = Callable[..., Path]
@@ -58,7 +58,7 @@ def q1() -> ExamQuestion:
 
 
 def transcript_of(name: str, student: str = "학생") -> Transcript:
-    from dawoai.cli_exam import parse_answer_text
+    from dawoni.cli_exam import parse_answer_text
 
     text = (FIX / "answers" / name).read_text(encoding="utf-8")
     return Transcript(
@@ -443,7 +443,7 @@ def test_cli_exam_end_to_end(
 )
 def test_answers_agree_multi_value(a: str, b: str, expected: bool | None) -> None:
     """여러 값으로 된 답(문장 답)도 값 집합으로 비교 (M9 실측: 신규 B 독립 풀이)."""
-    from dawoai.models.grading import FinalAnswer
+    from dawoni.models.grading import FinalAnswer
 
     assert checks.answers_agree(FinalAnswer(latex=a), FinalAnswer(latex=b)) is expected
 
@@ -471,7 +471,7 @@ def test_quote_with_part_labels_and_lines() -> None:
 
 def test_fix_grade_repairs_format_only() -> None:
     """형식 오류는 코드가 고치고, 판단이 걸린 것(점수 차이)은 그대로 둔다."""
-    from dawoai.grading.pipeline import fix_grade
+    from dawoni.grading.pipeline import fix_grade
 
     rubric = approved_rubric()
     o = _grade(
@@ -495,7 +495,7 @@ def test_fix_grade_repairs_format_only() -> None:
 
 
 def test_grade_repair_items() -> None:
-    from dawoai.grading.pipeline import grade_repair_items
+    from dawoni.grading.pipeline import grade_repair_items
 
     o = _grade(GRADE_A)
     assert grade_repair_items(o, ["R2: 인용 'x'가 학생 답안에 없다."]) == ["R2"]
@@ -526,7 +526,7 @@ def test_second_grading_only_when_unsure(
 
 
 def _parted() -> tuple[ExamQuestion, Rubric]:
-    from dawoai.models.grading import ExamPart, PartCheck
+    from dawoni.models.grading import ExamPart, PartCheck
 
     q = ExamQuestion.model_validate(read_json(FIX / "questions.json")[0])
     q = q.model_copy(

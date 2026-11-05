@@ -1,12 +1,12 @@
-"""M4 실측: M3 판독문(학생 24명)을 다워니 초안 루브릭(1·2번)으로 채점하고 표지의 강사 점수와 비교.
+"""M4 실측: M3 판독문(학생 24명)을 옛 다워니 초안 루브릭(1·2번)으로 채점하고 표지의 강사 점수와 비교.
 
     uv run python experiments/m4_grade.py grade [--parallel 4] [--regrade]
     uv run python experiments/m4_grade.py grade --regrade --model gemini-4-argon-low --label argon-low
     uv run python experiments/m4_grade.py report [--label argon-low]
 
 - 판독문: M3 실측(`m3_batch.py scan`, flash-medium)이 만든 것. 강사 확인 전이다.
-- 루브릭: 다워니의 **초안**(보정 전) — 3번은 인쇄 해설지가 틀려(PLAN.md §1-3) 뺀다.
-- 기준: 표지의 빨간 펜 문항 점수 (표지 판독, 다워니 실측 68/72). 소문항 점수는 없다(M5에서 읽음).
+- 루브릭: 옛 다워니의 **초안**(보정 전) — 3번은 인쇄 해설지가 틀려(PLAN.md §1-3) 뺀다.
+- 기준: 표지의 빨간 펜 문항 점수 (표지 판독, 옛 다워니 실측 68/72). 소문항 점수는 없다(M5에서 읽음).
 - 결과는 `experiments/out/m4/[<label>/]report.json`·`report.md`. `--model`은 채점 역할(grader)만 바꾼다.
 """
 
@@ -23,11 +23,11 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from m3_batch import DAWONI_EXAM, exam_store, services  # pyright: ignore[reportPrivateUsage]
 
-from dawoai.config import TierModel
-from dawoai.context.calllog import CallLog
-from dawoai.grading import workflow
-from dawoai.grading.pipeline import approve_rubric
-from dawoai.models.grading import Rubric
+from dawoni.config import TierModel
+from dawoni.context.calllog import CallLog
+from dawoni.grading import workflow
+from dawoni.grading.pipeline import approve_rubric
+from dawoni.models.grading import Rubric
 
 OUT = Path(__file__).resolve().parent / "out" / "m4"
 QUESTIONS = ["1", "2"]
@@ -53,7 +53,7 @@ def cmd_grade(args: argparse.Namespace) -> int:
         if r is None or r.status != "approved":
             src = DAWONI_EXAM / "rubrics" / f"{q}.json"
             rubric = Rubric.model_validate_json(src.read_text(encoding="utf-8"))
-            store.save_rubric(approve_rubric(rubric, "M4 실측 (다워니 초안)"))
+            store.save_rubric(approve_rubric(rubric, "M4 실측 (옛 다워니 초안)"))
     calls_before = len(CallLog(svc.paths.logs / "calls.jsonl").read())
     t0 = time.monotonic()
     run = workflow.grade_exam(
