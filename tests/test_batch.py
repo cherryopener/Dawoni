@@ -14,7 +14,7 @@ from typing import Any
 
 import pymupdf
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 from tests_support import fake_prompts
 
 from dawoni.cli import main
@@ -71,6 +71,47 @@ def test_rotate(tmp_path: Path) -> None:
     batch.rotate([p], 90)
     with Image.open(p) as im:
         assert im.size == (20, 40)
+
+
+def _form(path: Path, seed: int, scanned: int = 90) -> Path:
+    """같은 인쇄 양식의 표지 (세로 A4 꼴: 위에 제목 띠, 왼쪽 이름 칸, 아래 점수 칸) + 학생마다
+    다른 손글씨 흉내. 스캐너가 반시계로 `scanned`도 눕혀 저장한 것
+    — 시계 방향 `scanned`도로 세운다."""
+    im = Image.new("L", (420, 594), 255)
+    d = ImageDraw.Draw(im)
+    d.rectangle((30, 30, 390, 110), fill=0)  # 제목 띠
+    d.rectangle((30, 150, 200, 200), outline=0, width=4)  # 이름 칸
+    for k in range(4):
+        d.rectangle((30 + 90 * k, 480, 110 + 90 * k, 560), outline=0, width=4)  # 점수 칸
+    d.line((60 + seed * 7, 175, 160, 185 - seed), fill=0, width=3)  # 학생 이름
+    d.text((240, 300 + seed * 5), f"x={seed}", fill=0)
+    im.rotate(scanned, expand=True).save(path)
+    return path
+
+
+def test_settle_rotations_matches_covers_to_each_other(tmp_path: Path) -> None:
+    covers = [_form(tmp_path / f"c{i}.png", i) for i in range(6)]
+    covers.append(_form(tmp_path / "flipped.png", 6, scanned=270))  # 거꾸로 넣은 한 장
+    # M3 실측과 같은 틀림: 가로 그림에 0°, 실제 90°에 270°
+    proposed = [90, 0, 90, 270, 90, 90, 270]
+    fixes = batch.settle_rotations(covers, proposed)
+    assert [(f.index, f.proposed, f.chosen) for f in fixes] == [(1, 0, 90), (3, 270, 90)]
+    assert batch.settle_rotations(covers[:2], [90, 0]) == [], "비교할 표지가 모자라면 AI 답 그대로"
+
+
+def test_settle_rotations_uses_saved_covers_and_keeps_unlike_pages(tmp_path: Path) -> None:
+    saved: list[Path] = []
+    for i in range(3):  # 이 시험에서 이미 세워 저장한 표지
+        p = _form(tmp_path / f"s{i}.png", i)
+        batch.rotate([p], 90)
+        saved.append(p)
+    one = _form(tmp_path / "new.png", 9)
+    assert [(f.proposed, f.chosen) for f in batch.settle_rotations([one], [270], saved)] == [
+        (270, 90)
+    ], "표지 한 장만 새로 읽어도 저장한 표지와 맞춘다"
+    blank = tmp_path / "blank.png"
+    Image.new("L", (594, 420), 255).save(blank)
+    assert batch.settle_rotations([blank], [0], saved) == [], "닮지 않은 쪽은 AI 답 그대로"
 
 
 def _cover(name: str, rotation: str = "90") -> dict[str, Any]:

@@ -460,6 +460,28 @@ def scan_batch(
         workers=workers, progress=progress,
     )  # fmt: skip
 
+    # 1-1) 각도 — AI 답을 다른 표지와 맞춰 본다 (코드만). 이미 세워 저장한 표지도 함께 비교
+    read = [j for j in covers if not j.failed and j.cover is not None and j.cover_image]
+    again = {j.record.student_id for j in read if j.record is not None}
+    saved = [
+        p
+        for r in records
+        if r.student_id not in again
+        and (p := store.scan_dir(r.student_id) / "page_01.png").is_file()
+    ][:12]
+    fixes = batch.settle_rotations(
+        [j.cover_image for j in read if j.cover_image],
+        [int(j.cover.rotation) for j in read if j.cover],
+        saved,
+    )
+    for f in fixes:
+        job = read[f.index]
+        assert job.cover is not None
+        job.cover = job.cover.model_copy(update={"rotation": str(f.chosen)})
+        res.warnings.append(
+            f"{job.source}: 표지 각도를 {f.proposed}° → {f.chosen}°로 고침 (다른 표지와 맞춰 봄)"
+        )
+
     # 2) 학생 ID — 차례대로 (동명이인을 가르려면 앞 학생을 알아야 한다)
     taken = {r.student_id: r for r in records}
     for job in covers:

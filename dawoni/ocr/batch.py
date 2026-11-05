@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import dataclasses
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
+import numpy.typing as npt
 import pymupdf
-from PIL import Image
+from PIL import Image, ImageFilter
 from pydantic import Field
 
 from dawoni.context import ContextEngine, TaskDef, TaskInput
@@ -118,6 +120,104 @@ def rotate(paths: list[Path], degrees: int) -> None:
     for p in paths:
         with Image.open(p) as im:
             im.rotate(-degrees, expand=True).save(p)
+
+
+_THUMB = (48, 68)
+"""표지 비교용 작은 그림 (가로 × 세로, 세운 표지가 세로로 길 때 — 가로로 길면 뒤집어 쓴다)."""
+MATCH_MIN = 0.5
+"""다른 표지와 이만큼은 닮아야 같은 양식으로 본다 (실측: 같은 양식 0.95 이상, 거꾸로면 -0.1)."""
+MATCH_MARGIN = 0.2
+"""AI가 고른 각도보다 이만큼 더 닮아야 바꾼다."""
+
+Signature = npt.NDArray[np.float32]
+
+
+@dataclass
+class RotationFix:
+    index: int
+    """`settle_rotations`에 준 표지 목록의 몇 번째인가."""
+    proposed: int
+    chosen: int
+
+
+def _upright_portrait(size: tuple[int, int], degrees: int) -> bool:
+    """시계 방향으로 `degrees`도 돌리면 세로로 긴가."""
+    w, h = size
+    return (h > w) if degrees % 180 == 0 else (w > h)
+
+
+def _square(size: tuple[int, int]) -> bool:
+    w, h = size
+    return abs(w - h) < 0.05 * max(w, h)
+
+
+def _small_gray(path: Path) -> Image.Image:
+    with Image.open(path) as im:
+        im.draft("L", (400, 400))  # JPEG면 읽을 때부터 줄인다
+        g = im.convert("L")
+    g.thumbnail((400, 400))
+    return g
+
+
+def _signature(im: Image.Image, degrees: int, portrait: bool) -> Signature:
+    size = _THUMB if portrait else (_THUMB[1], _THUMB[0])
+    t = im.rotate(-degrees, expand=True).filter(ImageFilter.GaussianBlur(2)).resize(size)
+    a = np.asarray(t, dtype=np.float32)
+    a = a - a.mean()
+    return a / (float(np.linalg.norm(a)) + 1e-6)
+
+
+def settle_rotations(
+    covers: Sequence[Path], proposed: Sequence[int], references: Sequence[Path] = ()
+) -> list[RotationFix]:
+    """AI가 읽은 표지 각도를 다른 표지와 맞춰 본다 (코드만, 토큰 0). 바꾼 표지만 돌려준다.
+
+    표지는 모두 같은 인쇄 양식이라, 바르게 세운 표지끼리는 작은 흑백 그림으로 줄여도 거의 같다.
+    AI가 각도를 틀린 표지(M3 실측 3/24명: 0°·270°, 실제 90°)는 다른 표지와 맞춰 보면 드러난다.
+    1. 세운 표지가 세로로 긴지 가로로 긴지는 AI 답(과 `references`)의 다수결
+       — 그 모양이 되는 각도만 후보.
+    2. 다른 표지(`references`: 이 시험에서 이미 세워 저장한 표지)의 평균과 가장 닮은 각도를
+       고른다. 같은 양식으로 보기 어렵거나(`MATCH_MIN`) AI 답보다 뚜렷이 낫지 않으면
+       (`MATCH_MARGIN`) AI 답을 둔다.
+    """
+    imgs = [_small_gray(p) for p in covers]
+    refs = [_small_gray(p) for p in references]
+    votes = [_upright_portrait(im.size, d) for im, d in zip(imgs, proposed, strict=True)]
+    votes += [im.height > im.width for im in refs]
+    if len(votes) < 3:
+        return []  # 비교할 표지가 모자람
+    portrait = sum(votes) * 2 >= len(votes)
+    ref_sigs = [_signature(im, 0, portrait) for im in refs if (im.height > im.width) == portrait]
+    current = list(proposed)
+    for _ in range(2):  # 고친 각도로 평균을 다시 만들어 한 번 더
+        sigs = [
+            _signature(im, d, portrait) if _upright_portrait(im.size, d) == portrait else None
+            for im, d in zip(imgs, current, strict=True)
+        ]
+        changed = False
+        for i, im in enumerate(imgs):
+            others = [s for j, s in enumerate(sigs) if j != i and s is not None] + ref_sigs
+            if len(others) < 2:
+                continue
+            mean: Signature = np.stack(others).sum(axis=0)
+            mean = mean / (float(np.linalg.norm(mean)) + 1e-6)
+            candidates = [
+                d for d in (0, 90, 180, 270)
+                if _square(im.size) or _upright_portrait(im.size, d) == portrait
+            ]  # fmt: skip
+            scores = {d: float((_signature(im, d, portrait) * mean).sum()) for d in candidates}
+            best = max(scores, key=lambda d: scores[d])
+            clearer = scores[best] - scores.get(proposed[i], -1.0) >= MATCH_MARGIN
+            pick = best if scores[best] >= MATCH_MIN and clearer else proposed[i]
+            if pick != current[i]:
+                current[i], changed = pick, True
+        if not changed:
+            break
+    return [
+        RotationFix(i, p, c)
+        for i, (p, c) in enumerate(zip(proposed, current, strict=True))
+        if p != c
+    ]
 
 
 def read_cover(
