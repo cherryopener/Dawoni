@@ -72,13 +72,23 @@ def _run(*args: str | Path) -> None:
 
 
 def _signed(path: Path) -> str:
-    """Authenticode 서명 상태 (Valid면 통과)."""
+    """Authenticode 서명 상태 (Valid면 통과). 아니면 상태와 서명자·PowerShell 오류를 함께 돌려준다.
+
+    PSModulePath는 넘기지 않는다: GitHub Actions의 `shell: pwsh`(PowerShell 7) 단계에서 부르면
+    Windows PowerShell 5.1이 7의 모듈 경로를 물려받아 `Microsoft.PowerShell.Security`를 불러오지
+    못하고, 상태가 빈 값이 된다 ("python.org 설치본이 아닙니다"로 멈춤, 2026-11-05 Actions)."""
+    env = {k: v for k, v in os.environ.items() if k.upper() != "PSMODULEPATH"}
+    script = (
+        f"$s = Get-AuthenticodeSignature -LiteralPath '{path}'; "
+        "if ($s.Status -eq 'Valid') { 'Valid' } "
+        'else { "$($s.Status): $($s.StatusMessage) (signer: $($s.SignerCertificate.Subject))" }'
+    )  # PowerShell 5.1은 콘솔 코드 페이지로 찍으므로 스크립트 글은 ASCII로
     r = subprocess.run(
-        ["powershell", "-NoProfile", "-Command",
-         f"(Get-AuthenticodeSignature -LiteralPath '{path}').Status"],
-        capture_output=True, text=True, check=False,
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True, errors="replace", check=False, env=env,
     )  # fmt: skip
-    return r.stdout.strip()
+    out = r.stdout.strip()
+    return out if out == "Valid" else f"{out or '(상태 없음)'} {r.stderr.strip()}".strip()
 
 
 def _version() -> str:
@@ -143,8 +153,8 @@ def main() -> int:
     if not (ROOT / "dawoni" / "web" / "index.html").is_file():
         raise SystemExit("화면 빌드가 없습니다: cd frontend && npm run build")
     base = Path(sys.base_prefix)
-    if _signed(base / "pythonw.exe") != "Valid":
-        raise SystemExit(f"python.org 설치본이 아닙니다 (서명 없음): {base}")
+    if (status := _signed(base / "pythonw.exe")) != "Valid":
+        raise SystemExit(f"python.org 설치본이 아닙니다: {base}\\pythonw.exe 서명 {status}")
     access = _access_json(args.access)
     if access is not None:
         json.loads(access)  # 형식만 확인 — 내용은 찍지 않는다
