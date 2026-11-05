@@ -237,10 +237,18 @@ export function SettingsPage() {
         />
         <CardBody className="flex items-center gap-2">
           <span className="w-20 text-[13px] text-text-2">강사 이름</span>
-          <Input value={teacher} onChange={(e) => setTeacher(e.target.value)} className="flex-1" />
-          <Button variant="outline" disabled={act.busy || teacher === status.teacher} onClick={() => void saveTeacher()}>
-            저장
-          </Button>
+          {status.teacher_locked ? (
+            <span className="flex-1 text-[13px]">
+              {status.teacher} <span className="text-text-3">· 이름은 관리자 명단에서 바뀝니다</span>
+            </span>
+          ) : (
+            <>
+              <Input value={teacher} onChange={(e) => setTeacher(e.target.value)} className="flex-1" />
+              <Button variant="outline" disabled={act.busy || teacher === status.teacher} onClick={() => void saveTeacher()}>
+                저장
+              </Button>
+            </>
+          )}
         </CardBody>
       </Card>
     </div>

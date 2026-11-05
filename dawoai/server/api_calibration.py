@@ -193,7 +193,7 @@ def manual_grade(
         comment=body.comment,
         note=body.note,
         item_notes={k: v for k, v in body.item_notes.items() if v.strip()},
-        by=body.by,
+        by=st.who(body.by),
     )
     store.save_grade(g)
     workflow.export_grades(svc, store, [g])
@@ -274,7 +274,7 @@ def confirm_marks(exam_id: str, body: ConfirmMarksBody, st: AppState = State) ->
 
     def run(ctx: JobContext) -> dict[str, Any]:
         res = marks.confirm_marks(
-            svc, store, body.students, by=body.by, force=body.force, progress=ctx.progress
+            svc, store, body.students, by=st.who(body.by), force=body.force, progress=ctx.progress
         )
         imp = res.imported
         return {
@@ -309,4 +309,4 @@ class FinalizeBody(BaseModel):
 def finalize(exam_id: str, number: str, body: FinalizeBody, st: AppState = State) -> Rubric:
     """강사 손채점과 맞춰 본 루브릭 확정."""
     _, store = _store(st, exam_id)
-    return marks.finalize_rubric(store, number, by=body.by)
+    return marks.finalize_rubric(store, number, by=st.who(body.by))

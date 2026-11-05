@@ -27,6 +27,9 @@ export function LoginPage({ auth }: { auth: AuthStatus }) {
           <>
             <p className="m-0 mt-2 text-text-2">학원에서 허가한 Google 계정으로 로그인하세요. 기본 브라우저에서 로그인 창이 열립니다.</p>
             {auth.message && <p className={"m-0 mt-2 text-[13px] " + (auth.state === "blocked" ? "text-bad" : "text-text-2")}>{auth.message}</p>}
+            {auth.state === "blocked" && (
+              <p className="m-0 mt-1 text-[13px] text-text-2">관리자에게 이 이메일을 알려 주면 명단에 넣어 줍니다. 다른 계정으로 다시 로그인할 수도 있습니다.</p>
+            )}
             <Button variant="primary" size="lg" className="mt-6 w-full" onClick={login}>
               Google로 로그인
             </Button>

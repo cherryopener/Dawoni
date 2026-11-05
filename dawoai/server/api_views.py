@@ -520,15 +520,17 @@ def coordinator_run(body: RunBody, st: AppState = State) -> dict[str, Any]:
             if students == []:
                 raise PipelineError("그 반·이름의 학생이 이 시험에 없습니다.")
             gb = api_exams.GradeBody(
-                students=students, questions=qs, regrade=plan.regrade, by=body.by
+                students=students, questions=qs, regrade=plan.regrade, by=st.who(body.by)
             )
             job = api_exams.grade(eid, gb, st)
             link = ["exams", eid, "grade"]
         case "rubric":
-            job = api_exams.make_rubrics(eid, api_exams.QuestionsBody(questions=qs, by=body.by), st)
+            job = api_exams.make_rubrics(
+                eid, api_exams.QuestionsBody(questions=qs, by=st.who(body.by)), st
+            )
             link = ["exams", eid, "rubric"]
         case "confirm_files":
-            cb = api_exams.ConfirmFilesBody(by=body.by)
+            cb = api_exams.ConfirmFilesBody(by=st.who(body.by))
             job = api_exams.confirm_files(eid, cb, st)
             link = ["exams", eid, "scan"]
         case "read_marks":

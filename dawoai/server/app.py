@@ -29,7 +29,7 @@ from dawoai.server import (
 )
 from dawoai.server.files import PathRefused
 from dawoai.server.security import COOKIE, LocalOnly
-from dawoai.server.state import AppState, NeedsSetup
+from dawoai.server.state import AppState, NeedsSetup, NotLoggedIn
 from dawoai.workspace import WorkspaceError
 
 log = logging.getLogger(__name__)
@@ -66,6 +66,10 @@ def create_app(
     @app.exception_handler(NeedsSetup)
     async def _needs_setup(_: Request, e: NeedsSetup) -> Response:  # pyright: ignore[reportUnusedFunction]
         return err(409, "needs_setup", e)
+
+    @app.exception_handler(NotLoggedIn)
+    async def _not_logged_in(_: Request, e: NotLoggedIn) -> Response:  # pyright: ignore[reportUnusedFunction]
+        return err(401, "needs_login", e)
 
     @app.exception_handler(AlreadyIngested)
     async def _already(_: Request, e: AlreadyIngested) -> Response:  # pyright: ignore[reportUnusedFunction]

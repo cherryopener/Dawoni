@@ -33,6 +33,8 @@ export type Status = {
   machine: string;
   default_agent: string;
   teacher: string | null;
+  /** 배포본(로그인 켜짐): 강사 이름은 허용 명단에서 온다 — 화면에서 고치지 않는다. */
+  teacher_locked?: boolean;
   access_required: boolean;
 };
 

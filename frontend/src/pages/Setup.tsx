@@ -14,16 +14,23 @@ const STEPS = ["강사 · AI", "저장소", "끝"];
 /** 처음 실행 마법사 (PLAN §11-1): 강사 이름·AI 연결 → 저장소 → 끝. 화면마다 "다음" 하나만 강조. */
 export function SetupWizard() {
   const { status, reload } = useSession();
-  const [step, setStep] = useState(status.teacher ? (status.workspace_ok ? 2 : 1) : 0);
+  // 배포본은 이름이 처음부터 있으므로 이름만 보고 첫 단계(AI 연결)를 건너뛰지 않는다
+  const [step, setStep] = useState(
+    status.teacher_locked ? (status.workspace_ok ? 2 : 0) : status.teacher ? (status.workspace_ok ? 2 : 1) : 0,
+  );
   const [name, setName] = useState(status.teacher ?? "");
   const [mode, setMode] = useState<"personal" | "team">("personal");
   const [path, setPath] = useState(status.workspace ?? "");
   const act = useAction();
 
+  const locked = status.teacher_locked === true;
+
   const saveName = () =>
     act.run(async () => {
-      if (!name.trim()) throw new Error("강사 이름을 적어 주세요.");
-      await api.patch("/config", { teacher: name.trim() });
+      if (!locked) {
+        if (!name.trim()) throw new Error("강사 이름을 적어 주세요.");
+        await api.patch("/config", { teacher: name.trim() });
+      }
       setStep(status.workspace_ok ? 2 : 1);
     });
 
@@ -66,9 +73,18 @@ export function SetupWizard() {
       <Card className="p-6">
         {step === 0 && (
           <>
-            <h2 className="m-0 text-[18px]">누가 쓰나요?</h2>
-            <p className="m-0 mt-1 text-text-2">문항 맡기·승인·확정 기록에 남는 이름입니다.</p>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 김선생" className="mt-3 w-full" autoFocus />
+            {locked ? (
+              <>
+                <h2 className="m-0 text-[18px]">{status.teacher} 선생님으로 로그인됨</h2>
+                <p className="m-0 mt-1 text-text-2">문항 맡기·승인·확정 기록에 이 이름이 남습니다. 이름은 관리자 명단에서 바뀝니다.</p>
+              </>
+            ) : (
+              <>
+                <h2 className="m-0 text-[18px]">누가 쓰나요?</h2>
+                <p className="m-0 mt-1 text-text-2">문항 맡기·승인·확정 기록에 남는 이름입니다.</p>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 김선생" className="mt-3 w-full" autoFocus />
+              </>
+            )}
             <h3 className="m-0 mt-6 text-[15px]">쓰고 있는 AI</h3>
             <p className="m-0 mt-1 text-[13px] text-text-2">이 PC에서 찾은 AI 프로그램입니다. 하나만 연결되면 시작할 수 있습니다.</p>
             <div className="mt-2">

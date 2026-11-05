@@ -65,7 +65,8 @@ def _spawn(argv: list[str], cwd: Path, env: dict[str, str]) -> subprocess.Popen[
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            # 창 없이 묶은 앱(exe)에서 CLI를 부를 때마다 검은 콘솔 창이 뜨지 않게
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
         )
     return subprocess.Popen(
         argv,
@@ -88,6 +89,7 @@ def _kill_tree(proc: subprocess.Popen[bytes]) -> None:
                 ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
                 capture_output=True,
                 check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
         else:
             os.killpg(proc.pid, signal.SIGTERM)

@@ -77,7 +77,7 @@ class SaveRuleBody(BaseModel):
 
 @router.post("/rules")
 def save_rule(body: SaveRuleBody, st: AppState = State) -> GlobalRule:
-    return st.services().rules.save(body.draft.to_rule(body.request, body.by))
+    return st.services().rules.save(body.draft.to_rule(body.request, st.who(body.by)))
 
 
 class RulePatch(BaseModel):
@@ -149,7 +149,7 @@ class SkillBody(BaseModel):
 @router.post("/skills")
 def create_skill(body: SkillBody, st: AppState = State) -> Skill:
     data = body.model_dump(exclude={"by"})
-    return st.services().skills.save(Skill.model_validate({**data, "created_by": body.by}))
+    return st.services().skills.save(Skill.model_validate({**data, "created_by": st.who(body.by)}))
 
 
 class SkillPatch(BaseModel):
@@ -194,7 +194,7 @@ def learn_from(body: LearnBody, st: AppState = State) -> Job:
         note=body.note, before=body.before, after=body.after, target=body.target,
         situation=body.situation,
     )  # fmt: skip
-    return learning.submit(st, c, body.by)
+    return learning.submit(st, c, st.who(body.by))
 
 
 # ---------------------------------------------------------------- 범위 프로필

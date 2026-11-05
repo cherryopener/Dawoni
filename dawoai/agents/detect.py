@@ -70,6 +70,7 @@ def _run_quick(argv: list[str], timeout: float = 15) -> subprocess.CompletedProc
             env=subprocess_env(),
             stdin=subprocess.DEVNULL,
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.TimeoutExpired):
         return None

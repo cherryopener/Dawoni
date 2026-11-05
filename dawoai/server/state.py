@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 import threading
 from dataclasses import dataclass, field
+from typing import overload
 
 from dawoai.access import Access, load_access_config
 from dawoai.config import AppConfig, load_config, save_config
@@ -17,6 +18,10 @@ from dawoai.workspace import WorkspaceError
 
 class NeedsSetup(Exception):
     """작업공간이 아직 정해지지 않음 → 화면은 연결 마법사로."""
+
+
+class NotLoggedIn(Exception):
+    """로그인이 켜진 배포본에서 아직 로그인하지 않음 (기록에 남길 강사 이름이 없음)."""
 
 
 @dataclass
@@ -45,6 +50,29 @@ class AppState:
             threading.Thread(target=access.check_saved, daemon=True).start()
         st.access = access
         return st
+
+    @property
+    def teacher_locked(self) -> bool:
+        """로그인이 켜진 배포본: 강사 이름은 허용 명단에서 온다 (화면에서 고칠 수 없음)."""
+        return self.access is not None and self.access.required
+
+    @overload
+    def who(self, by: str) -> str: ...
+    @overload
+    def who(self, by: str | None) -> str | None: ...
+    def who(self, by: str | None) -> str | None:
+        """기록에 남길 강사 이름.
+
+        로그인이 켜져 있으면 화면이 보낸 `by`를 믿지 않고 허용 명단의 이름을 쓴다."""
+        if not self.teacher_locked:
+            return by
+        assert self.access is not None
+        name = self.access.teacher
+        if (
+            name is None
+        ):  # 로그인 전 요청은 LocalOnly가 막지만, 혹시 지나와도 다른 이름을 쓰지 않는다
+            raise NotLoggedIn("로그인이 필요합니다")
+        return name
 
     def config(self) -> AppConfig:
         return load_config(self.paths)

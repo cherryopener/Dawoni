@@ -1,0 +1,111 @@
+# Windows 배포 묶음 (docs/M8_PACKAGING_AUTH.md §5)
+#
+# - 태그 v*를 올리면: 시험 → 화면 빌드 → 묶음 → 묶음을 켜 보기 → Release에 zip
+# - Actions 탭 → build-windows → Run workflow: 같은 과정, Release 없이 artifact로만
+#
+# 비밀값 DAWOAI_ACCESS_JSON(access.json 내용 전체)이 로그인 설정이 된다. 태그 빌드는 이 값이
+# 없으면 멈춘다 (로그인 없는 묶음이 퍼지지 않게). 값은 로그에 찍지 않는다.
+name: build-windows
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      UV_PYTHON: "3.13"
+      UV_PYTHON_PREFERENCE: only-system # 묶음에 넣을 파이썬은 서명된 python.org 설치본
+      PYTHONIOENCODING: utf-8
+      UV_FROZEN: "1" # uv.lock 그대로 (묶음의 pywin32는 build_bundle이 uv export --extra windows로 넣는다)
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: 태그와 pyproject 버전이 같은지
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path pyproject.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "태그 ${{ github.ref_name }} ≠ pyproject 버전 $v" }
+
+      - run: uv sync
+
+      - name: 시험
+        run: uv run pytest -q -x
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 화면 빌드 (→ dawoai/web/)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: 묶음 만들기
+        shell: pwsh
+        env:
+          DAWOAI_ACCESS_JSON: ${{ secrets.DAWOAI_ACCESS_JSON }}
+        run: |
+          $opts = @()
+          if ("${{ github.ref }}".StartsWith("refs/tags/")) { $opts += "--require-access" }
+          uv run python packaging/build_bundle.py @opts
+
+      - name: 묶음을 켜 보기 (설치된 파이썬 없이 묶음 안의 것으로)
+        shell: pwsh
+        run: |
+          $py = "dist\Dawoai\python.exe"
+          & $py -m dawoai version
+          if ($LASTEXITCODE -ne 0) { throw "version 실패" }
+          & $py -c "import pydantic_core, lxml.etree, pymupdf, numpy, PIL.Image, win32com.client, hwpx, dawoai.server.app"
+          if ($LASTEXITCODE -ne 0) { throw "import 실패" }
+          $env:DAWOAI_HOME = "$env:RUNNER_TEMP\dawoai-home"
+          $p = Start-Process -FilePath $py -ArgumentList "-m","dawoai","ui","--no-window","--port","8799" -PassThru
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            try { $r = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8799/" -TimeoutSec 2; $ok = $r.StatusCode -eq 200; break } catch { Start-Sleep -Milliseconds 500 }
+          }
+          try { Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8799/api/status" -TimeoutSec 2 | Out-Null; $open = $true } catch { $open = $false }
+          Stop-Process -Id $p.Id -Force
+          if (-not $ok) { throw "화면이 열리지 않음" }
+          if ($open) { throw "토큰 없이 API가 열림" }
+          if (-not (Select-String -Path "dist\Dawoai\Lib\site-packages\dawoai\web\index.html" -Pattern "<title>" -Quiet)) { throw "화면 파일 없음" }
+          if ((Get-AuthenticodeSignature dist\Dawoai\Dawoai.exe).Status -ne "Valid") { throw "Dawoai.exe 서명 없음" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dawoai-windows
+          path: dist/Dawoai-*-windows.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Dawoai-windows
+      - name: Release에 zip 붙이기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" Dawoai-*-windows.zip --repo "${{ github.repository }}" --title "다워이 ${{ github.ref_name }}" --generate-notes

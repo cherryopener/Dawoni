@@ -297,7 +297,7 @@ def solve(exam_id: str, body: QuestionsBody, st: AppState = State) -> Job:
 
     def run(ctx: JobContext) -> dict[str, Any]:
         sols = workflow.solve_questions(
-            svc, store, body.questions, verify=verify, by=body.by, progress=ctx.progress
+            svc, store, body.questions, verify=verify, by=st.who(body.by), progress=ctx.progress
         )
         return {"solved": [s.question_number for s in sols]}
 
@@ -310,7 +310,12 @@ def make_rubrics(exam_id: str, body: QuestionsBody, st: AppState = State) -> Job
 
     def run(ctx: JobContext) -> dict[str, Any]:
         rs = workflow.rubric_questions(
-            svc, store, body.questions, ai_solve=body.ai_solve, by=body.by, progress=ctx.progress
+            svc,
+            store,
+            body.questions,
+            ai_solve=body.ai_solve,
+            by=st.who(body.by),
+            progress=ctx.progress,
         )
         return {"rubrics": [r.question_number for r in rs]}
 
@@ -370,7 +375,7 @@ def put_key(exam_id: str, number: str, body: KeyBody, st: AppState = State) -> A
         if sorted(p.label for p in body.parts) != labels:
             raise PipelineError(f"소문항 표시는 바꿀 수 없습니다: {labels}")
         k = k.model_copy(update={"parts": body.parts, "doubtful": []})
-    k = k.model_copy(update={"confirmed": body.confirm, "confirmed_by": body.by})
+    k = k.model_copy(update={"confirmed": body.confirm, "confirmed_by": st.who(body.by)})
     store.save_key(k)
     return k
 
@@ -418,7 +423,7 @@ def put_answers(exam_id: str, number: str, body: AnswersBody, st: AppState = Sta
     r = store.rubric(number)
     if r is None or not r.code_graded:
         raise PipelineError(f"문항 {number}: 코드 채점 루브릭이 없습니다.")
-    r = set_answers(r, body.part, body.answers, all_correct=body.all_correct, by=body.by)
+    r = set_answers(r, body.part, body.answers, all_correct=body.all_correct, by=st.who(body.by))
     store.save_rubric(r)
     return r
 
@@ -429,7 +434,7 @@ def approve(exam_id: str, number: str, body: ByBody, st: AppState = State) -> Ru
     r = store.rubric(number)
     if r is None:
         raise PipelineError(f"문항 {number}: 루브릭이 없습니다.")
-    r = approve_rubric(r, body.by)
+    r = approve_rubric(r, st.who(body.by))
     store.save_rubric(r)
     return r
 
@@ -493,7 +498,7 @@ def typed_answer(exam_id: str, student: str, body: AnswerBody, st: AppState = St
         lines=parse_answer_text(body.text),
         source="typed",
         confirmed=True,
-        confirmed_by=body.by,
+        confirmed_by=st.who(body.by),
     )
     store.save_transcript(t)
     return t
@@ -590,13 +595,13 @@ def confirm_files(exam_id: str, body: ConfirmFilesBody, st: AppState = State) ->
 
     def run(ctx: JobContext) -> dict[str, Any]:
         res = workflow.confirm_from_files(
-            svc, store, students=body.students, only=body.questions, by=body.by,
+            svc, store, students=body.students, only=body.questions, by=st.who(body.by),
             progress=ctx.progress,
         )  # fmt: skip
         pairs = [(c.before, c.transcript) for c in res.confirmed if c.changed and c.before]
         if pairs:  # 고친 줄을 모아 배우기 한 번 (learn을 켰을 때만)
             c = learning.confirmed_files_correction(pairs, store.exam().title)
-            learning.from_edit(st, body, c, body.by)
+            learning.from_edit(st, body, c, st.who(body.by))
         return {
             "confirmed": [
                 {"student": c.transcript.student_id, "question": c.transcript.question_number,
@@ -661,7 +666,7 @@ def put_transcript(
         update={
             "lines": body.lines,
             "confirmed": body.confirm,
-            "confirmed_by": body.by if body.confirm else None,
+            "confirmed_by": st.who(body.by) if body.confirm else None,
         }
     )
     if body.confirm and (problems := confirm_problems(t)):
@@ -669,7 +674,7 @@ def put_transcript(
     store.save_transcript(t)
     if body.learn:
         c = learning.transcript_correction(before, t, store.exam().title)
-        learning.from_edit(st, body, c, body.by)
+        learning.from_edit(st, body, c, st.who(body.by))
     if workflow.wants_grading(store, before, t):
         # 확정하면 그 학생·문항을 바로 채점한다 (작업 목록의 "grade", auto)
 
@@ -717,7 +722,7 @@ def grade(exam_id: str, body: GradeBody, st: AppState = State) -> Job:
             double=SecondOpinion(model=body.double_model, when="all") if body.double else None,
             regrade=body.regrade,
             use_examples=body.use_examples,
-            by=body.by,
+            by=st.who(body.by),
             progress=ctx.progress,
         )
         return _grade_summary(res)
@@ -763,13 +768,13 @@ def assign_question(
     exam_id: str, number: str, body: AssignBody, st: AppState = State
 ) -> assign.Assignment:
     _, store = _store(st, exam_id)
-    return assign.assign(store, number, body.by, take=body.take)
+    return assign.assign(store, number, st.who(body.by), take=body.take)
 
 
 @router.delete("/{exam_id}/assign/{number}")
 def release_question(exam_id: str, number: str, by: str, st: AppState = State) -> assign.Assignment:
     _, store = _store(st, exam_id)
-    return assign.release(store, number, by)
+    return assign.release(store, number, st.who(by))
 
 
 @router.get("/{exam_id}/board")
@@ -846,12 +851,12 @@ def confirm_grade(
         raise KeyError(f"{student} 문항 {number}: 채점 결과 없음")
     notes = {k: v for k, v in body.item_notes.items() if v.strip()}
     before = g
-    g = teacher_review(g, r, body.awarded, note=body.note, by=body.by, item_notes=notes)
+    g = teacher_review(g, r, body.awarded, note=body.note, by=st.who(body.by), item_notes=notes)
     store.save_grade(g)
     workflow.export_grades(svc, store, [g])
     if body.learn:
         c = learning.grade_correction(before, g, r, store.exam().title)
-        learning.from_edit(st, body, c, body.by)
+        learning.from_edit(st, body, c, st.who(body.by))
     return g
 
 
@@ -946,12 +951,14 @@ def confirm_grade_parts(
     q = store.exam().question(number)
     notes = {k: v for k, v in body.part_notes.items() if v.strip()}
     before = g
-    g = teacher_part_review(g, r, q, body.part_scores, part_notes=notes, note=body.note, by=body.by)
+    g = teacher_part_review(
+        g, r, q, body.part_scores, part_notes=notes, note=body.note, by=st.who(body.by)
+    )
     store.save_grade(g)
     workflow.export_grades(svc, store, [g])
     if body.learn:
         c = learning.grade_correction(before, g, r, store.exam().title)
-        learning.from_edit(st, body, c, body.by)
+        learning.from_edit(st, body, c, st.who(body.by))
     return g
 
 
@@ -967,7 +974,9 @@ def teacher_scores(exam_id: str, body: TeacherCsvBody, st: AppState = State) -> 
     rows = workflow.parse_teacher_csv(body.csv)
 
     def run(ctx: JobContext) -> dict[str, Any]:
-        res = workflow.import_teacher_scores(svc, store, rows, by=body.by, progress=ctx.progress)
+        res = workflow.import_teacher_scores(
+            svc, store, rows, by=st.who(body.by), progress=ctx.progress
+        )
         return {
             "saved": [f"{g.student_id} {g.question_number}" for g in res.saved],
             "graded_first": res.graded_first,
@@ -991,7 +1000,7 @@ def presence(exam_id: str, body: PresenceBody, st: AppState = State) -> dict[str
     store.exam()
     if open_workspace(svc.workspace.root)[1].mode != "team":
         return {"mode": "personal", "others": []}
-    sharing.mark_in_use(svc.workspace, exam_id, st.machine, body.teacher)
+    sharing.mark_in_use(svc.workspace, exam_id, st.machine, st.who(body.teacher))
     others = sharing.others_using(svc.workspace, exam_id, st.machine)
     return {"mode": "team", "others": [o.model_dump(mode="json") for o in others]}
 

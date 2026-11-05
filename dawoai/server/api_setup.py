@@ -57,7 +57,9 @@ def status(st: AppState = State) -> dict[str, Any]:
         "workspace_subjects": subjects,
         "machine": st.machine,
         "default_agent": cfg.default_agent,
-        "teacher": cfg.teacher,
+        # 배포본(로그인 켜짐)은 허용 명단의 이름 — 설정에 적힌 이름은 쓰지 않는다
+        "teacher": st.access.teacher if st.access and st.teacher_locked else cfg.teacher,
+        "teacher_locked": st.teacher_locked,
         "access_required": bool(st.access and st.access.required),
         "agents": {
             n: cfg.agent(n).model_dump(mode="json", exclude={"api_key"}) for n in AGENT_NAMES
@@ -177,6 +179,8 @@ def _merge(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
 @router.patch("/config")
 def patch_config(patch: dict[str, Any], st: AppState = State) -> dict[str, Any]:
     patch.pop("workspace", None)  # 작업공간은 /workspace로만 바꾼다
+    if st.teacher_locked:
+        patch.pop("teacher", None)  # 배포본: 강사 이름은 허용 명단에서만 바뀐다
     cfg = AppConfig.model_validate(_merge(st.config().model_dump(mode="json"), patch))
     st.save_config(cfg)
     return masked_config(cfg)
@@ -409,7 +413,7 @@ def diagnostics_bundle(body: BundleBody, st: AppState = State) -> dict[str, Any]
         groups,
         note=body.note,
         machine=st.machine,
-        teacher=body.teacher,
+        teacher=st.who(body.teacher),
         extra={"config": masked_config(st.config()), "recent_jobs": recent},
     )
     rel = out.relative_to(st.services().workspace.root).as_posix()

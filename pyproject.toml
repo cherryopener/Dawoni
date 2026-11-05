@@ -1,6 +1,6 @@
 [project]
 name = "dawoai"
-version = "0.0.1"
+version = "0.8.0"
 description = "다워이 — 구독 중인 AI CLI를 일꾼으로 부려, 해설지 기준으로 손글씨 서술형 답안을 토큰 적게·일관되게 채점하는 학원 강사용 도구"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
@@ -38,9 +38,6 @@ windows = [
 ]
 
 [dependency-groups]
-build = [
-    "pyinstaller>=6.22.3",
-]
 dev = [
     "pytest>=8.4",
     "ruff>=0.14",
@@ -55,6 +52,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["dawoai"]
+# 화면 빌드(frontend → dawoai/web/)는 .gitignore에 있지만 배포 묶음에는 들어가야 한다
+artifacts = ["dawoai/web/**"]
 
 [tool.ruff]
 line-length = 100
@@ -72,6 +71,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["T20"]
 "experiments/**" = ["T20", "E501"]  # 실험 스크립트: 결과를 그대로 출력, 표본 자료 표
+"packaging/**" = ["T20"]  # 빌드 스크립트: 진행을 출력
 "tests/test_ingest.py" = ["E501"]  # 한글 시험지 픽스처 데이터 (줄을 나누면 오히려 읽기 어려움)
 "tests/test_calibration.py" = ["E501"]  # 채점 응답 픽스처
 "tests/test_server.py" = ["E501"]

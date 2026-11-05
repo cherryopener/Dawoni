@@ -339,6 +339,28 @@ M5 작업공간(판독문 강사 확인 전, 보정 루브릭 v2)과 세 채점 
 | 언제 쓰나 | HWPX를 쓸 때마다 전체를 다시 만든다. 엑셀에서 고쳐 둔 점수표는 덮어쓰지 않고 알림(`--force`), 열어 둔 파일은 경고만 |
 | 반별 시트 | 시험의 `scores_by_class` (`exam scores --by-class`, `POST …/scores`) — 반 시트를 자연 정렬 순으로 |
 
+## 배포 묶음 (M8, 2026-11-05)
+
+Windows 배포본은 PyInstaller exe가 아니라 **서명된 python.org 파이썬을 담은 폴더**다
+(`packaging/build_bundle.py`, 이유는 그 파일 머리말과 [docs/M8_PACKAGING_AUTH.md](docs/M8_PACKAGING_AUTH.md)).
+
+```bash
+npm --prefix frontend run build
+uv run python packaging/build_bundle.py --access access.json   # 없으면 로그인 없는 묶음
+```
+
+→ `dist/Dawoai/`(약 300 MB)와 `dist/Dawoai-<버전>-windows.zip`(약 110 MB). 강사는 zip을 풀고 `Dawoai.exe`를
+두 번 누른다. 배포는 태그로: `git tag v0.8.0 && git push origin v0.8.0` → Actions `build-windows`가 시험·화면
+빌드·묶음·켜 보기 뒤 Release에 zip을 붙인다 (비밀값 `DAWOAI_ACCESS_JSON` 필요).
+
+실측 (개발 PC, 스마트 앱 컨트롤 켜짐):
+
+| 방식 | 인터넷 표시(MOTW) 붙임 | 결과 |
+|---|---|---|
+| PyInstaller `Dawoai.exe` (서명 없음) | 없음 | **막힘** — "An Application Control policy has blocked this file" |
+| `run.cmd` → 묶음 python.exe | 있음 | **막힘** — "Dangerous file extension from the web" |
+| 서명된 pythonw.exe를 `Dawoai.exe`로 복사 | 있음 | **열림** — PyPI 패키지 .pyd(pydantic_core·lxml·pymupdf·numpy·pywin32)도 모두 불러옴 |
+
 ## 나중에 할 일
 
 - macOS 설치·호환성 확인 (M0에서 미룸): 모든 의존성이 소스 빌드 없이 설치되는지, pywebview 창, 한글 없는

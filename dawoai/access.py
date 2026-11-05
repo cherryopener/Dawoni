@@ -59,8 +59,15 @@ from dawoai.paths import AppPaths
 log = logging.getLogger(__name__)
 
 ACCESS_FILE = Path(__file__).resolve().parent / "assets" / "access.json"
+BUNDLE_FILE = Path(__file__).resolve().parent / "assets" / "bundled.json"
+"""배포 묶음(packaging/build_bundle.py)이 넣는 표식 — 버전·커밋·만든 때."""
 ENV_ACCESS_FILE = "DAWOAI_ACCESS_FILE"
-"""시험·개발용으로 설정 파일 위치를 바꾼다."""
+"""시험·개발용으로 설정 파일 위치를 바꾼다 (배포본에서는 무시)."""
+
+
+def is_bundled() -> bool:
+    return bool(getattr(sys, "frozen", False)) or BUNDLE_FILE.is_file()
+
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -84,8 +91,8 @@ class AccessConfig(BaseModel):
 
 
 def load_access_config() -> AccessConfig | None:
-    # 묶은 앱에서는 환경 변수로 바꿀 수 없다 — 바꿀 수 있으면 그것만으로 검사를 끌 수 있다
-    override = None if getattr(sys, "frozen", False) else os.environ.get(ENV_ACCESS_FILE)
+    # 배포본에서는 환경 변수로 바꿀 수 없다 — 바꿀 수 있으면 그것만으로 검사를 끌 수 있다
+    override = None if is_bundled() else os.environ.get(ENV_ACCESS_FILE)
     path = Path(override or ACCESS_FILE)
     if not path.is_file():
         return None
@@ -200,6 +207,13 @@ class Access:
         return self.state in ("off", "ok")
 
     @property
+    def teacher(self) -> str | None:
+        """기록에 남길 강사 이름: 명단의 이름, 명단에 이름이 비었으면 이메일. 로그인 전이면 None."""
+        if self.config is None or self.state != "ok":
+            return None
+        return self.name or self.email
+
+    @property
     def session_file(self) -> Path:
         return self.paths.root / "auth.json"
 
@@ -273,6 +287,11 @@ class Access:
             raise AccessDenied(self.message or "")
         self._set("ok", email, None)
         self.name = allowed[email] or None
+        if self.name is None:
+            log.warning(
+                "허용 명단에 %s의 이름이 없어 이메일로 기록합니다 — 명단에 이름을 적어 주세요",
+                email,
+            )
 
     def _set(self, state: AccessState, email: str | None, message: str | None) -> None:
         self.state, self.email, self.message = state, email, message

@@ -202,3 +202,109 @@ def test_server_gate(app_paths: AppPaths, monkeypatch: pytest.MonkeyPatch) -> No
 
     assert c.post("/api/auth/logout").json()["state"] == "needs_login"
     assert c.get("/api/status").status_code == 401
+
+
+def _logged_in_client(app_paths: AppPaths, g: FakeGoogle, tmp_path: Any) -> TestClient:
+    a = _access(app_paths, g)
+    _login(a)
+    c = TestClient(
+        create_app(app_paths, "t", web_dir=app_paths.root / "x", access=a),
+        base_url="http://127.0.0.1",
+    )
+    c.get("/login?t=t")
+    assert c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True}).is_success
+    return c
+
+
+RULE = {"title": "단위", "text": "단위가 없으면 1점 감점", "applies_to": ["all"]}
+
+
+def test_teacher_name_comes_from_allowlist(app_paths: AppPaths, tmp_path: Any) -> None:
+    """배포본: 기록의 강사 이름은 명단에서 — 화면이 보낸 `by`·설정의 이름은 쓰지 않는다."""
+    g = FakeGoogle()
+    c = _logged_in_client(app_paths, g, tmp_path)
+    assert c.patch("/api/config", json={"teacher": "가짜"}).is_success
+    st = c.get("/api/status").json()
+    assert st["teacher"] == "김선생" and st["teacher_locked"] is True
+    assert c.get("/api/config").json()["teacher"] is None, "잠긴 동안 설정에 이름을 저장하지 않음"
+
+    saved = c.post("/api/rules", json={"request": "r", "draft": RULE, "by": "가짜"}).json()
+    assert saved["created_by"] == "김선생"
+    # 아무 이름도 안 보내도 명단 이름
+    nobody = c.post("/api/rules", json={"request": "r", "draft": RULE}).json()
+    assert nobody["created_by"] == "김선생"
+
+
+def test_teacher_name_falls_back_to_email(app_paths: AppPaths, tmp_path: Any) -> None:
+    g = FakeGoogle()
+    g.allowlist = "teacher@x.com\n"  # 이름 없는 줄
+    c = _logged_in_client(app_paths, g, tmp_path)
+    assert c.get("/api/status").json()["teacher"] == "teacher@x.com"
+    saved = c.post("/api/rules", json={"request": "r", "draft": RULE, "by": "가짜"}).json()
+    assert saved["created_by"] == "teacher@x.com"
+
+
+def test_without_access_by_is_kept(app_paths: AppPaths, tmp_path: Any) -> None:
+    """로그인이 꺼진 개발·직접 실행은 예전처럼 화면이 보낸 이름."""
+    a = Access(None, app_paths, "pc1")
+    c = TestClient(
+        create_app(app_paths, "t", web_dir=app_paths.root / "x", access=a),
+        base_url="http://127.0.0.1",
+    )
+    c.get("/login?t=t")
+    c.post("/api/workspace", json={"path": str(tmp_path / "ws"), "create": True})
+    c.patch("/api/config", json={"teacher": "이선생"})
+    st = c.get("/api/status").json()
+    assert st["teacher"] == "이선생" and st["teacher_locked"] is False
+    saved = c.post("/api/rules", json={"request": "r", "draft": RULE, "by": "이선생"}).json()
+    assert saved["created_by"] == "이선생"
+
+
+def test_every_recorded_name_goes_through_who() -> None:
+    """서버가 `body.by`·`body.teacher`를 그대로 기록에 쓰는 곳이 새로 생기지 않게."""
+    import re
+    from pathlib import Path
+
+    server = Path(__file__).resolve().parents[1] / "dawoai" / "server"
+    raw = re.compile(r"(?<!who\()\bbody\.(by|teacher)\b")
+    bad = [
+        f"{p.name}:{i}"
+        for p in server.glob("*.py")
+        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if raw.search(line)
+    ]
+    assert bad == []
+
+
+def test_bundle_ignores_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """배포 묶음에서는 환경 변수로 로그인 설정을 바꿔(꺼) 버릴 수 없다."""
+    import dawoai.access as access_mod
+
+    f = tmp_path / "a.json"
+    f.write_text(json.dumps({"google_client_id": "x"}), encoding="utf-8")
+    monkeypatch.setenv("DAWOAI_ACCESS_FILE", str(f))
+    assert load_access_config() is not None
+    marker = tmp_path / "bundled.json"
+    marker.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(access_mod, "BUNDLE_FILE", marker)
+    monkeypatch.setattr(access_mod, "ACCESS_FILE", tmp_path / "none.json")
+    assert access_mod.is_bundled()
+    assert load_access_config() is None, "환경 변수를 무시하고 묶음 설정만"
+
+
+def test_main_without_args_opens_ui(monkeypatch: pytest.MonkeyPatch) -> None:
+    import dawoai.__main__ as entry
+    import dawoai.cli
+
+    seen: list[list[str]] = []
+
+    def fake_main(argv: list[str]) -> int:
+        seen.append(list(argv))
+        return 0
+
+    monkeypatch.setattr(dawoai.cli, "main", fake_main)
+    monkeypatch.setattr("sys.argv", ["dawoai"])
+    assert entry.run() == 0
+    monkeypatch.setattr("sys.argv", ["dawoai", "version"])
+    entry.run()
+    assert seen == [["ui"], ["version"]]

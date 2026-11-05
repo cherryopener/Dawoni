@@ -2,6 +2,34 @@
 
 작성 2026-11-05. 토큰이 모자라 구현은 다음 세션으로 넘긴다. 이 문서만 보고 이어서 할 수 있게 적는다.
 
+## 진행 (2026-11-05, 같은 날 다음 세션)
+
+**만든 것** — §2 강사 이름 잠금, §5 빌드·워크플로. 남은 것은 사용자가 할 §3·§4와 실제 릴리스.
+
+- **§2 그대로**: `AppState.who(by)`가 로그인이 켜져 있으면 화면이 보낸 `by`를 버리고 `Access.teacher`(명단 이름,
+  비었으면 이메일)를 쓴다. 서버의 `body.by`·`body.teacher` 전부(35곳)를 거친다 — 새로 생기면
+  `test_every_recorded_name_goes_through_who`가 잡는다. 상태 응답 `teacher_locked`, 잠긴 동안
+  `PATCH /config`의 `teacher`는 버림. 로그인 전이면 401 `needs_login`(다른 이름으로 기록하지 않음).
+  화면: 마법사는 "○○○ 선생님으로 로그인됨"(AI 연결 단계는 그대로 보임), 설정은 읽기 전용 + "관리자 명단에서
+  바뀝니다", 로그인 화면의 거절 안내.
+- **§5 바뀜 — PyInstaller를 버렸다.** 개발 PC(Windows 11, 스마트 앱 컨트롤 켜짐)에서 PyInstaller로 만든
+  서명 없는 `Dawoai.exe`가 실행부터 막혔다 ("An Application Control policy has blocked this file").
+  인터넷에서 받은 표시(MOTW)를 붙인 `.cmd`도 막혔다 ("Dangerous file extension from the web").
+  통과한 방법: python.org 파이썬(PSF 서명)을 폴더째 담고, **서명된 `pythonw.exe`를 `Dawoai.exe`로 복사**
+  (이름을 바꿔도 서명은 유지). 인자 없이 켜지면 `_dawoai_boot.pth`가 `Dawoai.exe -m dawoai`를 띄운다.
+  모든 파일에 MOTW를 붙여도 열리고, PyPI 패키지의 .pyd도 불러온다 (README "배포 묶음").
+  - 만드는 것: `packaging/build_bundle.py` (`spec`·PyInstaller 의존성은 지움). 로그인 설정은 `--access 파일`
+    또는 비밀값 `DAWOAI_ACCESS_JSON`을 묶음 안 `dawoai/assets/access.json`으로 (BOM 없이, 내용은 찍지 않음).
+    묶음 표식 `dawoai/assets/bundled.json`(버전·커밋·때)이 있으면 `DAWOAI_ACCESS_FILE` 환경 변수를 무시한다.
+  - 창 없는 실행에는 stdout이 없어 uvicorn이 죽었다 → `python -m dawoai`가 stdout·stderr를
+    `%APPDATA%\Dawoai\logs\app.log`로 돌리고, 인자가 없으면 `ui`. AI CLI·taskkill은 `CREATE_NO_WINDOW`
+    (안 그러면 호출마다 검은 창).
+  - 워크플로 `.github/workflows/build-windows.yml`: 태그 = pyproject 버전 확인 → `pytest` → 화면 시험·빌드 →
+    묶음(태그면 로그인 설정 필수) → 묶음의 python.exe로 import·화면·토큰 없는 API 거부·Dawoai.exe 서명 확인 →
+    artifact, 태그면 Release. 아직 GitHub에서 돌려 보지 않음.
+  - 버전 0.8.0. Dawoai.exe 아이콘은 파이썬 아이콘이다 (아이콘을 바꾸면 서명이 깨진다).
+- 서명 인증서를 사면(§8) PyInstaller exe로 돌아갈 수 있지만, 지금 방식은 돈이 들지 않고 이미 통과한다.
+
 ## 0. 결정 사항 (사용자 지시)
 
 1. **exe는 git(GitHub Actions)으로 만든다** — 개발 PC에서 손으로 빌드하지 않는다. 태그를 올리면 빌드되고 Release에 exe가 붙는다.
@@ -119,7 +147,7 @@ jobs:
 - `access.json`은 BOM 없이 써야 한다(`read_json`이 BOM에 걸릴 수 있음).
 - 로그에 비밀값이 찍히지 않게 `echo` 금지.
 
-### 5-3. PyInstaller spec `packaging/dawoai.spec` (새로 작성)
+### 5-3. ~~PyInstaller spec~~ (쓰지 않음 — 위 "진행" 참고, 아래는 처음 계획)
 - 진입점: `dawoai/__main__.py`(앱 서버 + 창 띄우기 흐름 확인). Windows 창은 Edge 앱 모드인지 pywebview인지 `__main__`/`cli.py`에서 확인.
 - `datas`: `dawoai/web`(프런트 빌드), `dawoai/assets`(selftest.png, access.json), 그 밖에 패키지 데이터(`grading`·`ocr` 등 안의 json/프롬프트 파일 — `git ls-files dawoai | grep -v '\.py$'`로 목록 확인).
 - `--onedir` 권장(시작 빠름, 백신 오탐 적음) → `dist/Dawoai/` 를 zip. 단일 exe가 꼭 필요하면 `--onefile`.
@@ -142,6 +170,12 @@ git push origin v0.8.0
 - [ ] gist에서 이름 바꾸고 앱 다시 켜면 새 이름.
 - [ ] 인터넷 끊고 켜도 `offline_days` 안이면 열림.
 - [ ] macOS .app은 뒤로 미룸(Windows 우선).
+
+## 8. 코드 서명 (하지 않음 — 기록만)
+
+서명 없는 새 exe를 스마트 앱 컨트롤이 막는 문제는 코드 서명 인증서로도 풀린다 (Azure Trusted Signing은 월
+약 10달러지만 개인 개발자는 미국·캐나다만, OV 인증서는 연 수십만 원 + 하드웨어 키). 지금 묶음은 PSF가 서명한
+파일만 실행 파일로 쓰므로 필요 없다.
 
 ## 7. 순서 제안
 1. §2 코드 변경 + 테스트 (로컬에서 `packaging/access.example.json`을 실제 값으로 복사해 확인)
