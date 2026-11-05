@@ -389,6 +389,7 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str]) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]  # cp949 콘솔에서 − 출력이 죽음
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(required=True)
     s = sub.add_parser("setup")
