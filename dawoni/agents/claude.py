@@ -37,6 +37,8 @@ from dawoni.agents.base import (
 from dawoni.config import AgentName
 
 MAX_INLINE_SCHEMA_CHARS = 12_000
+MAX_CMD_LINE_CHARS = 7_500
+""".cmd·.bat를 거치면 cmd.exe 한계 8,191자 (보통은 `detect.unwrap_cmd_shim`이 진짜 exe로 피한다)."""
 
 TOOLS = "Read,WebSearch,WebFetch"
 """읽기 + 인터넷 검색 (기출·올림피아드 원문 참고). `--restricted`는 WebFetch를 `--tools`에
@@ -86,7 +88,11 @@ class ClaudeAdapter:
         enforced = False
         if schema is not None:
             inline = json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
-            if len(inline) <= MAX_INLINE_SCHEMA_CHARS:
+            via_cmd = exe.suffix.lower() in (".cmd", ".bat")
+            room = MAX_CMD_LINE_CHARS - sum(len(a) + 3 for a in argv) - 20
+            if len(inline) <= (
+                min(room, MAX_INLINE_SCHEMA_CHARS) if via_cmd else MAX_INLINE_SCHEMA_CHARS
+            ):
                 argv += ["--json-schema", inline]
                 enforced = True
         return Invocation(argv=argv, stdin=prompt.encode("utf-8"), schema_enforced=enforced)

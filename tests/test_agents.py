@@ -321,6 +321,32 @@ def test_claude_command_isolation_and_schema_size(tmp_path: Path) -> None:
     big = ClaudeAdapter().build(Path("claude"), "p", schema=big_schema, **kw)  # type: ignore[arg-type]
     assert "--json-schema" not in big.argv and not big.schema_enforced
     assert small.stdin == b"p"
+    mid_schema = {"type": "object", "description": "x" * 8_000}  # 실측: 시험 읽기 스키마 8,235자
+    via_cmd = ClaudeAdapter().build(Path("claude.cmd"), "p", schema=mid_schema, **kw)  # type: ignore[arg-type]
+    assert not via_cmd.schema_enforced, "cmd.exe 한계(8,191자)를 넘기면 스키마는 프롬프트로"
+    assert ClaudeAdapter().build(Path("claude.exe"), "p", schema=mid_schema, **kw).schema_enforced  # type: ignore[arg-type]
+
+
+def test_npm_cmd_shim_is_unwrapped_to_the_real_exe(tmp_path: Path) -> None:
+    from dawoni.agents.detect import unwrap_cmd_shim
+
+    exe = tmp_path / "node_modules" / "@anthropic-ai" / "claude-code" / "bin" / "claude.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    shim = tmp_path / "claude.cmd"  # npm 11이 까는 그대로
+    shim.write_text(
+        "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\n"
+        "CALL :find_dp0\r\n"
+        '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*\r\n',
+        encoding="utf-8",
+    )
+    assert unwrap_cmd_shim(shim) == exe
+    assert find_executable("claude", str(shim)) == exe
+    node = tmp_path / "other.cmd"  # 환경 변수를 정하고 스크립트를 넘기는 .cmd는 그대로
+    node.write_text('@echo off\r\nset "X=1"\r\n"C:\\py\\python.exe" "fake.py" %*\r\n', "utf-8")
+    assert unwrap_cmd_shim(node) == node
+    exe.unlink()
+    assert unwrap_cmd_shim(shim) == shim, "exe가 없으면 .cmd 그대로"
 
 
 CLAUDE_OK = [

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -50,12 +51,39 @@ def subprocess_env() -> dict[str, str]:
     return env
 
 
+_SHIM_EXE = re.compile(r'^\s*"(?P<exe>[^"]+\.exe)"\s+%\*\s*$', re.IGNORECASE | re.MULTILINE)
+
+
+def unwrap_cmd_shim(path: Path) -> Path:
+    """npm이 Windows에 까는 `claude.cmd`는 `"%dp0%\\…\\bin\\claude.exe" %*` 한 줄로 진짜 exe를
+    부른다. .cmd를 거치면 cmd.exe의 명령행 한계(8,191자)에 걸려 긴 `--json-schema`가
+    "The command line is too long."으로 실패하고(2026-11-05 실측, 시험 읽기), cmd가 JSON의
+    따옴표를 다시 해석한다 — 그래서 그 exe를 바로 부른다. 다른 모양의 .cmd(환경 변수 설정,
+    node 스크립트)는 그대로."""
+    if path.suffix.lower() not in (".cmd", ".bat"):
+        return path
+    try:
+        if path.stat().st_size > 4096:
+            return path
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return path
+    found = _SHIM_EXE.findall(text)
+    if len(found) != 1:
+        return path
+    target = found[0]
+    for var in ("%dp0%", "%~dp0"):
+        target = target.replace(var, str(path.parent) + "\\")
+    exe = Path(os.path.normpath(target))
+    return exe if "%" not in target and exe.is_file() else path
+
+
 def find_executable(name: AgentName, override: str | None = None) -> Path | None:
     if override:
         p = Path(override).expanduser()
-        return p if p.is_file() else None
+        return unwrap_cmd_shim(p) if p.is_file() else None
     found = shutil.which(EXECUTABLE_NAMES[name], path=augmented_path())
-    return Path(found) if found else None
+    return unwrap_cmd_shim(Path(found)) if found else None
 
 
 def _run_quick(argv: list[str], timeout: float = 15) -> subprocess.CompletedProcess[str] | None:
