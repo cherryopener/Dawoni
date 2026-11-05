@@ -138,6 +138,37 @@ class PdfKey:
         return f"{self.pdf.name} {', '.join(map(str, self.pages))}쪽"
 
 
+@dataclass
+class CropKey:
+    """강사가 지정한 한 문항의 해설 영역: 원본 쪽에서 끈 상자(잘라 낸 그림 + 상자 안 PDF 글자) 또는
+    붙여 넣은 그림 (`clip` 없음). 시험지 읽기에서 해설이 빠졌거나 잘못 읽혔을 때."""
+
+    number: str
+    files: list[Path]
+    clip: str
+    where: str
+    doc: bool = False
+
+    @property
+    def pages(self) -> list[int]:
+        return [1]
+
+    def text(self, group: list[int]) -> str:
+        return self.clip
+
+    def images(self, group: list[int], work_dir: Path) -> tuple[Path, ...]:
+        return tuple(self.files)
+
+    def beyond_text(self, group: list[int], text: str) -> bool:
+        return True  # 강사가 고른 그림 — 그림 속 글도 해설이다
+
+    def expected(self, group: list[int], text: str, numbers: set[str]) -> set[str]:
+        return {self.number} & numbers
+
+    def source(self) -> str:
+        return f"{self.where} (강사 지정 영역)"
+
+
 KEY_PIECES_PER_CALL = 5
 KEY_CHARS_PER_CALL = 6000
 
@@ -256,7 +287,7 @@ def check_key(
                 "solution을 비우고 credit_policy를 unspecified로 적을 것. 여러 소문항에 함께 적힌 "
                 "부분 점수 표기(예: (1) 전체 '부분 점수: 없음')는 소문항마다 적을 것"
             )
-        if (outside := key_ungrounded_share(kq, source_text)) is not None:
+        if source_text.strip() and (outside := key_ungrounded_share(kq, source_text)):
             problems.append(
                 f"문항 {kq.number}: 해설에 {UNGROUNDED} {outside:.0%} 들어갔다. "
                 "해설지에 적힌 문장을 그대로 옮길 것 (요약·보충 금지)"
@@ -279,7 +310,7 @@ def key_ungrounded_share(kq: KeyQuestion, source_text: str) -> float | None:
     return outside if outside > 0.15 and missing >= MIN_MISSING else None
 
 
-def _warnings(k: AnswerKey, q: ExamQuestion) -> list[str]:
+def key_warnings(k: AnswerKey, q: ExamQuestion) -> list[str]:
     out: list[str] = []
     for p in k.parts:
         part = q.part(p.label)
@@ -420,6 +451,7 @@ def extract_answer_key(
                 "pages": ", ".join(map(str, group)),
                 "for_rubric": for_rubric,
                 "doc": src.doc,
+                "crop": isinstance(src, CropKey),
             },
             material="시험 문항:\n"
             + "\n".join(_question_line(q) for q in exam.questions)
@@ -429,6 +461,8 @@ def extract_answer_key(
                 if src.doc
                 else "\n\n해설지 PDF 글자 "
                 "(수식은 글꼴 문자라 깨져 있을 수 있음 — 수식은 이미지로 읽을 것):\n"
+                if text.strip()
+                else "\n\n해설지 PDF 글자: 없음 (강사가 붙여 넣은 그림만 있음 — 그림에서 읽을 것)"
             )
             + text,
             attachments=images,
@@ -540,7 +574,7 @@ def extract_answer_key(
         if notes:
             out.notes[q.number] = " / ".join(notes)
         key.warnings = (
-            _warnings(key, q)
+            key_warnings(key, q)
             + [f"문항 {q.number}: {n}" for n in notes]
             + [
                 f"문항 {q.number}{label or ''}: 해설지를 두 번 읽은 결과의 숫자가 다름 "

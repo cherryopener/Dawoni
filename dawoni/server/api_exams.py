@@ -325,12 +325,16 @@ def make_rubrics(exam_id: str, body: QuestionsBody, st: AppState = State) -> Job
 @router.get("/{exam_id}/questions/{number}")
 def get_question(exam_id: str, number: str, st: AppState = State) -> dict[str, Any]:
     _, store = _store(st, exam_id)
+    from dawoni.ingest.fix import stem_missing, stem_text
+
     q = store.exam().question(number)
     sol = store.solution(number)
     r = store.rubric(number)
     key = store.answer_key(number)
     return {
         "question": q.model_dump(mode="json"),
+        "stem_text": stem_text(q.item),
+        "stem_missing": stem_missing(q.item),
         "key": key.model_dump(mode="json") if key else None,
         "solution": sol.model_dump(mode="json") if sol else None,
         "rubric": r.model_dump(mode="json") if r else None,

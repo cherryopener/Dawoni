@@ -35,6 +35,7 @@ from dawoni.ingest.grounding import (
     review_note,
 )
 from dawoni.ingest.layout import DocumentLayout, Region, render_clip
+from dawoni.ingest.layout import Figure as LayoutFigure
 from dawoni.mathx.latex import latex_problems
 from dawoni.models.base import DawoniModel
 from dawoni.models.content import Block, MathRun, iter_runs
@@ -125,19 +126,55 @@ def prepare_regions(
     return out
 
 
-def _region_material(r: Region, *, doc: bool = False) -> str:
+def _figure_place(r: Region, f: LayoutFigure) -> str:
+    """그림이 문항 영역 그림의 어디에 있나: "4쪽 영역 그림의 위에서 12%, 왼쪽에서 30%"."""
+    box = next(
+        (b for p, b in r.boxes if p == f.page and b.contains_point(f.rect.cx, f.rect.cy)), None
+    )
+    if box is None or box.w <= 0 or box.h <= 0:
+        return f"{f.page}쪽"
+    k = next(i for i, (p, b) in enumerate(r.boxes, start=1) if p == f.page and b is box)
+    name = f"{k}번째 영역 그림" if len(r.boxes) > 1 else "영역 그림"
+    top = round(100 * (f.rect.y0 - box.y0) / box.h)
+    left = round(100 * (f.rect.x0 - box.x0) / box.w)
+    return f"{f.page}쪽 {name}의 위에서 {max(0, top)}%, 왼쪽에서 {max(0, left)}%"
+
+
+def attachments_for(
+    group: list[PreparedRegion],
+) -> tuple[tuple[Path, ...], dict[str, dict[str, int]]]:
+    """첨부 파일 (문항마다 영역 그림, 그 뒤에 그림마다 잘라 낸 것)과 문항 → 그림 ID → 첨부 순번.
+
+    실측(2026-11-06, 공통형3회): 영역 그림만 붙이고 ID를 목록으로만 주면 flash·sonnet 모두 그림과
+    ID를 어긋나게 짝지었다 (자석 설명이 워터마크 F4에). flash는 F1.png를 찾아 작업 폴더 밖까지
+    읽으려다 차단돼 실패했다 — 그림마다 따로 보여 주고 몇 번째 첨부인지 적는다."""
+    files: list[Path] = []
+    slots: dict[str, dict[str, int]] = {}
+    for pr in group:
+        files += pr.images
+        mine: dict[str, int] = {}
+        for fid, f in pr.figure_files.items():
+            files.append(f)
+            mine[fid] = len(files)
+        slots[pr.region.label] = mine
+    return tuple(files), slots
+
+
+def _region_material(r: Region, *, doc: bool = False, slots: dict[str, int] | None = None) -> str:
+    """`slots`: 그림 ID → 첨부 순번 (`attachments_for`)."""
     lines = [f"[문항 {r.label}]", "문서 글자:" if doc else "PDF 글자:", r.text]
     if r.points:
         lines.append(f"(배점 표시: {r.points:g}점)")
     if r.textboxes:
         lines.append(f"(테두리 글 상자 {len(r.textboxes)}개 — <보기>·조건 등, 그림 아님)")
     if r.figures:
-        lines.append("그림:")
+        lines.append("그림 (그림마다 따로 첨부함):" if slots else "그림:")
         for k, f in enumerate(r.figures, start=1):
             pos = f" — 레이아웃상 {f.near_choice}번 선지 기호 옆" if f.near_choice else ""
             kind = "이미지" if f.kind == "image" else "선 그림"
-            where = f"글의 {k}번째 {IMAGE_MARK} 자리" if doc else f"{f.page}쪽"
-            lines.append(f"- {f.id} ({kind}, {where}){pos}")
+            slot = f"첨부 {slots[f.id]}번째 파일, " if slots and f.id in slots else ""
+            where = f"글의 {k}번째 {IMAGE_MARK} 자리" if doc else _figure_place(r, f)
+            lines.append(f"- {f.id} ({kind}, {slot}{where}){pos}")
     else:
         lines.append("그림: 없음")
     return "\n".join(lines)
@@ -248,7 +285,10 @@ def text_beyond_pdf(r: Region) -> bool:
     return any(f.kind == "image" for f in r.figures) or broken_glyphs(r.text)
 
 
-def check_page(out: PageExtraction, regions: list[Region], subject: str | None) -> list[str]:
+def check_page(
+    out: PageExtraction, regions: list[Region], subject: str | None, *, grounded: bool = True
+) -> list[str]:
+    """`grounded`: 본문 한글이 PDF 글자에 있는지 본다 (붙여 넣은 그림만 있으면 볼 글자가 없다)."""
     problems: list[str] = []
     by_label = {r.label: r for r in regions}
     got = [q.label for q in out.questions]
@@ -279,7 +319,7 @@ def check_page(out: PageExtraction, regions: list[Region], subject: str | None) 
                     f"문항 {q.label}: 레이아웃상 {f.id}는 {f.near_choice}번 선지 기호 옆에 있다. "
                     f"role 'choice', choice_label {f.near_choice}로 할 것"
                 )
-        if (outside := ungrounded_share(q, r)) is not None:
+        if grounded and (outside := ungrounded_share(q, r)) is not None:
             problems.append(
                 f"문항 {q.label}: 본문에 {UNGROUNDED} {outside:.0%} 들어갔다. "
                 "PDF 글자를 기준으로 그대로 옮길 것"
@@ -366,16 +406,18 @@ def extract_exam(
         def check(out: PageExtraction, regions: list[Region] = regions) -> list[str]:
             return check_page(out, regions, subject)
 
+        files, slots = attachments_for(group)
         try:
             value = engine.run(
                 dataclasses.replace(EXTRACT, name=f"extract_questions_p{page}", validator=check),
                 TaskInput(
                     variables={"doc": doc},
-                    material="\n\n".join(_region_material(r, doc=doc) for r in regions)
+                    material="\n\n".join(
+                        _region_material(pr.region, doc=doc, slots=slots[pr.region.label])
+                        for pr in group
+                    )
                     + (f"\n\n학생 수준: {level}" if level else ""),
-                    attachments=tuple(
-                        img for pr in group for img in (pr.images or pr.figure_files.values())
-                    ),
+                    attachments=files,
                 ),
             ).value
         except TaskFailed as e:
@@ -421,7 +463,13 @@ def extract_exam(
                 item = item.model_copy(update={"points": points})
                 warnings.append(f"문항 {pr.region.label}: {why}")
                 questions.append(
-                    ExamQuestion(number=pr.region.label, points=points, item=item, parts=parts)
+                    ExamQuestion(
+                        number=pr.region.label,
+                        points=points,
+                        item=item,
+                        parts=parts,
+                        source_pages=pr.region.pages,
+                    )
                 )
                 continue
             points = item.points
@@ -440,7 +488,13 @@ def extract_exam(
                 )
                 parts = []
             questions.append(
-                ExamQuestion(number=pr.region.label, points=points, item=item, parts=parts)
+                ExamQuestion(
+                    number=pr.region.label,
+                    points=points,
+                    item=item,
+                    parts=parts,
+                    source_pages=pr.region.pages,
+                )
             )
     return IngestResult(
         questions=questions,
@@ -449,3 +503,87 @@ def extract_exam(
         failed_pages=failed,
         notes=notes,
     )
+
+
+# ---------------------------------------------------------------- 영역 지정해서 다시 읽기
+
+
+@dataclass
+class RegionRead:
+    question: ExtractedQuestion
+    region: Region
+    figure_files: dict[str, Path]
+    note: str | None = None
+    """강사가 원본과 비교할 것 (PDF 글자로 확인하지 못한 본문)."""
+
+
+def fixed_parts_problems(q: ExtractedQuestion, fixed: list[ExamPart]) -> list[str]:
+    if not fixed:
+        return []
+    want = [p.label for p in fixed]
+    got = [p.label for p in q.parts]
+    if got == want:
+        return []
+    return [f"문항 {q.label}: 소문항은 강사가 정한 {want} 그대로 parts에 적을 것 (지금 {got})"]
+
+
+def read_region(
+    engine: ContextEngine,
+    prepared: PreparedRegion,
+    *,
+    subject: str | None = None,
+    level: str | None = None,
+    fixed: list[ExamPart] | None = None,
+) -> RegionRead:
+    """강사가 지정한 영역(원본 쪽의 상자, 또는 붙여 넣은 그림) 하나를 문항으로 읽는다.
+
+    `fixed`: 강사가 정한 소문항 — AI는 그 표시를 그대로 써야 통과하고, 배점·유형은 강사 것을 쓴다.
+    같은 쪽을 같은 방법으로 다시 읽히면 같은 결과지만, 영역과 소문항이 새 정보라 결과가 달라진다."""
+    r = prepared.region
+    grounded = bool(r.text.strip())  # 붙여 넣은 그림만 있으면 근거 글자가 없다
+
+    def with_fixed(out: PageExtraction) -> PageExtraction:
+        if not fixed:
+            return out
+        total = sum(p.points for p in fixed)
+        qs = [q.model_copy(update={"parts": fixed, "points": total}) for q in out.questions]
+        return out.model_copy(update={"questions": qs})
+
+    def check(out: PageExtraction) -> list[str]:
+        problems = [m for q in out.questions for m in fixed_parts_problems(q, fixed or [])]
+        return problems + check_page(with_fixed(out), [r], subject, grounded=grounded)
+
+    files, slots = attachments_for([prepared])
+    material = _region_material(r, slots=slots[r.label])
+    if not grounded:
+        material = material.replace("PDF 글자:\n", "PDF 글자: 없음 (붙여 넣은 그림만 있음)\n")
+    if fixed:
+        material += "\n강사가 정한 소문항 (이 표시 그대로 parts에):\n" + "\n".join(
+            f"- {p.label}: {p.points:g}점"
+            + {"essay": ", 서술형", "short_answer": ", 단답형", None: ""}[p.kind]
+            for p in fixed
+        )
+    if level:
+        material += f"\n\n학생 수준: {level}"
+    try:
+        value = engine.run(
+            dataclasses.replace(EXTRACT, name="extract_questions_region", validator=check),
+            TaskInput(
+                variables={"doc": False, "image_only": not grounded, "fixed": bool(fixed)},
+                material=material,
+                attachments=files,
+            ),
+        ).value
+    except TaskFailed as e:
+        accepted = accept_ungrounded(e, PageExtraction)
+        if accepted is None or not text_beyond_pdf(r):
+            raise
+        log.warning("영역 읽기 문항 %s: 근거 검사만 남아 받아들임 (강사 확인)", r.label)
+        value = accepted
+    value = with_fixed(value)
+    q = next(x for x in value.questions if x.label == r.label)
+    share = ungrounded_share(q, r) if grounded else None
+    note = f"본문: {review_note(share)}" if share is not None else None
+    if not grounded:
+        note = "본문: 붙여 넣은 그림에서 읽음 — 원본과 비교하세요"
+    return RegionRead(q, r, prepared.figure_files, note)

@@ -23,6 +23,7 @@ from dawoni.server import (
     api_calibration,
     api_content,
     api_exams,
+    api_fix,
     api_setup,
     api_students,
     api_views,
@@ -106,6 +107,7 @@ def create_app(
     app.include_router(api_calibration.router)
     app.include_router(api_auth.router)
     app.include_router(api_views.router)
+    app.include_router(api_fix.router)
 
     @app.get("/login")
     def login(t: str = "") -> Response:  # pyright: ignore[reportUnusedFunction]

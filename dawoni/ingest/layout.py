@@ -616,7 +616,7 @@ def analyze(path: Path, *, exclude: Collection[int] = ()) -> DocumentLayout:
         r.figures.sort(key=lambda f: (f.page, round(f.rect.y0 / 20), f.rect.x0))
         for i, f in enumerate(r.figures, start=1):
             f.id = f"F{i}"
-            f.near_choice = _near_choice(f, r, pages)
+            f.near_choice = _near_choice(f, r, pages[f.page - 1])
     layout.regions = regions
     return layout
 
@@ -641,9 +641,8 @@ def _reading_text(lines: list[Line]) -> str:
     return "\n".join(" ".join(x.text for x in sorted(r, key=lambda x: x.rect.x0)) for r in rows)
 
 
-def _near_choice(f: Figure, r: Region, pages: list[PageInfo]) -> int | None:
+def _near_choice(f: Figure, r: Region, page: PageInfo) -> int | None:
     """그림 왼쪽 위에 붙어 있는 ①~⑤ 기호 (그림 선지)."""
-    page = pages[f.page - 1]
     best: tuple[float, int] | None = None
     for k, m in page.choice_marks:
         if not any(p == f.page and box.contains_point(m.cx, m.cy) for p, box in r.boxes):
@@ -655,6 +654,49 @@ def _near_choice(f: Figure, r: Region, pages: list[PageInfo]) -> int | None:
             if best is None or d < best[0]:
                 best = (d, k)
     return best[1] if best else None
+
+
+def crop_region(path: Path, label: str, boxes: list[tuple[int, Rect]]) -> DocumentLayout:
+    """강사가 원본 쪽에서 끌어 지정한 상자들(쪽, PDF 좌표) → 그 상자만으로 된 문항 영역 하나.
+
+    레이아웃이 문항을 잘못 나눴을 때 (실측 공통형3회: 1·2번 쪽이 어느 문항에도 들지 않음)
+    강사가 정한 영역을 그대로 쓴다. 글·그림·글 상자·선지 기호는 `analyze`와 같은 쪽 분석에서
+    상자 안의 것만."""
+    doc = pymupdf.open(path)
+    with doc:
+        infos = {
+            p: _page_info(doc.load_page(p - 1), p, set()) for p in sorted({p for p, _ in boxes})
+        }
+    region = Region(label=label)
+    for p, box in boxes:
+        info = infos[p]
+        region.boxes.append((p, box))
+        region.lines += [ln for ln in info.lines if box.contains_point(ln.rect.cx, ln.rect.cy)]
+        region.figures += [f for f in info.figures if box.contains_point(f.rect.cx, f.rect.cy)]
+        region.textboxes += [t for t in info.textboxes if box.contains_point(t.rect.cx, t.rect.cy)]
+    region.points = marked_points(_reading_text(region.lines))
+    order = {p: k for k, (p, _) in enumerate(boxes)}  # 강사가 끈 순서의 상자, 그 안에서는 읽는 순서
+    region.figures.sort(key=lambda f: (order[f.page], round(f.rect.y0 / 20), f.rect.x0))
+    for i, f in enumerate(region.figures, start=1):
+        f.id = f"F{i}"
+        f.near_choice = _near_choice(f, region, infos[f.page])
+    return DocumentLayout(path=path, pages=list(infos.values()), regions=[region], scanned=False)
+
+
+def clip_text(path: Path, boxes: list[tuple[int, Rect]]) -> str:
+    """상자 안의 PDF 글자 (해설 영역 — 한글 문장 근거)."""
+    doc = pymupdf.open(path)
+    with doc:
+        return "\n".join(
+            str(doc.load_page(p - 1).get_text(clip=pymupdf.Rect(r.x0, r.y0, r.x1, r.y1)))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+            for p, r in boxes
+        )
+
+
+def page_sizes(path: Path) -> list[tuple[float, float]]:
+    """쪽마다 (너비, 높이) PDF 좌표 — 화면의 상자(쪽 비율)를 PDF 좌표로 바꿀 때."""
+    with pymupdf.open(path) as doc:
+        return [(float(pg.rect.width), float(pg.rect.height)) for pg in doc]
 
 
 def render_clip(

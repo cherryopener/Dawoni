@@ -43,6 +43,10 @@ class ExamQuestion(DawoniModel):
         default_factory=lambda: list[int](),
         description="학생 답안지 묶음에서 이 문항의 답이 있는 쪽 (표지가 1쪽). 없으면 모름",
     )
+    source_pages: list[int] = Field(
+        default_factory=lambda: list[int](),
+        description="시험지 PDF에서 이 문항을 읽은 쪽 (영역 지정해서 다시 읽을 때 처음 보여 줄 쪽)",
+    )
 
     @model_validator(mode="after")
     def _parts(self) -> ExamQuestion:
@@ -69,6 +73,9 @@ class Exam(DawoniModel):
     title: str
     scope_id: str
     questions: list[ExamQuestion] = Field(min_length=1)
+    source_id: str | None = Field(
+        default=None, description="시험지 원본 (작업공간 sources/의 등록 ID) — 영역 지정해서 읽기"
+    )
     created_at: datetime = Field(default_factory=utcnow)
     scores_by_class: bool = Field(
         default=False,

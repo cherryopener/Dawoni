@@ -58,8 +58,9 @@ export type ExamQuestion = {
   number: string;
   points: number;
   parts: ExamPart[];
-  item: { item_type: string };
+  item: { item_type: string; figures?: { id: string; caption: string | null }[] };
   answer_pages?: number[];
+  source_pages?: number[];
 };
 export type Exam = { id: string; title: string; scope_id: string; questions: ExamQuestion[]; created_at: string; scores_by_class: boolean };
 
@@ -78,8 +79,8 @@ export type ExamDetail = {
   summary: Summary;
 };
 
-export type KeyPart = { label: string; answer: string | null; solution: string; concepts: string[] };
-export type AnswerKey = { question_number: string; parts: KeyPart[]; confirmed: boolean; confirmed_by: string | null; doubtful: string[]; warnings: string[] };
+export type KeyPart = { label: string; answer: string | null; solution: string; concepts: string[]; credit_text?: string | null };
+export type AnswerKey = { question_number: string; parts: KeyPart[]; source?: string; pages?: string[]; confirmed: boolean; confirmed_by: string | null; doubtful: string[]; warnings: string[] };
 
 export type RubricItem = { id: string; points: number; criterion: string; evidence_hint: string; part: string | null; concepts: string[] };
 export type Decision = "proposed" | "accepted" | "rejected";
@@ -102,6 +103,10 @@ export type Rubric = {
 
 export type QuestionDetail = {
   question: ExamQuestion;
+  /** 본문을 고칠 수 있는 글 (식은 \( \), 그림 자리는 [그림 F1]) */
+  stem_text: string;
+  /** 강사가 더한 문항처럼 본문이 아직 없음 */
+  stem_missing: boolean;
   key: AnswerKey | null;
   rubric: Rubric | null;
 };
@@ -215,3 +220,6 @@ export type Level = { id: string; label: string; scope_id: string };
 
 export type HistoryExam = { exam_id: string; title: string; date: string; student_id: string; total: number | null; max: number; graded: number; questions: number };
 export type StudentHistory = { key: string; name: string; class_name: string | null; school: string | null; roster_id: string | null; exams: HistoryExam[] };
+
+/** 시험지 원본 (영역 지정해서 읽기). PDF가 아니면 그림 붙여 넣기만. */
+export type ExamSource = { name: string | null; pdf: boolean; pages: { width: number; height: number }[]; key_pages: number[] };

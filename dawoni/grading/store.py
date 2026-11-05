@@ -148,6 +148,14 @@ class ExamStore:
     def transcript(self, student: str, q: str) -> Transcript | None:
         return _load(self._sq("transcripts", student, q), Transcript)
 
+    def has_transcripts(self) -> bool:
+        d = self.root / "transcripts"
+        return d.is_dir() and any(d.glob("*/*.json"))
+
+    def drop(self, kind: str, q: str) -> None:
+        """문항 하나의 해설지·풀이·정답 후보 등 파일을 지운다 (시험 읽기 고치기)."""
+        self._q(kind, q).unlink(missing_ok=True)
+
     def students(self) -> list[str]:
         d = self.root / "transcripts"
         if not d.is_dir():

@@ -345,7 +345,8 @@ def test_extract_exam_from_document(
     assert set(res.figure_files["2"]) == {"F1", "F2"}
     (prompt,) = fake_prompts(exe)
     assert "문서 글자:" in prompt and "PDF 글자" not in prompt
-    assert "- F2 (이미지, 글의 2번째 [그림] 자리) — 레이아웃상 2번 선지 기호 옆" in prompt
+    line = "- F2 (이미지, 첨부 3번째 파일, 글의 2번째 [그림] 자리) — 레이아웃상 2번 선지 기호 옆"
+    assert line in prompt
     assert "문항 끝에 붙은 정답·해설(미주)은 [자료]에 없다" in prompt
 
 

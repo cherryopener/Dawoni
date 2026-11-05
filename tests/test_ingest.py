@@ -322,7 +322,9 @@ def test_extract_exam_by_page_with_repair(
     prompts = fake_prompts(exe)
     assert len(prompts) == 3 and "['5']이 빠졌다" in prompts[1]
     assert "레이아웃상 1번 선지 기호 옆" in prompts[0] and "글 상자 1개" in prompts[0]
-    assert prompts[0].count("inputs/input_") == 6, "5번은 1·2쪽 두 상자 → 이미지 2장"
+    # 문항 영역 그림 6장(5번은 1·2쪽 두 상자) + 그림마다 따로 7장 (2번 1, 4번 5, 5번 1)
+    assert prompts[0].count("inputs/input_") == 13
+    assert "첨부 6번째 파일" in prompts[0], "4번 F1은 4번 영역 그림 바로 다음 첨부"
     assert set(result.figure_files["4"]) == {"F1", "F2", "F3", "F4", "F5"}
     assert all(p.exists() for p in result.figure_files["4"].values())
 

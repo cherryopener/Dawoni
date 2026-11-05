@@ -198,7 +198,13 @@ def ingest_exam(
         target.mkdir(parents=True, exist_ok=True)
         for fid, f in figs.items():
             shutil.copy2(f, target / f"{fid}.png")
-    exam = Exam(id=exam_id, title=title, scope_id=scope.id, questions=result.questions)
+    exam = Exam(
+        id=exam_id,
+        title=title,
+        scope_id=scope.id,
+        questions=result.questions,
+        source_id=src.source_id,
+    )
     store = ExamStore.create(svc.workspace, exam)
     src.ingest = SourceIngestState(
         status="ingested", item_count=len(exam.questions), message=exam_id
