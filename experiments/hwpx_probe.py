@@ -660,10 +660,11 @@ def hancom() -> Iterator[Any]:
 
     hwp = win32com.client.DispatchEx("HWPFrame.HwpObject")
     try:
-        # 보안 모듈(FilePathCheckerModule)이 등록된 PC면 접근 확인 창이 뜨지 않는다. 없으면 한글이
-        # 창을 띄워 묻는다 — 창을 숨기면 아무도 답할 수 없어 멈추므로 보이게 둔다 (2026-11-04 실측).
-        with contextlib.suppress(Exception):
-            hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
+        # 보안 모듈이 등록된 PC면 접근 확인 창이 뜨지 않는다 (레지스트리에 적은 이름으로 — 앱과 같게).
+        # 없으면 한글이 창을 띄워 묻는다 — 창을 숨기면 아무도 답할 수 없어 멈추므로 보이게 둔다.
+        from dawoni.ingest.convert import register_security_module
+
+        register_security_module(hwp)
         hwp.XHwpWindows.Item(0).Visible = True
         yield hwp
     finally:

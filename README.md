@@ -53,8 +53,9 @@ uv run --extra windows python experiments/hwpx_probe.py --hancom
 | 한글 2024 COM으로 열기 → PDF·HWPX 다시 저장 → 다시 읽기 (`--hancom`) | 판독본·채점본 모두 저장됨. 한글이 다시 저장한 판독본도 쓴 것과 같음 |
 
 - 한글 COM 자동화는 파일을 열 때 '접근 허용' 창을 띄운다. 한글 자동화 보안 모듈
-  (`FilePathCheckerModule`)을 설치한 PC에서는 창 없이 돈다. 없으면 창을 숨겼을 때 아무도 답할 수 없어
-  멈추므로 `--hancom`은 한글 창을 보이게 연다 — 창이 뜨면 [모두 허용]을 누른다.
+  (`FilePathCheckerModuleExample.dll`)을 설치하고 레지스트리에 등록한 PC에서는 창 없이 돈다 — 앱은 레지스트리의
+  이름을 읽어 붙인다. 없으면 창을 숨겼을 때 아무도 답할 수 없어 멈추므로 `--hancom`은 한글 창을 보이게
+  연다 — 창이 뜨면 [모두 허용]을 누른다. 한글이 있는데 자동화 등록이 빠진 PC: [docs/HWP_HANGUL.md](docs/HWP_HANGUL.md).
 - 한글은 **한 번 띄워 여러 파일에 쓴다.** 파일마다 띄우고 끄면 두 번째 연결이 아직 꺼지는 중인 한글에
   붙어 `The server threw an exception` → `The RPC server is unavailable`로 죽는다.
 - python-hwpx의 `add_paragraph`는 기본으로 앞 문단 스타일을 물려받는다 (`inherit_style=True`). 그러면 머리 다음

@@ -11,14 +11,12 @@ import { go, href } from "@/lib/router";
 import { STEPS, stepIndex } from "@/lib/steps";
 import type { ExamListItem, Job, Level } from "@/lib/types";
 
-const ACCEPTED = /\.(pdf|docx)$/i;
-const NEEDS_PDF = /\.(hwp|hwpx)$/i;
+const ACCEPTED = /\.(pdf|docx|hwpx|hwp)$/i;
 
-/** HWP·HWPX는 한글 자동화(개발자 도구·보안 모듈)가 있어야 읽으므로 받지 않는다 (2026-11-05 사용자 결정). */
+/** HWPX는 앱이 직접 읽는다. HWP는 이 PC의 한글(자동화)로 HWPX로 바꿔 읽는다 — 안 되면 서버가
+ * 이유(자동화 등록 없음 → 복구 설치)와 함께 HWPX·PDF로 저장해 달라고 알린다 (docs/HWP_HANGUL.md). */
 function fileProblem(f: File): string | null {
-  if (NEEDS_PDF.test(f.name))
-    return `${f.name}: HWP·HWPX는 한글 개발자 도구가 있어야 읽을 수 있습니다. 한글에서 [파일 → PDF로 저장하기]로 PDF를 만들어 넣어 주세요.`;
-  if (!ACCEPTED.test(f.name)) return `${f.name}: PDF 또는 DOCX만 넣을 수 있습니다.`;
+  if (!ACCEPTED.test(f.name)) return `${f.name}: PDF · DOCX · HWPX · HWP 파일만 넣을 수 있습니다.`;
   return null;
 }
 
@@ -111,8 +109,8 @@ function NewExam({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
         ) : (
           <Dropzone
             title="시험지 · 해설지를 끌어다 놓기"
-            hint="PDF · DOCX (HWP·HWPX는 한글에서 PDF로 저장해 넣어 주세요)"
-            accept=".pdf,.docx"
+            hint="PDF · DOCX · HWPX · HWP (HWP는 이 PC의 한글로 바꿔 읽습니다)"
+            accept=".pdf,.docx,.hwpx,.hwp"
             onFiles={pick}
           />
         )}
