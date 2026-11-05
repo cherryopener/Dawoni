@@ -836,13 +836,14 @@ def confirm_from_files(
     - 확정하면 그 학생·문항을 맞춘다: 고쳤으면 다시 채점, 그대로면 채점의 '판독문 확인' 표시만
       (`grade_after_confirm`). 끝나면 파일을 다시 써 "확인 전" 표시를 지운다.
     """
-    from dawoni.export.exam_files import accept_file, is_edited, student_file
+    from dawoni.export.exam_files import accept_file, is_edited, settle_layout, student_file
     from dawoni.export.hwpx import read_back, reconcile
 
     exam = store.exam()
     qs = select_questions(exam, only)
     roster = students or store.students()
     run = ConfirmRun()
+    run.export.warnings += settle_layout(svc.workspace, store)  # 예전 배치로 쓴 파일
     hashes = store.export_hashes()
     todo = [(s, q) for s in roster for q in qs if store.transcript(s, q.number) is not None]
     rewrite: list[tuple[str, str]] = []
@@ -913,8 +914,8 @@ def confirm_from_files(
             run.export.written += g.export.written
             run.export.warnings += g.export.warnings
         rewrite.append((st, q.number))
-    written = {p.name for p in run.export.written}
-    left = [k for k in rewrite if student_file(svc.workspace, store, *k).name not in written]
+    written = set(run.export.written)
+    left = [k for k in rewrite if student_file(svc.workspace, store, *k) not in written]
     if left:
         more = write_files(svc.workspace, store, left)
         run.export.written += more.written

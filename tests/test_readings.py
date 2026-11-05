@@ -203,6 +203,36 @@ def test_reading_file_written_and_confirmed_from_hwpx(app_paths: AppPaths, tmp_p
     assert rerun.unchanged == ["김다원 1"] and not rerun.confirmed, "해시가 같으면 다시 읽지 않는다"
 
 
+def test_old_flat_layout_moves_to_class_folders(app_paths: AppPaths, tmp_path: Path) -> None:
+    """예전엔 한 폴더에 `2반_김다원_1.hwpx`·`(반별)_2반_1.hwpx`로 썼다. 새 배치로 옮기고, 강사가
+    고친 파일은 해시와 함께 옮겨 계속 지킨다."""
+    svc = _services(app_paths, tmp_path)
+    store = _exam(svc)
+    _student(store, "김다원", "김다원")
+    write_files(svc.workspace, store, [("김다원", "1")])
+    path = student_file(svc.workspace, store, "김다원", "1")
+    bundle = bundle_file(svc.workspace, store, "2반", "1")
+    top = bundle.parent
+    assert path == top / "2반" / "2반_김다원_1.hwpx" and bundle == top / "2반_1.hwpx"
+    # 예전 배치로 되돌려 둔다
+    hashes = store.export_hashes()
+    path.replace(top / path.name)
+    bundle.replace(top / "(반별)_2반_1.hwpx")
+    path.parent.rmdir()
+    hashes[path.name] = hashes.pop("2반/2반_김다원_1.hwpx")
+    hashes["(반별)_2반_1.hwpx"] = hashes.pop("2반_1.hwpx")
+    store.save_export_hashes(hashes)
+    _edit(top / path.name, _fill)  # 강사가 예전 자리에서 고쳐 둠
+
+    again = write_files(svc.workspace, store, [("김다원", "1")])
+    assert sorted(p.name for p in top.iterdir()) == ["(점수표)_10월_시험.xlsx", "2반", "2반_1.hwpx"]
+    assert path.is_file() and is_edited(store, path), "고친 파일은 옮겨도 고친 것으로 안다"
+    assert path in again.edited and path not in again.written
+    assert bundle in again.written
+    run = workflow.confirm_from_files(svc, store, by="김선생")
+    assert [c.changed for c in run.confirmed] == [1]
+
+
 def test_confirm_refuses_broken_marks_and_other_heads(app_paths: AppPaths, tmp_path: Path) -> None:
     svc = _services(app_paths, tmp_path)
     store = _exam(svc)
@@ -296,7 +326,7 @@ def test_batch_links_roster_and_holds_same_class_twins(
 
     names = sorted(p.name for p in res.export.written if p.suffix == ".hwpx")
     assert any(p.suffix == ".xlsx" for p in res.export.written), "점수표도 (채점 전이라 비어 있음)"
-    assert names == ["(반별)_2반_1.hwpx", "2반_김다원_1.hwpx"], (
+    assert names == ["2반_1.hwpx", "2반_김다원_1.hwpx"], (
         "판독이 끝나면 바로 판독본을 쓰고, 같은 반 동명이인·명부에 없는 이름은 확인할 때까지 보류"
     )
     assert store.transcript("최민준", "1") is not None, "명부에 없어도 판독은 한다"
@@ -351,7 +381,7 @@ def test_name_fix_rematches_roster_or_accepts_off_roster(
     roster.import_rows([{"name": "이태오", "class_name": "2반", "school": "포항제철중"}])
     store = _exam(svc)
     res = workflow.scan_batch(svc, store, _pdf(tmp_path / "a.pdf", 4), per_student=2)
-    assert [p.name for p in res.export.written if p.suffix == ".hwpx"] == ["(반별)_2반_1.hwpx"]
+    assert [p.name for p in res.export.written if p.suffix == ".hwpx"] == ["2반_1.hwpx"]
     pending = store.student_record("이타요")
     assert pending is not None and pending.name_pending
 

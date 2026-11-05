@@ -331,19 +331,21 @@ def outputs(exam_id: str, st: AppState = State) -> dict[str, Any]:
     ws = st.services().workspace
     store = ExamStore(ws, exam_id)
     exam = store.exam()
+    exam_files.settle_layout(ws, store)
     folder = exam_files.exam_dir(ws, exam)
     scores = exam_files.score_file(ws, store)
-    hwpx = sorted(folder.glob("*.hwpx")) if folder.is_dir() else []
+    bundles = sorted(folder.glob("*.hwpx")) if folder.is_dir() else []  # 학생 파일은 반 폴더 안
+    students = sorted(folder.glob("*/*.hwpx")) if folder.is_dir() else []
     hashes = store.export_hashes()
-    edited = [p.name for p in hwpx if exam_files.is_edited(store, p, hashes)]
+    edited = [p.name for p in bundles + students if exam_files.is_edited(store, p, hashes)]
     return {
         "folder": folder.relative_to(ws.root).as_posix(),
         "folder_exists": folder.is_dir(),
         "scores": scores.relative_to(ws.root).as_posix(),
         "scores_exists": scores.is_file(),
         "scores_by_class": exam.scores_by_class,
-        "students": sum(not p.name.startswith("(") for p in hwpx),
-        "bundles": sum(p.name.startswith("(반별)") for p in hwpx),
+        "students": len(students),
+        "bundles": len(bundles),
         "edited": edited,
         "summary": exam_summary(store, exam),
     }
@@ -395,6 +397,7 @@ def student_files(exam_id: str, st: AppState = State) -> dict[str, dict[str, str
     """학생 → 문항 → 판독본·채점본 HWPX (있는 것만, 작업공간 기준 경로) — "한글로 열기"."""
     ws = st.services().workspace
     store = ExamStore(ws, exam_id)
+    exam_files.settle_layout(ws, store)
     out: dict[str, dict[str, str]] = {}
     for s in store.students():
         for q in store.exam().questions:
