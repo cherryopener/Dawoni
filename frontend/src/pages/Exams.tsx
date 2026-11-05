@@ -1,4 +1,4 @@
-import { ChevronRight, FileText, Plus } from "lucide-react";
+import { ChevronRight, FileText, Plus, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,8 +6,9 @@ import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Dropzone, ErrorNote, Input, Progress } from "@/components/ui/misc";
 import { Select } from "@/components/ui/select";
-import { api, ApiError, useAction, useApi, waitJob } from "@/lib/api";
+import { api, ApiError, enc, useAction, useApi, waitJob } from "@/lib/api";
 import { go, href } from "@/lib/router";
+import { useSession } from "@/lib/session";
 import { STEPS, stepIndex } from "@/lib/steps";
 import type { ExamListItem, Job, Level } from "@/lib/types";
 
@@ -127,9 +128,47 @@ function NewExam({ open, onOpenChange }: { open: boolean; onOpenChange: (v: bool
   );
 }
 
+/** 시험 지우기 확인. 함께 쓰는 폴더면 다른 강사 다워니에서도 사라진다고 알린다. */
+function DeleteExam({ exam, onClose, onDeleted }: { exam: ExamListItem | null; onClose: () => void; onDeleted: () => void }) {
+  const team = useSession().status.workspace_mode === "team";
+  const act = useAction();
+  const remove = () =>
+    act.run(async () => {
+      await api.del(`/exams/${enc(exam!.id)}`);
+      onClose();
+      onDeleted();
+    });
+  return (
+    <Dialog
+      open={exam !== null}
+      onOpenChange={(v) => !v && !act.busy && onClose()}
+      title={exam ? `'${exam.title}' 시험을 지울까요?` : ""}
+      desc="해설·루브릭·판독·채점이 모두 지워지고 되돌릴 수 없습니다. 원본 시험지와 내보낸 HWPX·점수표는 남습니다."
+      footer={
+        <>
+          <Button variant="ghost" disabled={act.busy} onClick={onClose}>
+            취소
+          </Button>
+          <Button variant="danger" disabled={act.busy} onClick={() => void remove()}>
+            <Trash2 /> {act.busy ? "지우는 중…" : "지우기"}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {team && (
+          <div className="rounded-lg bg-warn-soft px-3 py-2 text-[13px]">함께 쓰는 폴더라 다른 강사 다워니에서도 이 시험이 사라집니다.</div>
+        )}
+        {act.error && <ErrorNote message={act.error} />}
+      </div>
+    </Dialog>
+  );
+}
+
 export function ExamsPage() {
   const [open, setOpen] = useState(false);
-  const { data, error, loading } = useApi<ExamListItem[]>("/exams");
+  const [doomed, setDoomed] = useState<ExamListItem | null>(null);
+  const { data, error, loading, reload } = useApi<ExamListItem[]>("/exams");
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
       <div className="flex items-center">
@@ -153,8 +192,8 @@ export function ExamsPage() {
           const idx = stepIndex(s.step);
           const done = s.step === "export";
           return (
-            <a key={e.id} href={href("exams", e.id, s.step)} className="text-text no-underline">
-              <Card className="flex items-center gap-5 px-5 py-4 hover:bg-muted">
+            <Card key={e.id} className="flex items-center gap-2 pr-3 hover:bg-muted">
+              <a href={href("exams", e.id, s.step)} className="flex min-w-0 flex-1 items-center gap-5 py-4 pl-5 text-text no-underline">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="text-[15px] font-medium">{e.title}</span>
@@ -178,12 +217,16 @@ export function ExamsPage() {
                   {s.needs_review > 0 && <Badge tone="warn">검토 필요 {s.needs_review}</Badge>}
                 </div>
                 <ChevronRight className="size-4 text-text-3" />
-              </Card>
-            </a>
+              </a>
+              <Button size="icon" variant="ghost" aria-label={`${e.title} 지우기`} title="시험 지우기" onClick={() => setDoomed(e)}>
+                <Trash2 />
+              </Button>
+            </Card>
           );
         })}
       </div>
       <NewExam open={open} onOpenChange={setOpen} />
+      <DeleteExam exam={doomed} onClose={() => setDoomed(null)} onDeleted={reload} />
     </div>
   );
 }

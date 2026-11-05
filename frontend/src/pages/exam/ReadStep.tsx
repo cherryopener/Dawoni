@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowRight, Check, Pencil, Plus, ScanSearch, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Image as ImageIcon, Pencil, Plus, ScanSearch, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { RichText } from "@/components/Math";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { useTeacher } from "@/lib/session";
 import { pts } from "@/lib/steps";
 import type { ExamQuestion, Job, KeyPart, QuestionDetail } from "@/lib/types";
 import { useExam } from "../Exam";
+import { FigureDialog, figureRefs, hasFigureMark } from "./FigureDialog";
 import { RegionDialog, type RegionWhat } from "./RegionDialog";
 import { useQuestionDetails } from "./shared";
 
@@ -266,11 +267,13 @@ function QuestionCard({
   locked: boolean;
   onSaved: () => void;
 }) {
-  const { base } = useExam();
+  const { id, base } = useExam();
   const by = useTeacher();
   const [points, setPoints] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState(false);
   const [region, setRegion] = useState<RegionWhat | null>(null);
+  /** 그림 보기 창: 정답·해설에 나온 그림 번호 (닫혀 있으면 null) */
+  const [shownRefs, setFigureRefs] = useState<string[] | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
   const act = useAction();
   const key = d?.key;
@@ -391,6 +394,13 @@ function QuestionCard({
                       ) : (
                         <div className="flex flex-col gap-1">
                           <RichText text={kp?.answer ?? (kp?.solution.slice(0, 120) || "—")} />
+                          {(hasFigureMark(kp?.answer) || hasFigureMark(kp?.solution)) && (
+                            <span>
+                              <Button size="sm" variant="ghost" className="-ml-3" onClick={() => setFigureRefs(figureRefs([kp?.answer, kp?.solution]))}>
+                                <ImageIcon /> 그림 보기
+                              </Button>
+                            </span>
+                          )}
                           {doubt && (
                             <span>
                               <Badge tone="warn">
@@ -420,6 +430,15 @@ function QuestionCard({
           <ErrorNote message={act.error} />
         </div>
       )}
+      <FigureDialog
+        open={shownRefs !== null}
+        onOpenChange={(v) => !v && setFigureRefs(null)}
+        examId={id}
+        number={q.number}
+        refs={shownRefs ?? []}
+        figures={d?.figures ?? []}
+        keyPages={key?.pages ?? []}
+      />
       <RegionDialog
         open={region !== null}
         onOpenChange={(v) => !v && setRegion(null)}

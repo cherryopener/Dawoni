@@ -22,7 +22,7 @@ from dawoni.grading.pipeline import (
     teacher_part_review,
     teacher_review,
 )
-from dawoni.grading.store import ExamStore, ScopeStore
+from dawoni.grading.store import ExamStore, ScopeStore, safe_name
 from dawoni.models.answer_key import AnswerKey, KeyPart
 from dawoni.models.grading import (
     Exam,
@@ -189,6 +189,29 @@ def create_exam(body: CreateExamBody, st: AppState = State) -> Exam:
     return exam
 
 
+@router.delete("/{exam_id}")
+def delete_exam(exam_id: str, st: AppState = State) -> dict[str, bool]:
+    """시험을 지운다 (화면이 먼저 강사에게 묻는다). 이 시험의 작업이 돌고 있거나, 함께 쓰는 폴더에서
+    다른 강사가 열어 두었으면 거절한다. 원본 시험지·내보낸 파일은 남는다."""
+    svc, store = _store(st, exam_id)
+    busy = [j for j in st.jobs.list() if j.params.get("exam") == exam_id and not j.is_terminal]
+    if busy:
+        raise ValueError("이 시험의 작업이 아직 돌고 있습니다 — 끝나거나 취소한 뒤 지우세요")
+    if open_workspace(svc.workspace.root)[1].mode == "team":
+        others = sharing.others_using(svc.workspace, exam_id, st.machine)
+        if others:
+            who = ", ".join(f"{o.teacher} 선생님" if o.teacher else o.host for o in others)
+            raise ValueError(f"{who}이 이 시험을 열어 두었습니다 — 닫은 뒤 지우세요")
+    try:
+        store.delete()
+    except OSError as e:
+        raise ValueError(
+            f"시험 폴더를 다 지우지 못했습니다 ({e.strerror or e}) — 그 폴더의 파일을 연 프로그램"
+            "(한글·탐색기 등)을 닫고 다시 지우세요"
+        ) from e
+    return {"ok": True}
+
+
 @router.post("/from-file")
 @router.post("/from-pdf")  # 예전 이름 (PDF만 받던 때)
 def exam_from_file(
@@ -341,7 +364,23 @@ def get_question(exam_id: str, number: str, st: AppState = State) -> dict[str, A
         "candidate_matches": m.model_dump(mode="json")
         if (m := store.candidate_matches(number))
         else None,
+        "figures": question_figures(store, q),
     }
+
+
+def question_figures(store: ExamStore, q: ExamQuestion) -> list[dict[str, str | None]]:
+    """문항 그림 파일 (`figures/<문항>/F1.png`…, 시험 폴더 기준 경로)과 설명 — 정답·해설의
+    `[그림 4]`가 무엇인지 화면에서 보여 주려고."""
+    d = store.root / "figures" / safe_name(q.number)
+    if not d.is_dir():
+        return []
+    captions = {f.id: f.caption for f in q.item.figures}
+    files = sorted(d.glob("F*.png"), key=lambda p: int(p.stem[1:]) if p.stem[1:].isdigit() else 0)
+    root = store.root
+    return [
+        {"id": p.stem, "caption": captions.get(p.stem), "path": p.relative_to(root).as_posix()}
+        for p in files
+    ]
 
 
 @router.put("/{exam_id}/questions/{number}/rubric")

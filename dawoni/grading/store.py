@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import re
 import shutil
+import stat
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -90,6 +92,17 @@ class ExamStore:
         if e is None:
             raise KeyError(f"시험 {self.exam_id} 없음")
         return e
+
+    def delete(self) -> None:
+        """시험 폴더를 통째로 지운다 (해설·루브릭·판독·채점·스캔 그림). 원본 시험지(sources/),
+        문제은행(bank/), 내보낸 파일(exports/)은 그대로 둔다."""
+        self.exam()  # 없으면 KeyError
+
+        def writable(fn: Callable[..., object], path: str, _e: BaseException) -> None:
+            Path(path).chmod(stat.S_IWRITE)  # Windows 읽기 전용 파일
+            fn(path)
+
+        shutil.rmtree(self.root, onexc=writable)
 
     def save_exam(self, exam: Exam) -> None:
         """문항 내용 수정 (그림 스펙·모드 등). 시험 ID는 바꿀 수 없다."""

@@ -443,6 +443,15 @@ def test_answer_key_fix_and_confirm(app_paths: AppPaths, tmp_path: Path) -> None
     url = f"/api/exams/{eid}/questions/1/key"
     q = c.get(f"/api/exams/{eid}/questions/1").json()
     assert q["key"]["parts"][0]["answer"] == "2/3"
+    assert q["figures"] == []
+    figs = store.root / "figures" / "1"
+    figs.mkdir(parents=True)
+    for n in ("F10", "F2", "F1"):
+        (figs / f"{n}.png").write_bytes(b"png")
+    q = c.get(f"/api/exams/{eid}/questions/1").json()
+    assert [f["id"] for f in q["figures"]] == ["F1", "F2", "F10"]
+    assert q["figures"][0]["path"] == "figures/1/F1.png"
+    assert c.get(f"/api/exams/{eid}/file", params={"path": "figures/1/F2.png"}).content == b"png"
     bad = c.put(url, json={"parts": [{"label": "(1)", "credit_policy": "none"}]})
     assert bad.status_code == 400 and "소문항 표시" in bad.json()["detail"]
     fixed = c.put(
@@ -538,6 +547,37 @@ def test_same_pdf_opens_existing_exam(app_paths: AppPaths, tmp_path: Path) -> No
     assert existing_exam(svc, pdf) is not None
     shutil.rmtree(ws_root / "exams" / eid)
     assert existing_exam(svc, pdf) is None, "시험 폴더가 지워졌으면 다시 만들 수 있다"
+
+
+def test_delete_exam(app_paths: AppPaths, tmp_path: Path) -> None:
+    from dawoni import sharing
+    from dawoni.paths import WorkspacePaths
+    from dawoni.workspace import set_mode
+
+    c = _client(app_paths)
+    ws_root = tmp_path / "ws"
+    c.post("/api/workspace", json={"path": str(ws_root), "create": True})
+    scope = c.post("/api/scopes", json=read_json(FIX / "scope.json")).json()
+    q1 = read_json(FIX / "questions.json")[:1]
+    eid = c.post(
+        "/api/exams", json={"title": "지울 시험", "scope_id": scope["id"], "questions": q1}
+    ).json()["id"]
+    (ws_root / "exams" / eid / "grades" / "홍길동").mkdir(parents=True)
+    (ws_root / "exams" / eid / "grades" / "홍길동" / "1.json").write_text("{}", encoding="utf-8")
+
+    set_mode(ws_root, "team")
+    ws = WorkspacePaths(ws_root)
+    sharing.mark_in_use(ws, eid, "other-pc", "김선생")
+    r = c.delete(f"/api/exams/{eid}")
+    assert r.status_code == 400 and "김선생 선생님" in r.json()["detail"]
+    assert (ws_root / "exams" / eid / "exam.json").is_file()
+
+    sharing.release(ws, eid, "other-pc")
+    assert c.delete(f"/api/exams/{eid}").json() == {"ok": True}
+    assert not (ws_root / "exams" / eid).exists()
+    assert c.get("/api/exams").json() == []
+    assert c.delete(f"/api/exams/{eid}").status_code == 404
+    assert (ws_root / "scopes").is_dir(), "시험 밖은 그대로"
 
 
 def test_levels_and_from_file_needs_scope_or_level(app_paths: AppPaths, tmp_path: Path) -> None:

@@ -109,7 +109,11 @@ export type QuestionDetail = {
   stem_missing: boolean;
   key: AnswerKey | null;
   rubric: Rubric | null;
+  /** 문항 그림 파일 (시험 폴더 기준 경로) — 정답의 [그림 4]가 무엇인지 보여 준다 */
+  figures?: QuestionFigure[];
 };
+
+export type QuestionFigure = { id: string; caption: string | null; path: string };
 
 export type PartAgreement = { question_number: string | null; n: number; parts: number; same: number; ai_lower: number; ai_higher: number; rate: number | null };
 export type Compare = { overall: PartAgreement; questions: Record<string, PartAgreement> };
