@@ -364,30 +364,35 @@ uv run python packaging/build_bundle.py --access access.json   # 없으면 로�
 | `run.cmd` → 묶음 python.exe | 있음 | **막힘** — "Dangerous file extension from the web" |
 | 서명된 pythonw.exe를 `Dawoni.exe`로 복사 | 있음 | **열림** — PyPI 패키지 .pyd(pydantic_core·lxml·pymupdf·numpy·pywin32)도 모두 불러옴 |
 
-## flash-medium ↔ claude-sonnet 견주기 (2026-11-05, claude 2.1.318)
+## flash-medium ↔ claude(sonnet·opus) 견주기 (2026-11-05, claude 2.1.318)
 
 사용자 지시(claude Max): AI에게 보내는 일은 flash-medium과 claude에 한 번씩 보내 견준다. claude는 sonnet 먼저
-(`claude-sonnet-5-5`, effort medium), opus는 사용자 확인 뒤. 같은 코드·같은 날, 두 모델 동시에.
+(`claude-sonnet-5-5`, effort medium), opus(`claude-opus-5-5`, medium)는 사용자 확인 뒤에 쟀다. 같은 코드·같은 날, 두 모델 동시에.
 
 ```bash
 uv run python experiments/measure_agy.py cover --models gemini-3.8-flash-medium,claude-sonnet-5-5 --sets 1-6 --redo
 uv run python experiments/m5_calibrate.py after --model claude-sonnet-5-5 --label claude-sonnet-1105
 ```
 
-| 일 | 기준 | flash-medium | claude-sonnet |
-|---|---|---|---|
-| 시험 읽기 (`test.pdf`) | 옛 다워니 확인본 소문항 | 8/8 · 838초 · 8.0만 토큰 | 8/8 · **80초** · 5.7만 |
-| 해설지 읽기 | 옛 다워니 확인본 소문항 | **7/7** · 166초 | 5/7 (1-(2)·2-(2) 다름) · 53초 |
-| 표지 6명 | 사람이 본 기준값 칸 | **22/24** · 83초 | 16/24 · 16초 — 이름 4/6 틀림(장우혁→강우현, 이태오→이타요 …), 학교 3, 점수 2 |
-| 손글씨 판독 6명 | 정답 없음, 다른 모델과 유사도 | 84% · 180초 | 83% · 42초 |
-| 채점 19명 × 2문항 (보정 루브릭) | 강사 빨간 펜 소문항 | 100/112 (89%) · −21점 · 871초 | **106/112 (95%)** · −10점 · **274초** |
+| 일 | 기준 | flash-medium | claude-sonnet | claude-opus |
+|---|---|---|---|---|
+| 시험 읽기 (`test.pdf`) | 옛 다워니 확인본 소문항 | 8/8 · 838초 · 8.0만 토큰 | 8/8 · 80초 · 5.7만 | 8/8 · **57초** · 3.5만 |
+| 해설지 읽기 | 옛 다워니 확인본 소문항 | **7/7** · 166초 | 5/7 (1-(2)·2-(2) 다름) · 53초 | **7/7** · 42초 |
+| 표지 6명 | 사람이 본 기준값 칸 | **22/24** · 83초 | 16/24 · 16초 | 17/24 · 12초 |
+| ↳ 이름 (M3 학생 기록과 대조) | 6명 | **5/6** (한예성→하예성) | 1/6 (장우혁→강우현, 이태오→이타요 …) | 3/6 (강우현·황예성·김동원) |
+| 손글씨 판독 6명 | 정답 없음, 다른 모델과 유사도 | 84% · 180초 | 84% · 42초 | 86% · 29초 |
+| 채점 19명 × 2문항 (보정 루브릭) | 강사 빨간 펜 소문항 | 100/112 (89%) · −21점 · 871초 | **106/112 (95%)** · −10점 · 274초 | 100/112 (89%) · −23점 · 256초 |
 
-- 채점은 sonnet이 낫다: 옛 다워니 기준 95%에 처음 닿았고, 강사보다 낮게 준 칸이 11 → 6. flash-medium은 같은
-  입력으로 M5에서 103/112(92%)였으니 실행마다 ±3칸 흔들린다. 토큰은 sonnet 151만 대 flash 99만인데 sonnet 쪽은
-  캐시 읽기를 합친 수라 실제 한도 소모는 이보다 적다. 호출 43(재시도 4: 권한 거부 일시 오류 등) 대 39.
-- 한글 손글씨 이름·학교(표지)는 sonnet이 뚜렷이 못 읽는다 — 강사들 말과 같다. 명부가 있으면 이름은 명부와
-  맞추지만, 표지 읽기는 gemini에 둔다.
-- 시험 읽기는 둘 다 맞고 sonnet이 10배 빠르다. 해설지는 sonnet이 소문항 2개를 다르게 옮겼다.
+- 채점은 sonnet이 가장 낫다: 옛 다워니 기준 95%에 처음 닿았고, 강사보다 낮게 준 칸이 11 → 6. opus는 flash와
+  같은 89%로, 2-(1)②(강사가 0/2로만 매기는 2점 소문항)에서 7칸을 0점으로 줬다 — 더 엄격하게 읽는다. opus는
+  근거 인용을 답안 그대로가 아니라 다듬어 적어 수리가 5번(호출 50, sonnet 43, flash 39). flash-medium은 같은
+  입력으로 M5에서 103/112(92%)였으니 실행마다 ±3칸 흔들린다. 토큰은 sonnet 151만·opus 90만·flash 99만인데
+  claude 쪽은 캐시 읽기를 합친 수라 실제 한도 소모는 이보다 적다.
+- 한글 손글씨 이름·학교(표지)는 claude가 뚜렷이 못 읽는다(opus도) — 강사들 말과 같다. 강사 점수 칸은 셋 다
+  2칸 안팎으로 비슷하게 틀린다. 표지 읽기는 gemini에 둔다.
+- 시험 읽기는 셋 다 맞고 claude가 10배 넘게 빠르다. 해설지는 opus·flash가 맞고 sonnet이 소문항 2개를 다르게 옮겼다.
+- 답안 판독은 정답이 없어 다른 모델과의 유사도만 봤다(셋 다 84~86%) — 표지 이름처럼 claude가 한글 손글씨를
+  틀리는지는 판독문을 원본과 대조해야 안다.
 - **Windows에서 claude 고친 것**: npm의 `claude.cmd`를 거치면 cmd.exe 명령행 한계(8,191자)에 걸려 시험 읽기의
   `--json-schema`(8,235자)가 "The command line is too long."으로 실패했다 → `.cmd`가 부르는 `bin\claude.exe`를
   바로 부른다(`detect.unwrap_cmd_shim`).
