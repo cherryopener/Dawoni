@@ -13,11 +13,10 @@
     uv run python experiments/measure_agy.py report       # 표 (README에 옮길 것)
 
 결과는 `experiments/out/measure/`(git 제외 — 학생 이름·답안이 들어 있음). 같은 (역할, 모델, 대상)은
-결과 파일이 있으면 건너뛴다 (`--redo`로 다시). claude 모델은 이 실험에서 돌리지 않는다 (2026-11-04
-사용자 지시). 예외는 손글씨 판독(read) 한 번: 강사들이 "claude는 한글 손글씨를 잘 못 읽는다"고 하므로
-체계적 판독에서는 어떤지 argon-low와 견준다 (2026-11-04 사용자 지시, claude 토큰을 아낌):
+결과 파일이 있으면 건너뛴다 (`--redo`로 다시). 2026-11-05부터 AI에게 보내는 일은 flash-medium과
+claude(sonnet 먼저, opus는 사용자 확인 뒤)에 한 번씩 보내 견준다 (사용자 지시 — claude Max 요금제):
 
-    uv run python experiments/measure_agy.py read --models claude-sonnet-5-5 --sets 1-6
+    uv run python experiments/measure_agy.py cover --models gemini-3.8-flash-medium,claude-sonnet-5-5
 """
 
 from __future__ import annotations
@@ -528,8 +527,6 @@ def main(argv: list[str]) -> int:
     models = [m.strip() for m in args.models.split(",") if m.strip()]
     if not models:
         raise SystemExit("--models에 모델 이름을 쉼표로")
-    if any(m.startswith("claude") for m in models) and args.task != "read":
-        raise SystemExit("claude 모델은 손글씨 판독(read)만 잰다 (claude 토큰을 아낌)")
     fn = TASKS.get(args.task)
     if args.task == "grade":
         if not args.transcripts:

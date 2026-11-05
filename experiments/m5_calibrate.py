@@ -332,7 +332,13 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
 
 def cmd_after(args: argparse.Namespace) -> int:
     svc = services(args.parallel)
-    if args.model:
+    if args.model and args.model.startswith("claude"):  # 2026-11-05: claude와 나란히 잰다
+        cfg = svc.config
+        cfg.default_agent = "claude"
+        for name in AGENT_NAMES:
+            cfg.agents[name].enabled = name == "claude"
+        cfg.tiers["claude"] = {t: TierModel(model=args.model, effort="medium") for t in TIER_NAMES}
+    elif args.model:
         svc.config.tiers["agy"]["strong"] = TierModel(model=args.model)
         svc.config.role_tiers["grader"] = "strong"
     store = store_of(svc)
