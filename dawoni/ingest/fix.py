@@ -373,18 +373,8 @@ def exam_source(svc: Services, exam: Exam) -> Path | None:
 
 
 def source_pdf(svc: Services, exam: Exam) -> Path | None:
-    """원본 PDF. 한글 파일로 만든 시험이면 읽을 때 한글로 만든 PDF (`workflow.readable_copy`)."""
-    from dawoni.ingest.workflow import HANGUL_SUFFIXES, hangul_pdf
-
     path = exam_source(svc, exam)
-    if path is None:
-        return None
-    if path.suffix.lower() == ".pdf":
-        return path
-    if path.suffix.lower() in HANGUL_SUFFIXES:
-        made = hangul_pdf(path, svc.workspace.exams / exam.id / "ingest")
-        return made if made.is_file() else None
-    return None
+    return path if path is not None and path.suffix.lower() == ".pdf" else None
 
 
 def source_info(svc: Services, store: ExamStore) -> dict[str, object]:

@@ -169,8 +169,26 @@ HP_NS = (
 )
 
 
-def _hp(*inner: str) -> str:
-    return f"<hp:p>{''.join(inner)}</hp:p>"
+def _hp(*inner: str, pr: str | None = None) -> str:
+    attr = f' paraPrIDRef="{pr}"' if pr else ""
+    return f"<hp:p{attr}>{''.join(inner)}</hp:p>"
+
+
+# 한글 자동 번호: 문단 모양 7 = 문단 번호 1단계(1.), 8 = 2단계(가.), 9 = 개요 번호 1단계
+HWPX_HEADER = (
+    '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head"><hh:refList>'
+    '<hh:numberings><hh:numbering id="2" start="1">'
+    '<hh:paraHead start="1" level="1" numFormat="DIGIT">^1.</hh:paraHead>'
+    '<hh:paraHead start="1" level="2" numFormat="HANGUL_SYLLABLE">^2.</hh:paraHead>'
+    "</hh:numbering>"
+    '<hh:numbering id="3" start="1"><hh:paraHead start="1" level="1" numFormat="CIRCLED_DIGIT">^1'
+    "</hh:paraHead></hh:numbering></hh:numberings>"
+    '<hh:paraProperties><hh:paraPr id="7"><hh:heading type="NUMBER" idRef="2" level="0"/></hh:paraPr>'
+    '<hh:paraPr id="8"><hh:heading type="NUMBER" idRef="2" level="1"/></hh:paraPr>'
+    '<hh:paraPr id="9"><hh:heading type="OUTLINE" idRef="0" level="0"/></hh:paraPr>'
+    '<hh:paraPr id="10"><hh:heading type="NONE" idRef="0" level="0"/></hh:paraPr>'
+    "</hh:paraProperties></hh:refList></hh:head>"
+)
 
 
 def _ht(t: str) -> str:
@@ -185,8 +203,14 @@ def _hnote(*paras: str) -> str:
     return f"<hp:run><hp:ctrl><hp:endNote><hp:subList>{''.join(paras)}</hp:subList></hp:endNote></hp:ctrl></hp:run>"
 
 
-def make_hwpx(path: Path, *, key_section: bool = False) -> Path:
-    """학원 시험지 모양: 머리 표, "1." 문항 + 미주(답·해설) + 그림 선지, 끝에 답안지 표."""
+def make_hwpx(path: Path, *, key_section: bool = False, auto_number: bool = False) -> Path:
+    """학원 시험지 모양: 머리 표, "1." 문항 + 미주(답·해설) + 그림 선지, 끝에 답안지 표.
+    `auto_number`: 문항 번호를 글로 치지 않고 한글 자동 번호로 (경기형 2회 물리시험지 모양)."""
+    num = "7" if auto_number else None
+
+    def qhead(n: str, text: str) -> str:
+        return text if auto_number else f"{n}. {text}"
+
     pic = '<hp:run><hp:pic><hc:img binaryItemIDRef="image1"/></hp:pic></hp:run>'
     cell = "<hp:tc><hp:subList>{}</hp:subList></hp:tc>"
     table = "<hp:run><hp:tbl><hp:tr>{}</hp:tr></hp:tbl></hp:run>"
@@ -195,13 +219,19 @@ def make_hwpx(path: Path, *, key_section: bool = False) -> Path:
     paras = [
         _hp(table.format(cell.format(_hp(_ht("테스트(10/2주)_전기"))))),
         _hp(
-            _ht("1. 점 A와 B 사이의 합성저항 "),
+            _ht(qhead("1", "점 A와 B 사이의 합성저항 ")),
             _heq("R_AB"),
             _ht("는 얼마인가?"),
             *(() if key_section else (q1_note,)),
+            pr=num,
         ),
         _hp(pic),
-        _hp(_ht("2. 올바른 저항의 연결은? [3점]"), *(() if key_section else (q2_note,))),
+        *((_hp(_ht("병렬 부분만 본다."), pr="8"),) if auto_number else ()),
+        _hp(
+            _ht(qhead("2", "올바른 저항의 연결은? [3점]")),
+            *(() if key_section else (q2_note,)),
+            pr=num,
+        ),
         _hp(_ht("① "), pic, _ht(" ② "), pic),
         _hp(_ht("답안지에 번호를 쓰시오.")),
         _hp(table.format(cell.format(_hp(_ht("답안지(10/2주)_전기"))))),
@@ -225,6 +255,7 @@ def make_hwpx(path: Path, *, key_section: bool = False) -> Path:
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("mimetype", "application/hwp+zip")
         z.writestr("Contents/content.hpf", hpf)
+        z.writestr("Contents/header.xml", HWPX_HEADER)
         z.writestr("Contents/section0.xml", section)
         z.writestr("BinData/image1.bmp", bmp.getvalue())
     return path
@@ -260,6 +291,29 @@ def test_hwpx_endnotes_become_question_keys(tmp_path: Path) -> None:
     assert "답안지(" not in q2.text and "정답" not in q2.text
     assert [(f.id, f.near_choice) for f in q2.figures] == [("F1", 1), ("F2", 2)]
     assert "테스트(10/2주)" not in q1.text
+
+
+def test_hwpx_automatic_numbering_becomes_question_numbers(tmp_path: Path) -> None:
+    """2026-11-06 경기형 2회 물리시험지: 문항 번호가 한글 자동 번호라 문서에 "1."이 없었다."""
+    doc = analyze_document(make_hwpx(tmp_path / "a.hwpx", auto_number=True), tmp_path / "w")
+    q1, q2 = doc.layout.regions
+    assert [q1.label, q2.label] == ["1", "2"]
+    assert q1.text.startswith(r"1. 점 A와 B 사이의 합성저항 \(R_{AB}\)")
+    assert "가. 병렬 부분만 본다." in q1.text, "2단계 번호(가.)는 문항 안"
+    assert q2.text.startswith("2. 올바른 저항의") and q2.points == 3
+    assert sorted(doc.keys) == ["1", "2"]
+
+
+def test_hwpx_numbering_levels_formats_and_outline() -> None:
+    from lxml import etree as et
+
+    from dawoni.ingest.document import _HwpxNumbering  # pyright: ignore[reportPrivateUsage]
+
+    n = _HwpxNumbering(et.fromstring(HWPX_HEADER.encode()))
+    n.outline = "3"  # 구역의 개요 번호 모양 (`hp:secPr outlineShapeIDRef`)
+    got = [n.label(pr, note=False) for pr in ("7", "8", "8", "7", "8", "10", None, "9", "9")]
+    assert got == ["1. ", "가. ", "나. ", "2. ", "가. ", "", "", "① ", "② "]
+    assert n.label("7", note=True) == "1. ", "미주의 번호는 본문과 따로 센다"
 
 
 def test_hwpx_key_section_after_mark(tmp_path: Path) -> None:
@@ -412,36 +466,6 @@ def test_hwp_without_hangul_is_refused(tmp_path: Path, monkeypatch: pytest.Monke
         readable_copy(hwp, tmp_path / "w")
     with pytest.raises(IngestRefused, match="PDF·DOCX·HWPX·HWP"):
         readable_copy(tmp_path / "시험.txt", tmp_path / "w")
-    from dawoni.ingest.workflow import hangul_pdf_copy
-
-    assert hangul_pdf_copy(tmp_path / "시험.hwpx", tmp_path / "w") is None, "한글 없으면 문서로만"
-
-
-def test_stray_pages_drop_answer_sheet_and_endnotes() -> None:
-    """한글로 만든 PDF: 끝 쪽의 답안지·미주 해설은 문항 쪽이 아니다 (문서의 문항 본문과 낱말이
-    거의 안 겹침). 2026-11-06 실측에서 마지막 문항이 이 쪽들을 삼켰다."""
-    from dawoni.ingest.document import DocAnalysis
-    from dawoni.ingest.layout import DocumentLayout, Line, PageInfo, Rect, Region
-    from dawoni.ingest.workflow import stray_pages
-
-    def page(n: int, *texts: str) -> PageInfo:
-        lines = [Line(n, Rect(0, 0, 1, 1), t) for t in texts]
-        return PageInfo(n, 600, 800, [(0, 600)], 0, 800, lines, [], [], [])
-
-    q1 = "1. 그림과 같이 질량 2kg인 물체가 빗면 위에서 미끄러진다 가속도를 구하시오"
-    q2 = "2. 저항 3R 회로에서 점 A와 B 사이의 합성저항은 얼마인가"
-    doc = DocumentLayout(Path("a.hwpx"), [], [Region("1", lines=[Line(1, Rect(0, 0, 1, 1), q1)]),
-                                              Region("2", lines=[Line(1, Rect(0, 0, 1, 1), q2)])], False)  # fmt: skip
-    analysis = DocAnalysis(doc, {})
-    pdf = DocumentLayout(Path("a.pdf"), [
-        page(1, q1), page(2, q2),
-        page(3, "답안지 학교 이름 온라인 수강 학생은 카톡으로 보내세요"),
-        page(4, "1) 가속도는 중력의 빗면 성분을 질량으로 나눈 값이다 따라서 정답은 4.9"),
-        page(5),
-    ], [], False)  # fmt: skip
-    assert stray_pages(pdf, analysis) == [3, 4, 5]
-    only_odd = DocumentLayout(Path("b.pdf"), [page(1, "전혀 다른 글")], [], False)
-    assert stray_pages(only_odd, analysis) == [], "모든 쪽을 빼지는 않는다"
 
 
 # ---------------------------------------------------------------- 수준 프리셋

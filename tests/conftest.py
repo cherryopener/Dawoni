@@ -23,7 +23,7 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _no_real_hangul(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """테스트는 개발 PC의 한글을 띄우지 않는다 — 한글 파일은 '한글 없음'처럼 (HWPX는 문서로 읽기).
+    """테스트는 개발 PC의 한글을 띄우지 않는다 — HWP는 '한글 없음'처럼.
     test_convert는 가짜 COM으로 변환 자체를 시험한다."""
     if request.node.path.name == "test_convert.py":
         return
@@ -32,7 +32,6 @@ def _no_real_hangul(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPa
     def unavailable(src: Path, dest: Path) -> Path:
         raise convert.ConvertUnavailable(f"테스트: 한글 없음. {convert.HWP_HINT}")
 
-    monkeypatch.setattr(convert, "hangul_to_pdf", unavailable)
     monkeypatch.setattr(convert, "hwp_to_hwpx", unavailable)
 
 

@@ -331,9 +331,82 @@ _HWPX_SKIP = {HP + "header", HP + "footer", HP + "linesegarray", HP + "secPr", H
               HP + "autoNum", HP + "newNum", HP + "colPr", HP + "shapeComment"}  # fmt: skip
 
 
+HH = "{http://www.hancom.co.kr/hwpml/2011/head}"
+_HWPX_FORMATS = {
+    "DIGIT": "decimal", "CIRCLED_DIGIT": "decimalEnclosedCircle", "HANGUL_SYLLABLE": "ganada",
+    "CIRCLED_HANGUL_SYLLABLE": "circledGanada", "LATIN_CAPITAL": "upperLetter",
+    "LATIN_SMALL": "lowerLetter", "ROMAN_CAPITAL": "upperRoman", "ROMAN_SMALL": "lowerRoman",
+}  # fmt: skip
+"""한글 문단 번호 형식 → `_format_number`의 이름 (DOCX와 같은 것을 쓴다). 모르는 형식은 숫자로."""
+_CIRCLED_GANADA = "㉮㉯㉰㉱㉲㉳㉴㉵㉶㉷㉸㉹㉺㉻"
+
+
+class _HwpxNumbering:
+    """한글 자동 번호(문단 번호·개요 번호) → "1. " 같은 글.
+
+    문단 모양(`hh:paraPr`)의 `hh:heading`이 번호 모양(`hh:numbering`)과 수준을 가리키고, 번호 글은
+    한글이 그릴 뿐 문서에 없다. 실측(2026-11-06, 경기형 2회 물리시험지): 문항 번호가 모두 자동
+    번호라 "문항 번호를 찾지 못했습니다" — PDF로 넣으면 인쇄된 번호가 있어 읽혔다."""
+
+    def __init__(self, header: _El | None) -> None:
+        self.heads: dict[str, tuple[str, str, int]] = {}
+        """문단 모양 ID → (NUMBER·OUTLINE, 번호 모양 ID, 수준 0부터)."""
+        self.formats: dict[str, dict[int, tuple[int, str, str]]] = {}
+        """번호 모양 ID → 수준(1부터) → (시작 번호, 형식, 글 "^1.")."""
+        self.counts: dict[tuple[bool, str], dict[int, int]] = {}
+        self.outline = "1"
+        """개요 번호의 번호 모양 (구역의 `outlineShapeIDRef`)."""
+        if header is None:
+            return
+        for pp in header.iter(HH + "paraPr"):
+            h = pp.find(HH + "heading")
+            if h is not None and (kind := h.get("type") or "NONE") in ("NUMBER", "OUTLINE"):
+                level = int(h.get("level") or 0)
+                self.heads[pp.get("id") or ""] = (kind, h.get("idRef") or "", level)
+        for nb in header.iter(HH + "numbering"):
+            levels: dict[int, tuple[int, str, str]] = {}
+            for ph in nb.iter(HH + "paraHead"):
+                fmt = _HWPX_FORMATS.get(ph.get("numFormat") or "DIGIT", "decimal")
+                levels[int(ph.get("level") or 1)] = (int(ph.get("start") or 1), fmt, ph.text or "")
+            self.formats[nb.get("id") or ""] = levels
+
+    def section(self, root: _El) -> None:
+        sec = next(root.iter(HP + "secPr"), None)
+        if sec is not None and sec.get("outlineShapeIDRef"):
+            self.outline = sec.get("outlineShapeIDRef") or self.outline
+
+    def label(self, para_pr: str | None, *, note: bool) -> str:
+        """`note`: 미주·각주의 번호는 본문과 따로 센다."""
+        head = self.heads.get(para_pr or "")
+        if head is None:
+            return ""
+        kind, ref, level0 = head
+        nid = self.outline if kind == "OUTLINE" else ref
+        levels = self.formats.get(nid)
+        level = level0 + 1
+        if not levels or level not in levels:
+            return ""
+        counts = self.counts.setdefault((note, nid), {})
+        counts[level] = counts.get(level, levels[level][0] - 1) + 1
+        for deeper in [k for k in counts if k > level]:
+            del counts[deeper]
+
+        def sub(m: re.Match[str]) -> str:
+            k = int(m.group(1))
+            start, fmt, _ = levels.get(k, (1, "decimal", ""))
+            n = counts.get(k, start)
+            if fmt == "circledGanada":
+                return _CIRCLED_GANADA[n - 1] if 0 < n <= len(_CIRCLED_GANADA) else str(n)
+            return _format_number(n, fmt)
+
+        out = re.sub(r"\^(\d)", sub, levels[level][2]).strip()
+        return out + " " if out else ""
+
+
 class _HwpxReader:
     def __init__(self, z: zipfile.ZipFile) -> None:
         self.z = z
+        self.numbering = _HwpxNumbering(_xml(z, "Contents/header.xml"))
         self.bin: dict[str, str] = {}
         hpf = _xml(z, "Contents/content.hpf")
         if hpf is not None:
@@ -351,6 +424,7 @@ class _HwpxReader:
         for name in self.sections():
             root = _xml(self.z, name)
             if root is not None:
+                self.numbering.section(root)
                 self.block(root, note=False)
         return self.out
 
@@ -361,6 +435,7 @@ class _HwpxReader:
 
     def paragraph(self, p: _El, *, note: bool) -> None:
         para = _Para(note)
+        para.text(self.numbering.label(p.get("paraPrIDRef"), note=note))
         after: list[tuple[_El, bool]] = []  # (subList, 미주·각주인가)
         self.inline(p, para, after)
         if (done := para.done()) is not None:

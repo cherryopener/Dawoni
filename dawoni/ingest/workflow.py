@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-import re
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -23,7 +21,6 @@ from dawoni.services import Services
 Progress = Callable[[int, int, str], None]
 
 EXAM_SUFFIXES = (".pdf", ".docx", ".hwpx", ".hwp")
-log = logging.getLogger(__name__)
 
 
 def _noop(done: int, total: int, message: str) -> None:
@@ -71,61 +68,6 @@ def readable_copy(path: Path, work_dir: Path) -> Path:
         return hwp_to_hwpx(path, work_dir / f"{safe_name(path.stem)}.hwpx")
     except ConvertUnavailable as e:
         raise IngestRefused(str(e)) from e
-
-
-HANGUL_SUFFIXES = (".hwp", ".hwpx")
-
-
-def hangul_pdf(path: Path, work_dir: Path) -> Path:
-    """한글 파일을 한글로 PDF로 만들어 둔 자리 (시험 폴더 `ingest/`)."""
-    return work_dir / f"{safe_name(path.stem)}.pdf"
-
-
-def hangul_pdf_copy(path: Path, work_dir: Path) -> Path | None:
-    """`.hwp`·`.hwpx`를 설치된 한글로 PDF로 (한글이 인쇄하는 그대로 — 글꼴·수식이 깨지지 않음).
-    한글로 바꿀 수 없으면 None (문서로만 읽는다)."""
-    from dawoni.ingest.convert import ConvertUnavailable, hangul_to_pdf
-
-    try:
-        return hangul_to_pdf(path, hangul_pdf(path, work_dir))
-    except ConvertUnavailable as e:
-        log.warning("한글로 PDF를 만들지 못해 문서로만 읽습니다: %s", e)
-        return None
-
-
-QUESTION_PAGE_SHARE = 0.6
-"""PDF 한 쪽의 낱말 중 문서의 문항 본문에 있는 몫이 이보다 작으면 문항 쪽이 아니다
-(답안지·미주 해설). 실측(2026-11-06, 학원 시험지 2개): 문항 쪽 0.83~0.95, 답안지 0.05~0.11,
-미주 해설 쪽 0.15~0.40."""
-_WORD = re.compile(r"[가-힣A-Za-z0-9]{2,}")
-
-
-def stray_pages(layout: DocumentLayout, analysis: DocAnalysis) -> list[int]:
-    """한글로 만든 PDF에서 문항이 아닌 쪽 (답안지, 끝에 인쇄된 미주 해설). 문서(HWPX)에서 읽은
-    문항 본문과 낱말이 얼마나 겹치는지로 가른다 — 미주에는 '정답 및 해설' 같은 표시가 없다."""
-    question_words: set[str] = set()
-    for r in analysis.layout.regions:
-        question_words |= set(_WORD.findall(r.text))
-    out: list[int] = []
-    for p in layout.pages:
-        words = set(_WORD.findall(" ".join(ln.text for ln in p.lines)))
-        if not words or len(words & question_words) / len(words) < QUESTION_PAGE_SHARE:
-            out.append(p.number)
-    return out if len(out) < len(layout.pages) else []
-
-
-def _hangul_pdf_layout(pdf: Path, analysis: DocAnalysis) -> DocumentLayout | None:
-    """한글로 만든 PDF의 문항 영역 — 문서에서 찾은 문항 번호와 똑같을 때만 (아니면 문서로 읽기)."""
-    first = analyze(pdf)
-    if first.scanned:
-        return None
-    layout = analyze(pdf, exclude=stray_pages(first, analysis))
-    want = [r.label for r in analysis.layout.regions]
-    got = [r.label for r in layout.regions]
-    if got != want:
-        log.warning("한글로 만든 PDF의 문항 번호 %s ≠ 문서 %s — 문서로 읽습니다", got, want)
-        return None
-    return layout
 
 
 @dataclass
@@ -208,8 +150,7 @@ def ingest_exam(
     """`key_pages`: PDF의 해설지 쪽. None이면 자동으로 찾고("부분 점수" 등), []이면 해설지 없음.
 
     DOCX·HWPX(·HWP)는 쪽이 없다: 미주와 "정답 및 해설" 뒤 문단을 문항별 해설로 읽는다
-    (`key_pages=[]`이면 읽지 않음). HWP·HWPX는 한글이 있으면 문항 영역을 한글로 만든 PDF에서
-    잡는다 (답안지·미주 쪽은 빼고, 문항 번호가 문서와 같을 때만 — `_hangul_pdf_layout`)."""
+    (`key_pages=[]`이면 읽지 않음)."""
     from dawoni.ingest.answer_key import DocKey, KeySource, PdfKey, extract_answer_key
     from dawoni.ingest.exam import extract_exam
 
@@ -230,27 +171,20 @@ def ingest_exam(
             labels = {r.label for r in layout.regions}
             if pieces := _doc_key_pieces_from(analysis, labels):
                 key = DocKey(readable, pieces)
-        # 한글 파일: 문항은 한글로 만든 PDF에서 읽는다 (PDF일 때 더 잘 읽음 — 2026-11-06 강사
-        # 실측). 해설은 위에서 문서의 미주로 찾은 그대로 (PDF에는 미주가 끝 쪽에 표시 없이 찍힘)
-        if path.suffix.lower() in HANGUL_SUFFIXES:
-            progress(0, 3, "한글로 PDF 만들기")
-            pdf = hangul_pdf_copy(path, exam_dir / "ingest")
-            if pdf is not None and (pdf_layout := _hangul_pdf_layout(pdf, analysis)):
-                layout = pdf_layout
-    else:  # PDF (한글 파일이면 한글로 만든 PDF)
+    else:
         if key_pages is None:
-            key_pages = find_key_pages(readable)
+            key_pages = find_key_pages(path)
         progress(0, 3, "레이아웃 분석 (문항 영역·그림)")
-        layout = analyze(readable, exclude=key_pages)
+        layout = analyze(path, exclude=key_pages)
         if layout.scanned:
             from dawoni.ocr.local import INSTALL_HINT, analyze_scanned
 
-            ocr = analyze_scanned(readable, layout, exam_dir / "ingest", exclude=key_pages)
+            ocr = analyze_scanned(path, layout, exam_dir / "ingest", exclude=key_pages)
             if ocr is None:
                 raise IngestRefused(f"글자 정보가 없는 스캔 PDF입니다. {INSTALL_HINT}")
             layout = ocr
         if key_pages:
-            key = PdfKey(readable, key_pages)
+            key = PdfKey(path, key_pages)
     steps = 3 if key else 2
     src = register_source(svc.workspace, path, "exam", title=title)
     progress(1, steps, f"문항 {len(layout.regions)}개 구조화")

@@ -89,7 +89,5 @@ def test_registers_security_module_by_registry_name(
     out = convert.hwp_to_hwpx(tmp_path / "a.hwp", tmp_path / "out" / "a.hwpx")
     assert out.is_file() and tried == ["내모듈"]
     assert Hwp.calls[-1] == ("HWP", "HWPX")
-    pdf = convert.hangul_to_pdf(tmp_path / "b.hwpx", tmp_path / "out" / "b.pdf")
-    assert pdf.is_file() and Hwp.calls[-1] == ("HWPX", "PDF"), "HWPX는 HWPX로 열어 PDF로 저장"
     assert convert.register_security_module(Hwp()) == "내모듈"
     assert convert.KNOWN_MODULES[0] == "FilePathCheckerModuleExample"
