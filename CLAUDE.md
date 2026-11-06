@@ -20,13 +20,30 @@
 
 ## 플랫폼
 
-- **Windows가 주력**(학원 PC, 한글 2024). 맥 설치·호환 확인은 나중에 (README "나중에 할 일").
-- 앱은 한글 없이 python-hwpx로 HWPX를 쓴다. 한글 COM(`pywin32`)은 `experiments/`의 검증에만 쓰며, 파일을
-  열 때 '접근 허용' 창이 뜬다(보안 모듈을 등록한 PC는 안 뜸). PDF 내보내기는 하지 않는다 — 필요한
-  강사가 한글에서 따로 저장한다 (2026-11-05 결정).
+- **강사가 쓰는 곳은 Windows**(학원 PC, 한글 2024). 배포 exe는 GitHub Actions(Windows 서버)가 만든다
+  (`.github/workflows/build-windows.yml`, 태그 `v*` 또는 수동 실행) — 맥에서 태그를 올리면 된다.
+- **개발은 2026-11-06부터 맥으로** (그 전까지 Windows 개발 PC). 맥에서 고치고 테스트하고 푸시한다.
+  Windows에서만 확인할 수 있는 것은 학원 PC·Windows PC에서 새 exe로 본다:
+  - 한글 COM: `.hwp` → HWPX 변환(`ingest/convert.py`, 시험 읽기에서 씀 — 파일을 열 때 '접근 허용' 창이
+    뜰 수 있다, 보안 모듈을 등록한 PC는 안 뜸). 맥에서는 `.hwp`를 못 읽고 `.hwpx`는 한글 없이 읽는다.
+  - Edge `--app` 창, 창을 닫으면 서버가 끝나는지(`server/lifeline.py`), npm `.cmd` 실행 파일(`agents/detect.py`),
+    스마트 앱 컨트롤, `%APPDATA%\Dawoni`, Google Drive for desktop.
+- 앱은 한글 없이 python-hwpx로 HWPX를 쓴다. PDF 내보내기는 하지 않는다 — 필요한 강사가 한글에서 따로
+  저장한다 (2026-11-05 결정). 시험 읽기는 HWP·HWPX를 문서로 읽는다 — 한글로 PDF를 만들어 읽는 것은 해 보고
+  되돌렸다 (2026-11-06, PLAN §16 18번).
 - Windows 개발 PC는 스마트 앱 컨트롤이 켜져 있어 서명 없는 exe(uv 진입점 등)가 막힌다 →
-  `uv run python -m pytest`, `uv run python -m pyright`처럼 `python -m`으로 부른다.
+  `uv run python -m pytest`, `uv run python -m pyright`처럼 `python -m`으로 부른다 (맥에서도 같은 명령이 된다).
 - Windows Git Bash의 heredoc은 `\\`를 `\`로 줄인다 — 정규식·LaTeX가 든 편집은 파일 편집 도구로.
+
+## 맥으로 옮길 때 (PC를 바꿀 때)
+
+1. `git pull` → `uv sync` → `npm --prefix frontend install` → `npm --prefix frontend run build`(→ `dawoni/web/`,
+   git 제외라 PC마다 만든다).
+2. **`real_data/`는 git에 없다** — 손으로 복사한다 (옛 다워니 실측 시험·답안, `real_data/docs/` 학원 시험지 원본:
+   HWP·HWPX·PDF·DOCX, `경기형 2회 물리시험지.hwp`는 한글 자동 번호 시험지). 없으면 실제 자료 테스트만 건너뛴다.
+3. 확인 명령(아래)이 모두 통과해야 한다. Windows에만 있는 것을 시험하는 테스트는 맥에서 건너뛴다
+   (`test_npm_cmd_shim_is_unwrapped_to_the_real_exe`).
+4. Claude 메모리는 PC마다 따로다 — 남길 결정은 이 파일에 적는다.
 
 ## 확인 명령
 

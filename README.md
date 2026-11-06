@@ -15,12 +15,13 @@ uv run ruff check .
 uv run pyright
 ```
 
-- **Windows가 주력**이다 (학원 PC). 개발·확인은 Windows에서 먼저 하고, macOS 설치·호환성은 나중에 한다
-  (아래 "나중에 할 일").
+- **강사가 쓰는 곳은 Windows**(학원 PC)이고, 배포 exe는 GitHub Actions가 Windows에서 만든다. 개발은
+  2026-11-06부터 맥에서 한다 — 맥으로 옮길 때·Windows에서만 확인할 것은 [CLAUDE.md](CLAUDE.md).
 - Python 3.13 (`.python-version`). 옛 다워니(3.15)에서 낮췄다 — PLAN.md §12
 - 실제 AI CLI를 호출하는 테스트는 기본 제외: `uv run pytest -m agent`
 - 실제 자료 회귀 테스트는 `real_data/`(git 제외, 옛 다워니 실측 시험·답안)가 있을 때만 돈다.
-  `real_data/docs/`에는 학원 시험지 원본(HWP 3개를 한글로 HWPX·PDF로 저장한 것, DOCX 1개)을 둔다.
+  `real_data/docs/`에는 학원 시험지 원본(HWP 3개를 한글로 HWPX·PDF로 저장한 것, DOCX 1개, 문항 번호가 한글
+  자동 번호인 `경기형 2회 물리시험지.hwp`)을 둔다. PC를 옮길 때 손으로 복사한다.
 - Windows에서 한글·Word COM을 쓰는 기능(선택): `uv sync --extra windows`
   (그 뒤 `uv run`은 `uv run --extra windows`로 — 그냥 `uv run`은 pywin32를 지운다)
 - 화면(`frontend/`, M7): `npm --prefix frontend install`, `npm --prefix frontend run build`(→ `dawoni/web/`)
@@ -424,5 +425,6 @@ uv run python experiments/m5_calibrate.py after --model claude-sonnet-5-5 --labe
 
 ## 나중에 할 일
 
-- macOS 설치·호환성 확인 (M0에서 미룸): 모든 의존성이 소스 빌드 없이 설치되는지, pywebview 창, 한글 없는
-  PC에서 HWPX 만들기·읽기. Windows를 먼저 끝낸 뒤 M8 패키징 전에 한다.
+- macOS 설치·호환성 확인 (M0에서 미룸, 개발을 맥으로 옮기며 이제 할 차례): 모든 의존성이 소스 빌드 없이
+  설치되는지, pywebview 창, 한글 없는 PC에서 HWPX 만들기·읽기. 2026-11-06 맥에서 `pytest`는 npm `.cmd` 테스트
+  하나만 실패 → Windows에서만 돌게 했다.

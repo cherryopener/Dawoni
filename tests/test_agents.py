@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -327,6 +328,9 @@ def test_claude_command_isolation_and_schema_size(tmp_path: Path) -> None:
     assert ClaudeAdapter().build(Path("claude.exe"), "p", schema=mid_schema, **kw).schema_enforced  # type: ignore[arg-type]
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="npm .cmd 실행 파일은 Windows에만 있다 (경로가 역슬래시)"
+)
 def test_npm_cmd_shim_is_unwrapped_to_the_real_exe(tmp_path: Path) -> None:
     from dawoni.agents.detect import unwrap_cmd_shim
 
