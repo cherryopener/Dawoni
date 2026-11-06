@@ -40,6 +40,8 @@ class ConvertUnavailable(RuntimeError):
 def security_modules() -> list[str]:
     """강사가 등록한 한글 자동화 보안 모듈의 이름 (레지스트리 값 이름) + 알려진 이름."""
     names: list[str] = []
+    if sys.platform != "win32":  # 맥: winreg 없음 (pyright도 이 분기로 winreg를 건너뛴다)
+        return list(KNOWN_MODULES)
     try:
         import winreg
 

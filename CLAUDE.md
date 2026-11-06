@@ -31,6 +31,8 @@
 - 앱은 한글 없이 python-hwpx로 HWPX를 쓴다. PDF 내보내기는 하지 않는다 — 필요한 강사가 한글에서 따로
   저장한다 (2026-11-05 결정). 시험 읽기는 HWP·HWPX를 문서로 읽는다 — 한글로 PDF를 만들어 읽는 것은 해 보고
   되돌렸다 (2026-11-06, PLAN §16 18번).
+- **macOS 묶음은 서명·공증하지 않는다** (2026-11-06, 학원 안 소수 강사용). 맥 묶음도 GitHub Actions에서 만든다.
+  강사에게는 처음 열 때 우클릭 → 열기(또는 `xattr -dr com.apple.quarantine`)를 안내한다.
 - Windows 개발 PC는 스마트 앱 컨트롤이 켜져 있어 서명 없는 exe(uv 진입점 등)가 막힌다 →
   `uv run python -m pytest`, `uv run python -m pyright`처럼 `python -m`으로 부른다 (맥에서도 같은 명령이 된다).
 - Windows Git Bash의 heredoc은 `\\`를 `\`로 줄인다 — 정규식·LaTeX가 든 편집은 파일 편집 도구로.
