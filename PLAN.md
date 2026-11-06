@@ -805,7 +805,7 @@ strong = argon-low (flash와 argon은 구독 한도가 따로라 나눠 쓴다).
    (`AppState.who`, 화면의 이름 칸은 배포본에서 읽기 전용). 배포 묶음은 PyInstaller가 아니라 서명된 python.org
    파이썬 + `Dawoni.exe`(서명된 pythonw.exe 사본) — 스마트 앱 컨트롤 실측 때문. `packaging/build_bundle.py`,
    `.github/workflows/build-windows.yml`. 남은 것: 사용자가 Gist 명단·Google OAuth 클라이언트·비밀값
-   `DAWONI_ACCESS_JSON`을 준비(§3·§4) → 워크플로 수동 실행 → 태그 v0.8.0 → 다른 PC에서 zip 풀고 더블클릭·로그인.
+   `DAWONI_ACCESS_JSON`을 준비(§3·§4) → 워크플로 수동 실행 → 태그 v0.1.0(첫 릴리스는 0.1.0부터 — 2026-11-07 사용자 결정) → 다른 PC에서 zip 풀고 더블클릭·로그인.
 14. 마무리 점검 (2026-11-05, Windows) — 표지 회전 오류(M5·M6·M7에서 남김)는 `batch.settle_rotations`로 고침
    (README "M3에서 놓친 것": 실측 표지에 다시 돌려 3명 모두 90°). 내보내기 배치를 바꿈: 시험 폴더 맨 위에 반별
    묶음 `반_문항.hwpx`·점수표, 학생 파일은 반 폴더 안 — 예전 배치는 다음 내보내기 때 옮긴다. M5 작업공간 사본으로
@@ -888,4 +888,6 @@ strong = argon-low (flash와 argon은 구독 한도가 따로라 나눠 쓴다).
      GitHub에서 만든 첫 앱은 로그인이 `CERTIFICATE_VERIFY_FAILED`: 러너의 python.org 파이썬(Python.framework)을 묶어
      인증서를 그 폴더에서 찾았다 → 맥 작업은 uv가 받은 파이썬만(`UV_PYTHON_PREFERENCE=only-managed`, macOS
      `/etc/ssl/cert.pem`을 씀), `build_mac.py`가 묶기 전에 인증서 자리를 확인한다.
-   남은 것: 받은 맥 zip을 Finder에서 열어 보기(격리 표시·[그래도 열기]·로그인), 맥 설치·호환 확인, M8 릴리스(태그), 배포용 문서 안내, 객관식 복수 정답 화면.
+     다시 만든 앱으로 맥에서 로그아웃·로그인이 됨 (2026-11-07 사용자 확인).
+   - **첫 릴리스는 0.1.0** (사용자 결정): pyproject 버전 0.8.0 → 0.1.0. 태그 `v0.1.0`이 Windows·맥 zip을 Release에 붙인다.
+   남은 것: 맥 설치·호환 확인, M8 릴리스(태그), 배포용 문서 안내, 객관식 복수 정답 화면.

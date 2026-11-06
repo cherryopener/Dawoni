@@ -1,6 +1,6 @@
 [project]
 name = "dawoni"
-version = "0.8.0"
+version = "0.1.0"
 description = "다워니 — 구독 중인 AI CLI를 일꾼으로 부려, 해설지 기준으로 손글씨 서술형 답안을 토큰 적게·일관되게 채점하는 학원 강사용 도구"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"

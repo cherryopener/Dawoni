@@ -374,7 +374,7 @@ uv run python packaging/build_bundle.py --access access.json   # 없으면 로�
 ```
 
 → `dist/Dawoni/`(약 300 MB)와 `dist/Dawoni-<버전>-windows.zip`(약 110 MB). 강사는 zip을 풀고 `Dawoni.exe`를
-두 번 누른다. 배포는 태그로: `git tag v0.8.0 && git push origin v0.8.0` → Actions `build`가 Windows·맥에서 각각 시험·화면
+두 번 누른다. 배포는 태그로: `git tag v0.1.0 && git push origin v0.1.0` → Actions `build`가 Windows·맥에서 각각 시험·화면
 빌드·묶음·켜 보기 뒤 Release에 zip 두 개를 붙인다 (비밀값 `DAWONI_ACCESS_JSON` 필요).
 
 실측 (개발 PC, 스마트 앱 컨트롤 켜짐):

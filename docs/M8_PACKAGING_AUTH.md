@@ -27,7 +27,7 @@
   - 워크플로 `.github/workflows/build.yml`(처음 이름 build-windows.yml, 2026-11-07 맥 작업을 더하며 바꿈) Windows 작업: 태그 = pyproject 버전 확인 → `pytest` → 화면 시험·빌드 →
     묶음(태그면 로그인 설정 필수) → 묶음의 python.exe로 import·화면·토큰 없는 API 거부·Dawoni.exe 서명 확인 →
     artifact, 태그면 Release. 아직 GitHub에서 돌려 보지 않음.
-  - 버전 0.8.0. Dawoni.exe 아이콘은 파이썬 아이콘이다 (아이콘을 바꾸면 서명이 깨진다).
+  - 버전 0.1.0 (첫 릴리스, 2026-11-07 사용자 결정 — 개발 중엔 0.8.0이었다). Dawoni.exe 아이콘은 파이썬 아이콘이다 (아이콘을 바꾸면 서명이 깨진다).
 - 서명 인증서를 사면(§8) PyInstaller exe로 돌아갈 수 있지만, 지금 방식은 돈이 들지 않고 이미 통과한다.
 
 ## 0. 결정 사항 (사용자 지시)
@@ -158,8 +158,8 @@ jobs:
 
 ### 5-4. 릴리스 절차
 ```bash
-git tag v0.8.0
-git push origin v0.8.0
+git tag v0.1.0
+git push origin v0.1.0
 ```
 → Actions가 빌드 → Release에 zip. 수동 실행은 Actions 탭 → build → Run workflow(artifact로만 받음).
 
