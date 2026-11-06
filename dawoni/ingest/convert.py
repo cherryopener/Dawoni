@@ -1,7 +1,8 @@
 """PC에 이미 설치된 한글로 파일 형식 바꾸기 (PLAN.md §3 — 변환 프로그램을 싣지 않는다).
 
-학원 시험지는 대부분 `.hwp`(한글 바이너리)다. HWPX(zip + XML)만 직접 읽으므로, 한글이 설치된
-Windows PC에서는 한글(COM)로 HWPX로 저장해 읽는다. 한글이 없으면 강사에게 HWPX로 저장해 달라고 한다.
+학원 시험지는 대부분 `.hwp`(한글 바이너리)다. 한글이 설치된 Windows PC에서는 `.hwp`·`.hwpx`를
+한글(COM)로 PDF로 저장해 PDF처럼 읽는다 (PDF일 때 더 잘 읽음 — `hangul_to_pdf`). 한글이 없으면
+`.hwpx`는 직접 읽고(zip + XML), `.hwp`는 강사에게 HWPX나 PDF로 저장해 달라고 한다.
 
 - 한글은 파일을 열 때 '접근 허용' 창을 띄울 수 있다. 자동화 보안 모듈이 등록된 PC면 뜨지 않는다.
   `RegisterModule`에 주는 이름은 강사가 레지스트리(HKCU 아래 `MODULES_KEY`)에
@@ -19,6 +20,7 @@ import contextlib
 import importlib
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +81,18 @@ def _dispatch_error(e: Exception) -> ConvertUnavailable:
 
 def hwp_to_hwpx(src: Path, dest: Path) -> Path:
     """`.hwp` → `.hwpx` (한글 COM). 실패하면 `ConvertUnavailable` (안내 문구 포함)."""
+    return _hangul_save_as(src, dest, "HWPX")
+
+
+def hangul_to_pdf(src: Path, dest: Path) -> Path:
+    """`.hwp`·`.hwpx` → PDF (한글 COM — 한글이 인쇄하는 그대로라 글꼴·수식이 깨지지 않는다).
+
+    시험 읽기는 PDF일 때 더 잘 된다 (2026-11-06 강사 실측: 같은 시험지를 HWP로 넣은 것보다 한글에서
+    PDF로 저장해 넣은 것이 문항·수식을 더 잘 읽음) — 그래서 한글이 있으면 PDF로 바꿔 읽는다."""
+    return _hangul_save_as(src, dest, "PDF")
+
+
+def _hangul_save_as(src: Path, dest: Path, fmt: str) -> Path:
     if sys.platform != "win32":
         raise ConvertUnavailable(f"HWP 파일은 Windows 한글로만 바꿀 수 있습니다. {HWP_HINT}")
     try:  # pywin32는 `--extra windows`에만 있다
@@ -90,23 +104,45 @@ def hwp_to_hwpx(src: Path, dest: Path) -> Path:
     with _lock:
         pythoncom.CoInitialize()
         try:
-            try:
-                hwp: Any = client.DispatchEx("HWPFrame.HwpObject")
-            except Exception as e:
-                raise _dispatch_error(e) from e
-            try:
-                register_security_module(hwp)
-                hwp.XHwpWindows.Item(0).Visible = True
-                if not hwp.Open(str(src.resolve()), "HWP", "forceopen:true"):
-                    raise ConvertUnavailable(f"한글이 {src.name}을 열지 못했습니다. {HWP_HINT}")
-                hwp.SaveAs(str(dest.resolve()), "HWPX", "")
-            finally:
-                with contextlib.suppress(Exception):
-                    hwp.Clear(1)
-                with contextlib.suppress(Exception):
-                    hwp.Quit()
+            for attempt in range(1, ATTEMPTS + 1):
+                try:
+                    _save_once(client, src, dest, fmt)
+                    break
+                except ConvertUnavailable:
+                    raise
+                except Exception as e:
+                    # 실측(2026-11-06): 바로 앞 변환의 한글이 아직 꺼지는 중이면 거기에 붙어
+                    # "The server threw an exception"(RPC_E_SERVERFAULT) — 잠시 뒤 새 한글로 다시
+                    if attempt == ATTEMPTS:
+                        raise ConvertUnavailable(
+                            f"한글로 바꾸다 오류가 났습니다 ({e}). {HWP_HINT}"
+                        ) from e
+                    time.sleep(RETRY_WAIT_S * attempt)
         finally:
             pythoncom.CoUninitialize()
     if not dest.is_file():
-        raise ConvertUnavailable(f"한글이 HWPX로 저장하지 못했습니다. {HWP_HINT}")
+        raise ConvertUnavailable(f"한글이 {fmt}로 저장하지 못했습니다. {HWP_HINT}")
     return dest
+
+
+ATTEMPTS = 3
+RETRY_WAIT_S = 1.5
+
+
+def _save_once(client: Any, src: Path, dest: Path, fmt: str) -> None:
+    try:
+        hwp: Any = client.DispatchEx("HWPFrame.HwpObject")
+    except Exception as e:
+        raise _dispatch_error(e) from e
+    try:
+        register_security_module(hwp)
+        hwp.XHwpWindows.Item(0).Visible = True
+        kind = "HWPX" if src.suffix.lower() == ".hwpx" else "HWP"
+        if not hwp.Open(str(src.resolve()), kind, "forceopen:true"):
+            raise ConvertUnavailable(f"한글이 {src.name}을 열지 못했습니다. {HWP_HINT}")
+        hwp.SaveAs(str(dest.resolve()), fmt, "")
+    finally:
+        with contextlib.suppress(Exception):
+            hwp.Clear(1)
+        with contextlib.suppress(Exception):
+            hwp.Quit()

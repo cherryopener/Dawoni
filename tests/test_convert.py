@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 import types
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -64,10 +64,15 @@ def test_registers_security_module_by_registry_name(
             tried.append(name)
             return name == "내모듈"
 
-        def Open(self, *_: object) -> bool:
+        calls: ClassVar[list[tuple[str, str]]] = []
+        opened = ""
+
+        def Open(self, _path: str, kind: str, *_: object) -> bool:
+            self.opened = kind
             return True
 
-        def SaveAs(self, path: str, *_: object) -> None:
+        def SaveAs(self, path: str, fmt: str, *_: object) -> None:
+            Hwp.calls.append((self.opened, fmt))
             Path(path).write_bytes(b"PK")
 
         def Clear(self, _: int) -> None:
@@ -83,5 +88,8 @@ def test_registers_security_module_by_registry_name(
     monkeypatch.setattr(convert, "security_modules", lambda: ["내모듈", *convert.KNOWN_MODULES])
     out = convert.hwp_to_hwpx(tmp_path / "a.hwp", tmp_path / "out" / "a.hwpx")
     assert out.is_file() and tried == ["내모듈"]
+    assert Hwp.calls[-1] == ("HWP", "HWPX")
+    pdf = convert.hangul_to_pdf(tmp_path / "b.hwpx", tmp_path / "out" / "b.pdf")
+    assert pdf.is_file() and Hwp.calls[-1] == ("HWPX", "PDF"), "HWPX는 HWPX로 열어 PDF로 저장"
     assert convert.register_security_module(Hwp()) == "내모듈"
     assert convert.KNOWN_MODULES[0] == "FilePathCheckerModuleExample"

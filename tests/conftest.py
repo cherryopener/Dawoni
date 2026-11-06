@@ -22,6 +22,21 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _no_real_hangul(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """테스트는 개발 PC의 한글을 띄우지 않는다 — 한글 파일은 '한글 없음'처럼 (HWPX는 문서로 읽기).
+    test_convert는 가짜 COM으로 변환 자체를 시험한다."""
+    if request.node.path.name == "test_convert.py":
+        return
+    from dawoni.ingest import convert
+
+    def unavailable(src: Path, dest: Path) -> Path:
+        raise convert.ConvertUnavailable(f"테스트: 한글 없음. {convert.HWP_HINT}")
+
+    monkeypatch.setattr(convert, "hangul_to_pdf", unavailable)
+    monkeypatch.setattr(convert, "hwp_to_hwpx", unavailable)
+
+
+@pytest.fixture(autouse=True)
 def _sequential_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """가짜 CLI(script)는 호출 순서대로 답하므로 테스트의 기본 설정은 학생·채점을 차례로 부른다.
     동시 실행을 시험하는 테스트는 설정에 수를 직접 넣는다. 기본 AI도 가짜 CLI를 두는 agy로."""

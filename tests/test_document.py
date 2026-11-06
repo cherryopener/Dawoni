@@ -412,6 +412,36 @@ def test_hwp_without_hangul_is_refused(tmp_path: Path, monkeypatch: pytest.Monke
         readable_copy(hwp, tmp_path / "w")
     with pytest.raises(IngestRefused, match="PDF·DOCX·HWPX·HWP"):
         readable_copy(tmp_path / "시험.txt", tmp_path / "w")
+    from dawoni.ingest.workflow import hangul_pdf_copy
+
+    assert hangul_pdf_copy(tmp_path / "시험.hwpx", tmp_path / "w") is None, "한글 없으면 문서로만"
+
+
+def test_stray_pages_drop_answer_sheet_and_endnotes() -> None:
+    """한글로 만든 PDF: 끝 쪽의 답안지·미주 해설은 문항 쪽이 아니다 (문서의 문항 본문과 낱말이
+    거의 안 겹침). 2026-11-06 실측에서 마지막 문항이 이 쪽들을 삼켰다."""
+    from dawoni.ingest.document import DocAnalysis
+    from dawoni.ingest.layout import DocumentLayout, Line, PageInfo, Rect, Region
+    from dawoni.ingest.workflow import stray_pages
+
+    def page(n: int, *texts: str) -> PageInfo:
+        lines = [Line(n, Rect(0, 0, 1, 1), t) for t in texts]
+        return PageInfo(n, 600, 800, [(0, 600)], 0, 800, lines, [], [], [])
+
+    q1 = "1. 그림과 같이 질량 2kg인 물체가 빗면 위에서 미끄러진다 가속도를 구하시오"
+    q2 = "2. 저항 3R 회로에서 점 A와 B 사이의 합성저항은 얼마인가"
+    doc = DocumentLayout(Path("a.hwpx"), [], [Region("1", lines=[Line(1, Rect(0, 0, 1, 1), q1)]),
+                                              Region("2", lines=[Line(1, Rect(0, 0, 1, 1), q2)])], False)  # fmt: skip
+    analysis = DocAnalysis(doc, {})
+    pdf = DocumentLayout(Path("a.pdf"), [
+        page(1, q1), page(2, q2),
+        page(3, "답안지 학교 이름 온라인 수강 학생은 카톡으로 보내세요"),
+        page(4, "1) 가속도는 중력의 빗면 성분을 질량으로 나눈 값이다 따라서 정답은 4.9"),
+        page(5),
+    ], [], False)  # fmt: skip
+    assert stray_pages(pdf, analysis) == [3, 4, 5]
+    only_odd = DocumentLayout(Path("b.pdf"), [page(1, "전혀 다른 글")], [], False)
+    assert stray_pages(only_odd, analysis) == [], "모든 쪽을 빼지는 않는다"
 
 
 # ---------------------------------------------------------------- 수준 프리셋
