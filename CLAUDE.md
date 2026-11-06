@@ -20,8 +20,9 @@
 
 ## 플랫폼
 
-- **강사가 쓰는 곳은 Windows**(학원 PC, 한글 2024). 배포 exe는 GitHub Actions(Windows 서버)가 만든다
-  (`.github/workflows/build-windows.yml`, 태그 `v*` 또는 수동 실행) — 맥에서 태그를 올리면 된다.
+- **강사가 쓰는 곳은 Windows**(학원 PC, 한글 2024). 배포 묶음은 GitHub Actions가 Windows zip과 맥 `Dawoni.app`
+  zip을 함께 만든다 (`.github/workflows/build.yml`, 태그 `v*` 또는 수동 실행) — 맥에서 태그를 올리면 된다.
+  맥 묶음은 `packaging/build_mac.py`(PyInstaller, Apple 실리콘만), 로컬에서도 `uv sync --group bundle-mac` 뒤 그대로 돈다.
 - **개발은 2026-11-06부터 맥으로** (그 전까지 Windows 개발 PC). 맥에서 고치고 테스트하고 푸시한다.
   Windows에서만 확인할 수 있는 것은 학원 PC·Windows PC에서 새 exe로 본다:
   - 한글 COM: `.hwp` → HWPX 변환(`ingest/convert.py`, 시험 읽기에서 씀 — 파일을 열 때 '접근 허용' 창이
@@ -31,8 +32,8 @@
 - 앱은 한글 없이 python-hwpx로 HWPX를 쓴다. PDF 내보내기는 하지 않는다 — 필요한 강사가 한글에서 따로
   저장한다 (2026-11-05 결정). 시험 읽기는 HWP·HWPX를 문서로 읽는다 — 한글로 PDF를 만들어 읽는 것은 해 보고
   되돌렸다 (2026-11-06, PLAN §16 18번).
-- **macOS 묶음은 서명·공증하지 않는다** (2026-11-06, 학원 안 소수 강사용). 맥 묶음도 GitHub Actions에서 만든다.
-  강사에게는 처음 열 때 우클릭 → 열기(또는 `xattr -dr com.apple.quarantine`)를 안내한다.
+- **macOS 묶음은 서명·공증하지 않는다** (2026-11-06, 학원 안 소수 강사용). 처음 열 때 시스템 설정 → 개인정보
+  보호 및 보안 → [그래도 열기] (또는 `xattr -dr com.apple.quarantine`) — 묶음의 '읽어 주세요.txt'에 적었다.
 - Windows 개발 PC는 스마트 앱 컨트롤이 켜져 있어 서명 없는 exe(uv 진입점 등)가 막힌다 →
   `uv run python -m pytest`, `uv run python -m pyright`처럼 `python -m`으로 부른다 (맥에서도 같은 명령이 된다).
 - Windows Git Bash의 heredoc은 `\\`를 `\`로 줄인다 — 정규식·LaTeX가 든 편집은 파일 편집 도구로.

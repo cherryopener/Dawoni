@@ -24,7 +24,7 @@
   - 창 없는 실행에는 stdout이 없어 uvicorn이 죽었다 → `python -m dawoni`가 stdout·stderr를
     `%APPDATA%\Dawoni\logs\app.log`로 돌리고, 인자가 없으면 `ui`. AI CLI·taskkill은 `CREATE_NO_WINDOW`
     (안 그러면 호출마다 검은 창).
-  - 워크플로 `.github/workflows/build-windows.yml`: 태그 = pyproject 버전 확인 → `pytest` → 화면 시험·빌드 →
+  - 워크플로 `.github/workflows/build.yml`(처음 이름 build-windows.yml, 2026-11-07 맥 작업을 더하며 바꿈) Windows 작업: 태그 = pyproject 버전 확인 → `pytest` → 화면 시험·빌드 →
     묶음(태그면 로그인 설정 필수) → 묶음의 python.exe로 import·화면·토큰 없는 API 거부·Dawoni.exe 서명 확인 →
     artifact, 태그면 Release. 아직 GitHub에서 돌려 보지 않음.
   - 버전 0.8.0. Dawoni.exe 아이콘은 파이썬 아이콘이다 (아이콘을 바꾸면 서명이 깨진다).
@@ -161,7 +161,7 @@ jobs:
 git tag v0.8.0
 git push origin v0.8.0
 ```
-→ Actions가 빌드 → Release에 zip. 수동 실행은 Actions 탭 → build-windows → Run workflow(artifact로만 받음).
+→ Actions가 빌드 → Release에 zip. 수동 실행은 Actions 탭 → build → Run workflow(artifact로만 받음).
 
 ## 6. 완료 기준 (PLAN M8)
 - [ ] 깨끗한 Windows PC(파이썬·node 없음)에서 zip 풀고 더블클릭 → 바깥 브라우저 Google 로그인 → 명단에 있으면 앱이 열림.
@@ -169,7 +169,7 @@ git push origin v0.8.0
 - [ ] 화면 어디에도 강사 이름 입력칸 없음, 승인·확정 기록의 `by` = 명단 이름.
 - [ ] gist에서 이름 바꾸고 앱 다시 켜면 새 이름.
 - [ ] 인터넷 끊고 켜도 `offline_days` 안이면 열림.
-- [ ] macOS .app: 서명·공증 없이 GitHub Actions에서 만든다 (2026-11-06 결정, 학원 안 소수 강사용).
+- [ ] macOS .app: 서명·공증 없이 GitHub Actions에서 만든다 (2026-11-06 결정, 학원 안 소수 강사용) — `packaging/build_mac.py`, 워크플로 `macos` 작업. 받은 zip을 다른 맥에서 풀고 [그래도 열기]로 켜 보기.
 
 ## 8. 코드 서명 (하지 않음 — 기록만)
 

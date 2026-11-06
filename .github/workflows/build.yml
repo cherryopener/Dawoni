@@ -1,11 +1,11 @@
-# Windows 배포 묶음 (docs/M8_PACKAGING_AUTH.md §5)
+# Windows·맥 배포 묶음 (docs/M8_PACKAGING_AUTH.md §5)
 #
-# - 태그 v*를 올리면: 시험 → 화면 빌드 → 묶음 → 묶음을 켜 보기 → Release에 zip
-# - Actions 탭 → build-windows → Run workflow: 같은 과정, Release 없이 artifact로만
+# - 태그 v*를 올리면: OS마다 시험 → 화면 빌드 → 묶음 → 묶음을 켜 보기 → 둘 다 되면 Release에 zip 두 개
+# - Actions 탭 → build → Run workflow: 같은 과정, Release 없이 artifact로만
 #
 # 비밀값 DAWONI_ACCESS_JSON(access.json 내용 전체)이 로그인 설정이 된다. 태그 빌드는 이 값이
 # 없으면 멈춘다 (로그인 없는 묶음이 퍼지지 않게). 값은 로그에 찍지 않는다.
-name: build-windows
+name: build
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     timeout-minutes: 40
     env:
@@ -97,17 +97,71 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # 맥: PyInstaller로 Dawoni.app (packaging/build_mac.py). 서명·공증 없음 (2026-11-06 결정).
+  # macos-latest = Apple 실리콘 → 인텔 맥에서는 돌지 않는다.
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    env:
+      UV_PYTHON: "3.13"
+      UV_FROZEN: "1"
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v10.3.3
+
+      - name: 태그와 pyproject 버전이 같은지
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          test "v$v" = "${{ github.ref_name }}" || { echo "태그 ${{ github.ref_name }} ≠ pyproject 버전 $v"; exit 1; }
+
+      - run: uv sync --group bundle-mac
+
+      - name: 시험
+        run: uv run pytest -q -x
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 화면 빌드 (→ dawoni/web/)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: 묶음 만들기 + 켜 보기
+        env:
+          DAWONI_ACCESS_JSON: ${{ secrets.DAWONI_ACCESS_JSON }}
+        run: |
+          opts=()
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then opts+=(--require-access); fi
+          uv run python packaging/build_mac.py "${opts[@]}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Dawoni-macos
+          path: dist/Dawoni-*-macos.zip
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [windows, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: Dawoni-windows
+          pattern: Dawoni-*
+          merge-multiple: true
       - name: Release에 zip 붙이기
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" Dawoni-*-windows.zip --repo "${{ github.repository }}" --title "다워니 ${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" Dawoni-*-windows.zip Dawoni-*-macos.zip --repo "${{ github.repository }}" --title "다워니 ${{ github.ref_name }}" --generate-notes

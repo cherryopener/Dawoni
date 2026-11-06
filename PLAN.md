@@ -881,4 +881,8 @@ strong = argon-low (flash와 argon은 구독 한도가 따로라 나눠 쓴다).
      좁다. 사용자 Google Drive의 Windows 한글 2024 시험지 식 129개(HYhwpEQ)와 비교해 폭 × 1.1 + 글자 크기 × 0.1로
      넓힘 (`export.hwpx.equation_size`): 0.18mm 넘게 좁은 식 61 → 4개, 식 뒤 빈칸 보통 0.6mm. 학원 PC 한글에서
      견본(`scratch/식겹침_견본.hwpx`, git 제외)을 열어 **겹치는 것 없음** (2026-11-07 사용자 확인).
-   남은 것: 맥 묶음 워크플로, 맥 설치·호환 확인, M8 릴리스(태그), 배포용 문서 안내, 객관식 복수 정답 화면.
+   - **맥 묶음** (2026-11-07): `packaging/build_mac.py` + `dawoni_mac.spec` — PyInstaller로 `Dawoni.app`(pywebview 창,
+     Apple 실리콘, 서명 없이 ad-hoc). 로그인 설정·표식은 빌드 때 임시 폴더에서만 넣는다(개발 PC의 access.json이 섞이지
+     않게). 켜 보기(버전·화면·토큰 없는 API 거부) 뒤 `ditto`로 zip. 워크플로는 `build.yml` 하나에 windows·macos 작업,
+     둘 다 되면 Release에 zip 두 개. 이 맥에서 만든 앱: 140 MB(zip 73 MB), 창 모드로도 켜짐.
+   남은 것: 받은 맥 zip을 Finder에서 열어 보기(격리 표시·[그래도 열기]·로그인), 맥 설치·호환 확인, M8 릴리스(태그), 배포용 문서 안내, 객관식 복수 정답 화면.

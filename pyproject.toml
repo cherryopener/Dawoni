@@ -45,6 +45,10 @@ dev = [
     "types-lxml>=2026.2.16",
     "httpx2>=2.16.0",
 ]
+# 맥 배포 묶음(Dawoni.app)을 만들 때만: uv sync --group bundle-mac (packaging/build_mac.py)
+bundle-mac = [
+    "pyinstaller>=6.22.3",
+]
 
 [build-system]
 requires = ["hatchling>=1.27"]
