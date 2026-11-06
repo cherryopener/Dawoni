@@ -11,6 +11,7 @@ from dawoni.access import Access, load_access_config
 from dawoni.config import AppConfig, load_config, save_config
 from dawoni.paths import AppPaths
 from dawoni.server.jobs import JobManager
+from dawoni.server.lifeline import Lifeline
 from dawoni.services import Services, open_services
 from dawoni.sharing import machine_id
 from dawoni.workspace import WorkspaceError
@@ -33,6 +34,8 @@ class AppState:
     """이 PC의 ID (공유 폴더의 '사용 중' 표식 이름)."""
     access: Access | None = None
     """정해진 사람만 쓰게 하기 (Google 로그인 + 허용 명단). 설정 파일이 없으면 검사하지 않음."""
+    lifeline: Lifeline = field(default_factory=Lifeline)
+    """화면 창이 살아 있는지 (닫히면 `dawoni ui`가 서버를 끝낸다)."""
     _services: Services | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 

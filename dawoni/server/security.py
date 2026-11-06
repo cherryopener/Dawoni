@@ -4,7 +4,8 @@
 - Host 헤더는 127.0.0.1 / localhost 만
 - `/api`는 실행할 때마다 새로 만드는 토큰이 필요: 첫 화면 주소(`/login?t=…`)로 받은 토큰을
   `SameSite=Strict` 쿠키로 저장 → 다른 사이트에서 보낸 요청에는 쿠키가 실리지 않는다.
-- 허용된 사람만 (dawoni/access.py): 로그인 전에는 `/api/auth/*` 말고는 401 `needs_login`.
+- 허용된 사람만 (dawoni/access.py): 로그인 전에는 `/api/auth/*`·`/api/window/*` 말고는 401
+  `needs_login`.
 """
 
 from __future__ import annotations
@@ -19,6 +20,9 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 COOKIE = "dawoni_token"
 ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "[::1]"})
+OPEN_BEFORE_LOGIN = ("/api/auth/", "/api/window/")
+"""로그인 전에도 (토큰은 필요): 로그인 자체, 창이 살아 있다는 신호 (로그인 화면만 띄워 둔 채 닫아도
+서버가 끝나게)."""
 
 
 def new_token() -> str:
@@ -41,7 +45,7 @@ class LocalOnly(BaseHTTPMiddleware):
                 return JSONResponse(
                     {"detail": "세션이 없습니다. 앱을 다시 열어 주세요."}, status_code=401
                 )
-            if not request.url.path.startswith("/api/auth/") and not self.allowed():
+            if not request.url.path.startswith(OPEN_BEFORE_LOGIN) and not self.allowed():
                 return JSONResponse(
                     {
                         "detail": "다워니를 쓰려면 허가된 계정으로 로그인하세요.",

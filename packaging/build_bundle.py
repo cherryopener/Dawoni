@@ -201,6 +201,11 @@ def main() -> int:
 
     _copy_runtime(base)
     _install(wheel)
+    # 표준 라이브러리도 미리 .pyc로 (복사할 때 __pycache__는 뺐다). 없으면 처음 켤 때 그 자리에서
+    # 컴파일해 느리고, 쓸 수 없는 폴더(Program Files 등)에 풀면 켤 때마다 컴파일한다.
+    # site-packages는 uv가 이미 컴파일했다 (패키지 속 일부러 틀린 파일에 빌드가 멈추지 않게 뺀다)
+    lib = OUT / "Lib"
+    _run(OUT / "python.exe", "-m", "compileall", "-q", "-j", "0", "-x", "site-packages", lib)
     site = OUT / "Lib" / "site-packages"
     (OUT / "python313._pth").write_text(PTH, encoding="ascii")
     (site / "_dawoni_boot.py").write_text(BOOT, encoding="utf-8")

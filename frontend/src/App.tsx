@@ -63,6 +63,25 @@ function initials(name: string | null | undefined): string {
   return name.length <= 2 ? name : name.slice(0, 1) + "T";
 }
 
+/** 창이 살아 있다고 서버에 알린다 — 창을 닫으면 서버(python)도 끝난다 (dawoni/server/lifeline.py).
+ * 로그인 전에도 보낸다. 실패는 무시 (서버가 이미 끝났거나 개발용 서버). */
+function useWindowLifeline() {
+  useEffect(() => {
+    const alive = () => void fetch("/api/window/alive", { method: "POST" }).catch(() => undefined);
+    const shown = () => document.visibilityState === "visible" && alive();
+    const closed = () => navigator.sendBeacon("/api/window/closed");
+    alive();
+    const t = setInterval(alive, 20_000);
+    document.addEventListener("visibilitychange", shown);
+    window.addEventListener("pagehide", closed);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", shown);
+      window.removeEventListener("pagehide", closed);
+    };
+  }, []);
+}
+
 export function App() {
   const [dark, toggleTheme] = useTheme();
   const [auth, setAuth] = useState<AuthStatus | null>(null);
@@ -83,6 +102,7 @@ export function App() {
       });
   }, [loadAuth]);
   useEffect(loadAuth, [loadAuth]);
+  useWindowLifeline();
   // 로그인 전에는 /api/auth/* 말고는 서버가 needs_login으로 거절한다 — 로그인이 끝난 뒤에 읽는다
   const signedIn = auth !== null && (!auth.required || auth.state === "ok");
   useEffect(() => {

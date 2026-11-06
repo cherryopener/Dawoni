@@ -33,6 +33,23 @@ def get_state(request: Request) -> AppState:
 State = Depends(get_state)
 
 
+# ---------------------------------------------------------------- 창 (로그인 전에도 — security.py)
+
+
+@router.post("/window/alive")
+def window_alive(st: AppState = State) -> dict[str, bool]:
+    """화면이 켜져 있다 (켜질 때와 주기적으로)."""
+    st.lifeline.alive()
+    return {"ok": True}
+
+
+@router.post("/window/closed")
+def window_closed(st: AppState = State) -> dict[str, bool]:
+    """창을 닫거나 새로 고침 — 곧 `alive`가 다시 오지 않으면 서버를 끝낸다 (lifeline.py)."""
+    st.lifeline.closed()
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------- 상태
 
 

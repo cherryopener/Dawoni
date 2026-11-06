@@ -31,7 +31,9 @@ jobs:
         with:
           python-version: "3.13"
 
-      - uses: astral-sh/setup-uv@v6
+      # Node 20 지원 종료 경고: node24로 도는 버전으로 (setup-uv@v6·upload/download-artifact@v4는
+      # node20). setup-uv는 v8부터 @v10 같은 메이저 태그가 없음 → 전체 버전으로 고정
+      - uses: astral-sh/setup-uv@v10.3.3
 
       - name: 태그와 pyproject 버전이 같은지
         if: startsWith(github.ref, 'refs/tags/')
@@ -88,7 +90,7 @@ jobs:
           if (-not (Select-String -Path "dist\Dawoni\Lib\site-packages\dawoni\web\index.html" -Pattern "<title>" -Quiet)) { throw "화면 파일 없음" }
           if ((Get-AuthenticodeSignature dist\Dawoni\Dawoni.exe).Status -ne "Valid") { throw "Dawoni.exe 서명 없음" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: Dawoni-windows
           path: dist/Dawoni-*-windows.zip
@@ -102,7 +104,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: Dawoni-windows
       - name: Release에 zip 붙이기

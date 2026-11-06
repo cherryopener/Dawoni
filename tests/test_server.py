@@ -51,6 +51,25 @@ def test_local_protection(app_paths: AppPaths) -> None:
     assert "화면 파일이 아직 없습니다" in c.get("/").text
 
 
+def test_window_signals_work_before_login(app_paths: AppPaths) -> None:
+    """창 신호(dawoni/server/lifeline.py)는 로그인 전에도 받는다 — 토큰은 여전히 필요."""
+    from dawoni.server.lifeline import BYE_GRACE, Lifeline
+    from dawoni.server.state import AppState
+
+    now = [0.0]
+    c = _client(app_paths)
+    app: Any = c.app
+    st: AppState = app.state.dawoni
+    st.lifeline = Lifeline(lambda: now[0])
+    assert c.post("/api/window/closed").json() == {"ok": True}
+    now[0] += BYE_GRACE
+    assert st.lifeline.should_exit(False)
+    assert c.post("/api/window/alive").json() == {"ok": True}
+    assert not st.lifeline.should_exit(False), "새로 고침이면 다시 살아 있다"
+    c.cookies.clear()
+    assert c.post("/api/window/alive").status_code == 401
+
+
 def test_setup_wizard(app_paths: AppPaths, tmp_path: Path) -> None:
     c = _client(app_paths)
     st = c.get("/api/status").json()
@@ -443,15 +462,6 @@ def test_answer_key_fix_and_confirm(app_paths: AppPaths, tmp_path: Path) -> None
     url = f"/api/exams/{eid}/questions/1/key"
     q = c.get(f"/api/exams/{eid}/questions/1").json()
     assert q["key"]["parts"][0]["answer"] == "2/3"
-    assert q["figures"] == []
-    figs = store.root / "figures" / "1"
-    figs.mkdir(parents=True)
-    for n in ("F10", "F2", "F1"):
-        (figs / f"{n}.png").write_bytes(b"png")
-    q = c.get(f"/api/exams/{eid}/questions/1").json()
-    assert [f["id"] for f in q["figures"]] == ["F1", "F2", "F10"]
-    assert q["figures"][0]["path"] == "figures/1/F1.png"
-    assert c.get(f"/api/exams/{eid}/file", params={"path": "figures/1/F2.png"}).content == b"png"
     bad = c.put(url, json={"parts": [{"label": "(1)", "credit_policy": "none"}]})
     assert bad.status_code == 400 and "소문항 표시" in bad.json()["detail"]
     fixed = c.put(

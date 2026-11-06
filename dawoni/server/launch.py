@@ -3,6 +3,8 @@
 - macOS: pywebview 창 (설치돼 있으면), 없으면 기본 브라우저
 - Windows: Edge `--app` 모드 창 (pywebview의 pythonnet 문제 회피 — AIHelper에서 겪음)
 - 서버는 127.0.0.1에만 열고, 실행할 때마다 새 토큰을 만든다.
+- Edge·브라우저 창을 닫으면 화면의 신호로 서버도 끝난다 (`lifeline.py`). pywebview 창은 창이 닫히면
+  바로 끝난다.
 """
 
 from __future__ import annotations
@@ -19,8 +21,10 @@ from pathlib import Path
 import uvicorn
 
 from dawoni.paths import AppPaths
+from dawoni.server import lifeline
 from dawoni.server.app import create_app
 from dawoni.server.security import new_token
+from dawoni.server.state import AppState
 
 DEFAULT_PORT = 8765
 
@@ -92,6 +96,18 @@ def run_ui(
         subprocess.Popen([str(edge), f"--app={url}", "--window-size=1320,880"])
     else:
         webbrowser.open(url)
+    # 창은 따로 뜬 프로세스라 닫혀도 여기서 모른다 → 화면의 신호로 끝낸다 (lifeline.py)
+    state: AppState = app.state.dawoni
+
+    def stop() -> None:
+        server.should_exit = True
+
+    threading.Thread(
+        target=lifeline.watch,
+        args=(state.lifeline, lambda: any(not j.is_terminal for j in state.jobs.list()), stop),
+        kwargs={"running": t.is_alive},
+        daemon=True,
+    ).start()
     try:
         while t.is_alive():
             t.join(timeout=0.5)

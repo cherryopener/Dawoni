@@ -22,7 +22,7 @@ from dawoni.grading.pipeline import (
     teacher_part_review,
     teacher_review,
 )
-from dawoni.grading.store import ExamStore, ScopeStore, safe_name
+from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.answer_key import AnswerKey, KeyPart
 from dawoni.models.grading import (
     Exam,
@@ -364,23 +364,7 @@ def get_question(exam_id: str, number: str, st: AppState = State) -> dict[str, A
         "candidate_matches": m.model_dump(mode="json")
         if (m := store.candidate_matches(number))
         else None,
-        "figures": question_figures(store, q),
     }
-
-
-def question_figures(store: ExamStore, q: ExamQuestion) -> list[dict[str, str | None]]:
-    """문항 그림 파일 (`figures/<문항>/F1.png`…, 시험 폴더 기준 경로)과 설명 — 정답·해설의
-    `[그림 4]`가 무엇인지 화면에서 보여 주려고."""
-    d = store.root / "figures" / safe_name(q.number)
-    if not d.is_dir():
-        return []
-    captions = {f.id: f.caption for f in q.item.figures}
-    files = sorted(d.glob("F*.png"), key=lambda p: int(p.stem[1:]) if p.stem[1:].isdigit() else 0)
-    root = store.root
-    return [
-        {"id": p.stem, "caption": captions.get(p.stem), "path": p.relative_to(root).as_posix()}
-        for p in files
-    ]
 
 
 @router.put("/{exam_id}/questions/{number}/rubric")
