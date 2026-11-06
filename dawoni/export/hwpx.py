@@ -161,6 +161,29 @@ _SPACES = {"qquad": "~" * 8, "quad": "~" * 4, " ": "~", ";": "~", ":": "~", "!":
 바꾼다. 공백으로만 바꾸면 한글 수식이 공백을 무시해 `R=6\\Omega \\quad R=…`가 붙어 버린다."""
 _EQ_WORDS = {r"\uparrow": "uparrow", r"\downarrow": "downarrow", r"\Leftrightarrow": "LRARROW"}
 """python-hwpx 변환기가 모르는 LaTeX 명령 → 한글 수식 낱말 (실제 판독문에서 나옴)."""
+EQ_BASE_UNIT = 1100
+"""식 글자 크기 (1/100 pt) — python-hwpx `add_equation`의 기본값."""
+EQ_WIDTH_SCALE = 1.1
+EQ_WIDTH_PAD_EM = 0.1
+"""python-hwpx가 잰 식 상자 폭을 이만큼 넓힌다 (폭 × 1.1 + 글자 크기 × 0.1). python-hwpx의 글자
+폭은 맥 한글에 맞춘 값이라 Windows 한글 2024보다 좁다 — 2026-11-07 Windows 한글 2024가 저장한 학원
+시험지 식 129개(HYhwpEQ)와 비교: 그대로면 61개가 0.18mm 넘게 좁고(최대 2.7mm, `=`·부호·함수 이름),
+넓히면 4개(최대 0.9mm), 식 뒤 빈칸은 보통 0.6mm. 한글은 저장된 폭으로 줄을 짜서, 좁으면 뒤 글자가
+식에 겹친다(`2r cosθ와`). 빈칸이 겹침보다 낫다."""
+
+
+def equation_size(script: str) -> tuple[int, int]:
+    """한글 수식 스크립트의 상자 (폭, 높이) HWPUNIT — Windows 한글이 뒤 글자를 겹치지 않게 잰다."""
+    # python-hwpx가 틀리게 재는 두 가지를 비슷한 폭의 글자로 바꿔 잰다 (2026-11-04 한글 2024):
+    # `:` — 한글은 `=`처럼 양옆을 띄우는데 문장부호 폭으로 잼,
+    # `uparrow` 등 — 화살표 하나인데 글자 7개 폭으로 잼.
+    sized = script.replace(" : ", " = ")
+    for word in _EQ_WORDS.values():
+        sized = re.sub(rf"(?<![A-Za-z]){word}(?![A-Za-z])", "x", sized)
+    m = measure_equation(sized, base_unit=EQ_BASE_UNIT)
+    return round(m.width * EQ_WIDTH_SCALE + EQ_BASE_UNIT * EQ_WIDTH_PAD_EM), m.height
+
+
 _NON_ASCII = re.compile(r"\\text\{([^{}]*[^\x00-\x7f][^{}]*)\}|[^\x00-\x7f]+")
 _INLINE = re.compile(r"\\\((.+?)\\\)")
 """판독문 `text` 안의 식 (글과 식이 섞인 줄은 식만 `\\( \\)`로 감싼다)."""
@@ -315,17 +338,10 @@ class Builder:
             return False
         if lead:
             p.add_run(lead, char_pr_id_ref=self.plain)
-        # python-hwpx는 식 상자 폭을 스스로 재고 한글은 그 폭으로 쪽을 짠다. 틀리게 재는 두 가지를
-        # 비슷한 폭의 글자로 바꿔 잰다 (2026-11-04 한글 2024): `:` — 한글은 `=`처럼 양옆을 띄우는데
-        # 문장부호 폭으로 재어 뒤 글자가 겹침, `uparrow` 등 — 화살표 하나인데 글자 7개 폭으로 잼.
-        sized = script.replace(" : ", " = ")
-        for word in _EQ_WORDS.values():
-            sized = re.sub(rf"(?<![A-Za-z]){word}(?![A-Za-z])", "x", sized)
-        size = None
-        if sized != script:
-            m = measure_equation(sized)
-            size = (m.width, m.height)
-        eq = self.doc.shapes.add_equation(script, paragraph=p, size=size)
+        # 한글은 저장된 상자 폭으로 쪽을 짠다 — 좁으면 뒤 글자가 겹친다 (`equation_size`)
+        eq = self.doc.shapes.add_equation(
+            script, paragraph=p, base_unit=EQ_BASE_UNIT, size=equation_size(script)
+        )
         if color:
             eq.set_attribute("textColor", color)
         return True

@@ -15,6 +15,7 @@ from dawoni.export.hwpx import (
     build_student,
     canon,
     count_heads,
+    equation_size,
     expected_text,
     from_eqedit,
     prose_pieces,
@@ -64,6 +65,25 @@ def _sheet(head: str = "10월 시험 · TSS1 · 김다원 · 구룡중") -> Shee
 def test_equation_round_trip(latex: str) -> None:
     """변환기가 받지 않는 ㉠·화살표·\\quad도 한글 수식이 되고, 다시 읽으면 같은 식이다."""
     assert canon(f"\\({from_eqedit(to_eqedit(latex))}\\)") == canon(f"\\({latex}\\)")
+
+
+@pytest.mark.parametrize(
+    ("script", "hangul"),
+    # Windows 한글 2024가 저장한 학원 시험지의 식 상자 폭 (HYhwpEQ, 글자 크기 1000 → 1100으로 늘림)
+    [("x=3d", 2895), ("2r", 975), ("t=0", 2145), ("+x", 1565), ("theta_0", 900)],
+)  # fmt: skip
+def test_equation_box_is_not_narrower_than_hangul(script: str, hangul: int) -> None:
+    """한글은 저장된 상자 폭으로 줄을 짠다 — python-hwpx 폭(맥 한글 기준)은 Windows 한글보다 좁아 뒤
+    글자가 식에 겹쳤다 (`2r cosθ와`). 넓힌 폭은 Windows 한글 폭에 0.35mm(100) 안쪽까지 닿는다."""
+    width, _ = equation_size(script)
+    assert width >= hangul * 1.1 - 100
+    assert width <= hangul * 1.1 + 400, "식 뒤가 크게 비지 않음"
+
+
+def test_equation_box_sizes_colon_and_arrow_like_hangul() -> None:
+    """`:`는 `=`처럼, 화살표 낱말은 글자 하나처럼 잰다 (python-hwpx는 문장부호·글자 7개로 잼)."""
+    assert equation_size("a : b") == equation_size("a = b")
+    assert equation_size("a uparrow") == equation_size("a x")
 
 
 def test_student_file_reads_back(tmp_path: Path) -> None:
