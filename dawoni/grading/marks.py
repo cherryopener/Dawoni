@@ -61,6 +61,9 @@ def answer_pages(store: ExamStore, student: str) -> list[Path]:
     return [p for p in sorted(d.glob("page_*.png")) if p.name != "page_01.png"]
 
 
+NOT_HAND_GRADED = "표지에 강사 점수가 없음 (손채점하지 않은 답안지)"
+
+
 @dataclass
 class MarksRun:
     read: list[StudentRecord] = field(default_factory=lambda: list[StudentRecord]())
@@ -77,12 +80,18 @@ def read_teacher_marks(
     progress: Progress = _noop,
 ) -> MarksRun:
     """판독해 둔 학생들의 답안 쪽에서 강사 소문항 점수를 읽는다 (`parallel_students`명씩 동시에).
-    이미 읽은 학생은 건너뛴다 (`overwrite`면 다시 — 강사가 확인한 점수는 덮어쓰지 않는다)."""
+    이미 읽은 학생은 건너뛴다 (`overwrite`면 다시 — 강사가 확인한 점수는 덮어쓰지 않는다).
+
+    학생을 정하지 않으면 표지에 강사 점수가 있는 학생(손채점한 답안지)만 읽는다 — 손채점은 보통
+    3~5장뿐이라, 나머지 답안지에 AI를 부르면 토큰만 쓰고 빈칸만 나온다 (2026-11-06)."""
     exam = store.exam()
     run = MarksRun()
     todo: list[tuple[str, StudentRecord, list[Path]]] = []
     for sid in students or store.students():
         record = store.student_record(sid) or StudentRecord(student_id=sid, source="-")
+        if students is None and not record.teacher_scores:
+            run.skipped.append(Skip(sid, NOT_HAND_GRADED))
+            continue
         if record.marks_confirmed:
             run.skipped.append(Skip(sid, "강사가 확인한 점수가 있음"))
             continue

@@ -209,8 +209,12 @@ def _cmd_read_marks(args: argparse.Namespace, svc: Any) -> int:
             _out(f"  ⚠ {p}")
         for u in r.marks_uncertain:
             _out(f"  ? {u}")
+    unmarked = [k.student for k in run.skipped if k.reason == marks.NOT_HAND_GRADED]
     for k in run.skipped:
-        _out(f"  건너뜀 {k.student}: {k.reason}")
+        if k.reason != marks.NOT_HAND_GRADED:
+            _out(f"  건너뜀 {k.student}: {k.reason}")
+    if unmarked:
+        _out(f"  건너뜀 {len(unmarked)}명: {marks.NOT_HAND_GRADED} — 읽으려면 --student로 정하세요")
     for f in run.failed:
         _out(f"  ✗ {f.student}: {f.reason[:160]}")
     _out("확인한 뒤 `exam marks <시험> <학생> --confirm`으로 확정하세요 (확정한 점수만 보정에 씀).")
@@ -305,7 +309,10 @@ def register(es: Any, with_q: Any, wrap: Any, svc_of: Any) -> None:
     c.set_defaults(func=bind(_cmd_calibration))
 
     rm = with_q(es.add_parser("read-marks", help="손채점 답안지의 빨간 펜 소문항 점수 읽기"))
-    rm.add_argument("--student", action="append", help="학생 (여러 번, 없으면 전체)")
+    rm.add_argument(
+        "--student", action="append",
+        help="학생 (여러 번). 없으면 표지에 강사 점수가 있는 학생만 (손채점한 답안지)",
+    )  # fmt: skip
     rm.add_argument("--overwrite", action="store_true", help="이미 읽은 학생도 다시")
     rm.set_defaults(func=bind(_cmd_read_marks))
 

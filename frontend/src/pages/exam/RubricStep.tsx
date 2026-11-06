@@ -53,7 +53,23 @@ function Calibration({ q, rubric, onChanged }: { q: ExamQuestion; rubric: Rubric
   const labels = q.parts.length ? q.parts.map((p) => p.label) : [""];
   const ready = rows.filter((r) => !r.confirmed && r.problems.length === 0).map((r) => r.student_id);
 
-  const readMarks = () => act.run(async () => void (await waitJob(await api.post<Job>(`${base}/marks/read`, {}))));
+  const [readNote, setReadNote] = useState<string | null>(null);
+  const readMarks = () =>
+    act.run(async () => {
+      const j = await waitJob(await api.post<Job>(`${base}/marks/read`, {}));
+      const r = j.result as { read: string[]; skipped: { student: string; reason: string }[]; failed: { student: string; reason: string }[] };
+      const unmarked = r.skipped.filter((k) => k.reason.startsWith("표지에 강사 점수가 없음")).length;
+      const parts = [`${r.read.length}명 읽음`];
+      if (unmarked) parts.push(`표지에 강사 점수가 없는 ${unmarked}명은 손채점하지 않은 것으로 보고 건너뜀`);
+      const fail = r.failed[0];
+      if (fail) parts.push(`${r.failed.length}명 실패 (${fail.student}: ${fail.reason})`);
+      setReadNote(
+        r.read.length === 0 && unmarked > 0 && unmarked === r.skipped.length
+          ? "표지에 강사 점수가 있는 답안지가 없습니다. 손채점한 답안지는 표지에 문항 점수를 적어 판독하세요."
+          : parts.join(" · "),
+      );
+      marks.reload();
+    });
   const confirm = () => act.run(async () => void (await waitJob(await api.post<Job>(`${base}/marks/confirm`, { students: ready, by }))));
   const saveMark = (student: string) =>
     act.run(async () => {
@@ -84,7 +100,7 @@ function Calibration({ q, rubric, onChanged }: { q: ExamQuestion; rubric: Rubric
     <Card>
       <CardHeader
         title="강사 손채점과 맞춰 보기"
-        desc="손으로 채점한 답안 3~5장을 답안 판독에서 함께 넣으면, 빨간 펜 소문항 점수를 읽어 AI 채점과 비교합니다."
+        desc="손으로 채점한 답안 3~5장을 답안 판독에서 함께 넣으면, 빨간 펜 소문항 점수를 읽어 AI 채점과 비교합니다. 표지에 강사 점수가 적힌 답안지만 읽습니다."
         right={
           <Button size="sm" variant="outline" disabled={act.busy} onClick={() => void readMarks()}>
             빨간 펜 점수 읽기
@@ -92,6 +108,7 @@ function Calibration({ q, rubric, onChanged }: { q: ExamQuestion; rubric: Rubric
         }
       />
       <CardBody className="flex flex-col gap-3">
+        {readNote && <div className="rounded-lg bg-muted px-3 py-2 text-[13px] text-text-2">{readNote}</div>}
         <div className="flex items-center gap-3">
           <span className="w-24 text-[13px] text-text-2">소문항 일치</span>
           <div className="flex-1">

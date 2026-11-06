@@ -115,6 +115,23 @@ def test_read_marks_repairs_then_saves_record(setup: Setup) -> None:
     assert [k.reason for k in again.skipped] == ["이미 읽음"] and len(fake_prompts(exe)) == 2
 
 
+def test_read_marks_without_students_reads_only_hand_graded_covers(setup: Setup) -> None:
+    svc, store, exe = setup([_read(("3", "(1)", 2), ("3", "(2)", 4))])
+    store.save_student(StudentRecord(student_id="A", source="x", teacher_scores={"3": 6}))
+    store.save_student(StudentRecord(student_id="B", source="y"))  # 손채점하지 않은 답안지
+    for sid in ("A", "B"):
+        _pages(store, sid)
+    run = marks.read_teacher_marks(svc, store)
+    assert [r.student_id for r in run.read] == ["A"]
+    assert {k.student for k in run.skipped} == set(store.students()) - {"A"}
+    assert all(k.reason == marks.NOT_HAND_GRADED for k in run.skipped)
+    assert len(fake_prompts(exe)) == 1, "손채점하지 않은 답안지에는 AI를 부르지 않는다"
+    named = marks.read_teacher_marks(svc, store, students=["B"])
+    assert [k.reason for k in named.skipped] == [] and len(named.read + named.failed) == 1, (
+        "학생을 정하면 표지 점수가 없어도 읽는다"
+    )
+
+
 def test_confirm_marks_needs_filled_slots_and_confirmed_transcript(setup: Setup) -> None:
     svc, store, _ = setup([])
     store.save_student(
