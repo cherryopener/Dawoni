@@ -885,4 +885,7 @@ strong = argon-low (flash와 argon은 구독 한도가 따로라 나눠 쓴다).
      Apple 실리콘, 서명 없이 ad-hoc). 로그인 설정·표식은 빌드 때 임시 폴더에서만 넣는다(개발 PC의 access.json이 섞이지
      않게). 켜 보기(버전·화면·토큰 없는 API 거부) 뒤 `ditto`로 zip. 워크플로는 `build.yml` 하나에 windows·macos 작업,
      둘 다 되면 Release에 zip 두 개. 이 맥에서 만든 앱: 140 MB(zip 73 MB), 창 모드로도 켜짐.
+     GitHub에서 만든 첫 앱은 로그인이 `CERTIFICATE_VERIFY_FAILED`: 러너의 python.org 파이썬(Python.framework)을 묶어
+     인증서를 그 폴더에서 찾았다 → 맥 작업은 uv가 받은 파이썬만(`UV_PYTHON_PREFERENCE=only-managed`, macOS
+     `/etc/ssl/cert.pem`을 씀), `build_mac.py`가 묶기 전에 인증서 자리를 확인한다.
    남은 것: 받은 맥 zip을 Finder에서 열어 보기(격리 표시·[그래도 열기]·로그인), 맥 설치·호환 확인, M8 릴리스(태그), 배포용 문서 안내, 객관식 복수 정답 화면.

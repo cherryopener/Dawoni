@@ -113,9 +113,25 @@ def smoke() -> None:
     print("켜 보기: 화면 열림, 토큰 없는 API 막힘")
 
 
+def _check_certificates() -> None:
+    """묶을 파이썬이 macOS 기본 인증서(/etc/ssl/cert.pem)로 HTTPS를 확인하는지.
+
+    python.org 파이썬은 제 폴더의 cert.pem을 찾아, 그 파일이 없는 강사 맥에서 Google·명단 접속이
+    CERTIFICATE_VERIFY_FAILED였다 (2026-11-07, GitHub 러너의 python.org 파이썬으로 만든 앱)."""
+    import ssl
+
+    cafile = ssl.get_default_verify_paths().openssl_cafile
+    if cafile not in ("/etc/ssl/cert.pem", "/private/etc/ssl/cert.pem"):
+        raise SystemExit(
+            f"이 파이썬은 인증서를 {cafile}에서 찾습니다 — 다른 맥에서 HTTPS가 실패합니다. "
+            "uv가 받은 파이썬으로 만드세요 (UV_PYTHON_PREFERENCE=only-managed)"
+        )
+
+
 def main() -> int:
     if sys.platform != "darwin":
         raise SystemExit("맥에서만 만든다")
+    _check_certificates()
     ap = argparse.ArgumentParser(description="맥 배포 묶음 만들기")
     ap.add_argument("--access", help="로그인 설정 access.json (없으면 비밀값 DAWONI_ACCESS_JSON)")
     ap.add_argument(

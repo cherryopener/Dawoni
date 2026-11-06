@@ -104,6 +104,9 @@ jobs:
     timeout-minutes: 40
     env:
       UV_PYTHON: "3.13"
+      # uv가 받은 파이썬(python-build-standalone)만: 러너에 깔린 python.org 파이썬은 인증서를 제 폴더
+      # (Python.framework/…/etc/openssl)에서 찾아, 강사 맥에서 HTTPS가 CERTIFICATE_VERIFY_FAILED로 실패했다
+      UV_PYTHON_PREFERENCE: only-managed
       UV_FROZEN: "1"
       PYTHONIOENCODING: utf-8
     steps:
