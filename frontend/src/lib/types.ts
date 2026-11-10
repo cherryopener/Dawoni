@@ -89,6 +89,7 @@ export type Rubric = {
   items: RubricItem[];
   accepted_alternatives: { id: string | null; description: string; item_ids: string[]; part: string | null; status: Decision; concepts: string[] }[];
   candidates: { id: string; part: string; answer: string; argument: string; status: Decision }[];
+  partial: { item_id: string; condition: string; points: number; from_key: boolean }[];
   never_deduct: string[];
   key_conflicts: string[];
   review_notes: string[];

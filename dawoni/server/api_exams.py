@@ -19,6 +19,7 @@ from dawoni.grading.pipeline import (
     approve_rubric,
     decide_candidates,
     edit_rubric,
+    edit_rubric_items,
     teacher_part_review,
     teacher_review,
 )
@@ -30,6 +31,7 @@ from dawoni.models.grading import (
     GradeResult,
     Rubric,
     RubricDraft,
+    RubricEdit,
     Transcript,
     TranscriptLine,
 )
@@ -377,6 +379,20 @@ def put_rubric(exam_id: str, number: str, draft: RubricDraft, st: AppState = Sta
         raise PipelineError(f"문항 {number}: 해설·루브릭 초안을 먼저 만드세요.")
     r = edit_rubric(old, draft, q, sol)
     store.save_rubric(r)
+    return r
+
+
+@router.put("/{exam_id}/questions/{number}/rubric/items")
+def put_rubric_items(exam_id: str, number: str, body: RubricEdit, st: AppState = State) -> Rubric:
+    """루브릭 화면의 고치기 — 채점 항목·부분 점수. 승인·확정한 루브릭이면 새 판이 되고 다시 승인."""
+    _, store = _store(st, exam_id)
+    q = store.exam().question(number)
+    old = store.rubric(number)
+    if old is None:
+        raise PipelineError(f"문항 {number}: 루브릭이 없습니다.")
+    r = edit_rubric_items(old, body, q, store.solution(number))
+    if r is not old:
+        store.save_rubric(r)
     return r
 
 

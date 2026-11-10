@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from dawoni.export import exam_files
@@ -20,6 +20,7 @@ from dawoni.export.quotes import LineSpots, segments
 from dawoni.grading import workflow
 from dawoni.grading.pipeline import PipelineError
 from dawoni.grading.store import ExamStore
+from dawoni.ingest.fix import check_rubric_lock, retire_for_edit
 from dawoni.models.grading import UNREADABLE, ExamPart, ExamQuestion, TranscriptLine
 from dawoni.models.job import Job
 from dawoni.server.api_exams import exam_summary
@@ -299,14 +300,20 @@ class PointsBody(BaseModel):
 
 
 @router.put("/exams/{exam_id}/questions/{number}/points")
-def put_points(exam_id: str, number: str, body: PointsBody, st: AppState = State) -> ExamQuestion:
-    """배점 표시가 없던 시험지의 자리값 배점(소문항마다 2점)을 강사가 고친다. 루브릭을 만들기 전에만
-    — 루브릭 항목 배점이 문항 배점에 맞춰져 있기 때문."""
+def put_points(
+    exam_id: str,
+    number: str,
+    body: PointsBody,
+    reset_rubric: Annotated[bool, Query()] = False,
+    st: AppState = State,
+) -> ExamQuestion:
+    """배점 표시가 없던 시험지의 자리값 배점(소문항마다 2점)을 강사가 고친다. 루브릭 항목
+    배점이 문항 배점에 맞춰져 있어, 루브릭이 있으면 강사가 확인(`reset_rubric`)해야 고치고
+    루브릭은 비켜 둔다."""
     store = ExamStore(st.services().workspace, exam_id)
     exam = store.exam()
     q = exam.question(number)
-    if store.rubric(number) is not None:
-        raise PipelineError(f"문항 {number}: 루브릭이 이미 있어 배점을 고칠 수 없습니다.")
+    check_rubric_lock(store, number, reset_rubric)
     if q.parts:
         if set(body.parts) != {p.label for p in q.parts}:
             raise PipelineError(f"소문항 표시가 다릅니다: {[p.label for p in q.parts]}")
@@ -319,6 +326,7 @@ def put_points(exam_id: str, number: str, body: PointsBody, st: AppState = State
     new = ExamQuestion.model_validate(new.model_dump())
     questions = [new if x.number == number else x for x in exam.questions]
     store.save_exam(exam.model_copy(update={"questions": questions}))
+    retire_for_edit(store, number)
     return new
 
 

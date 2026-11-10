@@ -30,6 +30,7 @@ export function RegionDialog({
   sourcePages,
   initial,
   onDone,
+  resetRubric = false,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -39,6 +40,8 @@ export function RegionDialog({
   sourcePages: number[];
   initial: RegionWhat;
   onDone: (notes: string[]) => void;
+  /** 루브릭이 있는 문항: 강사가 확인했으니 본문을 다시 읽으면서 루브릭을 비켜 둔다 */
+  resetRubric?: boolean;
 }) {
   const src = useApi<ExamSource>(open ? `${base}/source` : null, { refreshOnJobs: false });
   const [what, setWhat] = useState<RegionWhat>(initial);
@@ -129,7 +132,8 @@ export function RegionDialog({
       form.append("what", what);
       form.append("boxes", JSON.stringify(boxes));
       pasted.forEach((f, i) => form.append("files", f, f.name || `paste_${i + 1}.png`));
-      const job = await api.upload<Job>(`${base}/questions/${enc(number)}/read-region`, form);
+      const query = resetRubric && what === "question" ? "?reset_rubric=true" : "";
+      const job = await api.upload<Job>(`${base}/questions/${enc(number)}/read-region${query}`, form);
       const done = await waitJob(job, (j) => setMsg(j.progress.message));
       onDone((done.result?.notes as string[] | undefined) ?? []);
       reset();

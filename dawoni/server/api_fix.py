@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
@@ -46,13 +46,22 @@ def source_page(exam_id: str, page: int, st: AppState = State) -> FileResponse:
     return FileResponse(fix.page_image(svc, store, page), media_type="image/png")
 
 
+ResetRubric = Annotated[
+    bool, Query(description="루브릭이 있는 문항이면 루브릭을 비켜 두고 고친다 (강사 확인)")
+]
+
+
 @router.put("/{exam_id}/questions/{number}/structure")
 def structure(
-    exam_id: str, number: str, body: fix.StructureEdit, st: AppState = State
+    exam_id: str,
+    number: str,
+    body: fix.StructureEdit,
+    reset_rubric: ResetRubric = False,
+    st: AppState = State,
 ) -> dict[str, Any]:
     """소문항 더하기·빼기·표시·유형·배점. 해설지의 소문항이 따라간다."""
     _, store = _store(st, exam_id)
-    q, notes = fix.edit_structure(store, number, body)
+    q, notes = fix.edit_structure(store, number, body, reset_rubric=reset_rubric)
     return {"question": q.model_dump(mode="json"), "notes": notes}
 
 
@@ -63,9 +72,11 @@ def add_question(exam_id: str, body: fix.NewQuestion, st: AppState = State) -> E
 
 
 @router.delete("/{exam_id}/questions/{number}")
-def delete_question(exam_id: str, number: str, st: AppState = State) -> dict[str, bool]:
+def delete_question(
+    exam_id: str, number: str, reset_rubric: ResetRubric = False, st: AppState = State
+) -> dict[str, bool]:
     _, store = _store(st, exam_id)
-    fix.delete_question(store, number)
+    fix.delete_question(store, number, reset_rubric=reset_rubric)
     return {"ok": True}
 
 
@@ -74,9 +85,16 @@ class StemBody(BaseModel):
 
 
 @router.put("/{exam_id}/questions/{number}/stem")
-def put_stem(exam_id: str, number: str, body: StemBody, st: AppState = State) -> ExamQuestion:
+def put_stem(
+    exam_id: str,
+    number: str,
+    body: StemBody,
+    reset_rubric: ResetRubric = False,
+    st: AppState = State,
+) -> dict[str, Any]:
     _, store = _store(st, exam_id)
-    return fix.set_stem(store, number, body.text)
+    q, notes = fix.set_stem(store, number, body.text, reset_rubric=reset_rubric)
+    return {"question": q.model_dump(mode="json"), "notes": notes}
 
 
 class KeyTextBody(BaseModel):
@@ -101,11 +119,14 @@ def read_region(
     what: Annotated[Literal["question", "key"], Form()],
     boxes: Annotated[str, Form()] = "[]",
     files: Annotated[list[UploadFile] | None, File()] = None,
+    reset_rubric: ResetRubric = False,
     st: AppState = State,
 ) -> Job:
     """원본 쪽의 상자(쪽 비율)나 붙여 넣은 그림에서 문항 본문(`question`)·해설(`key`)을 읽는다."""
     svc, store = _store(st, exam_id)
     store.exam().question(number)
+    if what == "question":  # 작업을 돌리기 전에 (AI를 부르기 전에) 알린다
+        fix.check_rubric_lock(store, number, reset_rubric)
     try:
         regions = _BOXES.validate_json(boxes)
     except ValidationError as e:
@@ -117,7 +138,9 @@ def read_region(
     def run(ctx: JobContext) -> dict[str, Any]:
         if what == "question":
             ctx.progress(0, 1, f"문항 {number} 본문 읽기")
-            res = fix.read_question_region(svc, store, number, regions, pasted)
+            res = fix.read_question_region(
+                svc, store, number, regions, pasted, reset_rubric=reset_rubric
+            )
             ctx.progress(1, 1, f"문항 {number} 본문 저장")
             return {"question": res.question.model_dump(mode="json"), "notes": res.notes}
         ctx.progress(0, 1, f"문항 {number} 해설 읽기")

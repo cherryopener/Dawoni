@@ -419,6 +419,29 @@ class RubricDraft(DawoniModel):
         return sum(i.points for i in self.items)
 
 
+class RubricItemEdit(DawoniModel):
+    """강사가 고친 채점 항목. 있던 ID면 해설 단계·부분 점수 표기·개념 표시는 그대로 둔다."""
+
+    id: str = Field(pattern=r"^R[1-9][0-9]*$", description="항목 ID (새 항목은 아직 없는 번호)")
+    part: str | None = Field(default=None, description="소문항 표시 (없으면 null)")
+    points: float = Field(gt=0)
+    criterion: str = Field(min_length=1)
+    evidence_hint: str = ""
+
+
+class PartialEdit(DawoniModel):
+    item_id: str
+    condition: str = Field(min_length=1)
+    points: float = Field(ge=0)
+
+
+class RubricEdit(DawoniModel):
+    """루브릭 화면의 고치기: 채점 항목과 부분 점수 (넓힌 표현·정답 후보는 인정·제외로)."""
+
+    items: list[RubricItemEdit] = Field(min_length=1)
+    partial: list[PartialEdit] = Field(default_factory=lambda: list[PartialEdit]())
+
+
 class RubricAudit(DawoniModel):
     """AI 출력: 루브릭이 해설지를 지키는지 검토 (만든 AI와 다른 새 세션)."""
 

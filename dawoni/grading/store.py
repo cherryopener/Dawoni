@@ -5,6 +5,7 @@ exams/<시험ID>/exam.json
               /keys/<문항>.json            (강사 해설지)
               /solutions/<문항>.json
               /rubrics/<문항>.json
+              /rubrics_retired/<문항>.json  (문항을 고쳐 비켜 둔 루브릭 — 판 번호를 잇는다)
               /students/<학생>.json         (표지에서 읽은 이름·반·학교, 강사 점수)
               /transcripts/<학생>/<문항>.json
               /grades/<학생>/<문항>.json
@@ -133,6 +134,18 @@ class ExamStore:
 
     def rubric(self, q: str) -> Rubric | None:
         return _load(self._q("rubrics", q), Rubric)
+
+    def retire_rubric(self, q: str) -> None:
+        """문항을 고쳐 맞지 않게 된 루브릭을 `rubrics_retired/`로 비켜 둔다 (지우지 않음).
+        다시 만들 때 판 번호를 이어 가야 예전 판으로 채점한 결과가 '다시 채점 필요'로 보인다."""
+        src = self._q("rubrics", q)
+        if src.exists():
+            dst = self._q("rubrics_retired", q)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            src.replace(dst)
+
+    def retired_rubric(self, q: str) -> Rubric | None:
+        return _load(self._q("rubrics_retired", q), Rubric)
 
     def save_candidate_matches(self, m: CandidateMatches) -> None:
         write_model_atomic(self._q("candidate_matches", m.question_number), m)

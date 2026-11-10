@@ -1,5 +1,5 @@
 import { AlertTriangle, ArrowRight, Check, Pencil, Plus, ScanSearch, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { RichText } from "@/components/Math";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,8 +70,21 @@ function sameKey(a: KeyFields, b: KeyFields): boolean {
 
 let nextId = 1;
 
-/** 소문항(더하기·빼기·표시·유형·배점), 문항 유형, 본문, 해설을 한 번에 고친다. 루브릭을 만들기 전에만. */
-function QuestionEditor({ q, d, onDone, onCancel }: { q: ExamQuestion; d: QuestionDetail; onDone: (notes: string[]) => void; onCancel: () => void }) {
+/** 소문항(더하기·빼기·표시·유형·배점), 문항 유형, 본문, 해설을 한 번에 고친다.
+ * `reset`: 루브릭이 있는 문항 — 강사가 확인했으니 해설 말고 다른 것을 고치면 루브릭을 비켜 둔다. */
+function QuestionEditor({
+  q,
+  d,
+  reset,
+  onDone,
+  onCancel,
+}: {
+  q: ExamQuestion;
+  d: QuestionDetail;
+  reset: string;
+  onDone: (notes: string[]) => void;
+  onCancel: () => void;
+}) {
   const { base } = useExam();
   const by = useTeacher();
   const act = useAction();
@@ -119,10 +132,13 @@ function QuestionEditor({ q, d, onDone, onCancel }: { q: ExamQuestion; d: Questi
           points: rows.length ? null : Number(points),
           parts: rows.map((r) => ({ label: r.label.trim(), points: Number(r.points), kind: r.kind, was: r.was })),
         };
-        const res = await api.put<{ notes: string[] }>(`${path}/structure`, body);
+        const res = await api.put<{ notes: string[] }>(`${path}/structure${reset}`, body);
         notes.push(...res.notes);
       }
-      if (stemChanged) await api.put(`${path}/stem`, { text: stem });
+      if (stemChanged) {
+        const res = await api.put<{ notes: string[] }>(`${path}/stem${reset}`, { text: stem });
+        notes.push(...res.notes.filter((n) => !notes.includes(n)));
+      }
       if (keyChanged) {
         const parts = rows.length
           ? rows.map((r) => ({ label: r.label.trim(), answer: r.answer, solution: r.solution, credit_text: r.credit }))
@@ -133,7 +149,7 @@ function QuestionEditor({ q, d, onDone, onCancel }: { q: ExamQuestion; d: Questi
     });
   const remove = () =>
     act.run(async () => {
-      await api.del(`${base}/questions/${enc(q.number)}`);
+      await api.del(`${base}/questions/${enc(q.number)}${reset}`);
       setConfirmDelete(false);
       onDone([]);
     });
@@ -272,8 +288,17 @@ function QuestionCard({
   const [editing, setEditing] = useState(false);
   const [region, setRegion] = useState<RegionWhat | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
+  /** 루브릭이 있는 문항을 고치려 할 때 먼저 묻는다: 확인하면 이 카드에서는 고칠 수 있다 */
+  const [ask, setAsk] = useState<(() => void) | null>(null);
+  const [unlocked, setUnlocked] = useState(false);
   const act = useAction();
   const key = d?.key;
+  const open = locked && !unlocked;
+  const reset = locked ? "?reset_rubric=true" : "";
+  const guard = (then: () => void) => (open ? setAsk(() => then) : then());
+  useEffect(() => {
+    if (!locked) setUnlocked(false); // 루브릭을 다시 만들면 다시 묻는다
+  }, [locked]);
   const rows = q.parts.length ? q.parts : [{ label: "", points: q.points, kind: null }];
   const kindOf = (k: string | null) => (k ? KIND[k] : q.item.item_type === "essay" ? "서술형" : q.item.item_type === "multiple_choice" ? "객관식" : "단답형");
   const save = () =>
@@ -282,7 +307,7 @@ function QuestionCard({
       const body = q.parts.length
         ? { parts: Object.fromEntries(q.parts.map((p) => [p.label, value(p.label, p.points)])) }
         : { points: value("", q.points) };
-      await api.put(`${base}/questions/${enc(q.number)}/points`, body);
+      await api.put(`${base}/questions/${enc(q.number)}/points${reset}`, body);
       setPoints({});
       onSaved();
     });
@@ -292,7 +317,6 @@ function QuestionCard({
       onSaved();
     });
   const dirty = Object.keys(points).length > 0;
-  const lockedWhy = "루브릭을 만든 문항은 고칠 수 없습니다";
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3">
@@ -321,16 +345,10 @@ function QuestionCard({
         )}
         {!editing && (
           <>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={locked}
-              title={locked ? lockedWhy : undefined}
-              onClick={() => setRegion(d?.stem_missing || key ? "question" : "key")}
-            >
+            <Button size="sm" variant="outline" onClick={() => guard(() => setRegion(d?.stem_missing || key ? "question" : "key"))}>
               <ScanSearch /> 원본에서 읽기
             </Button>
-            <Button size="sm" variant="outline" disabled={locked || !d} title={locked ? lockedWhy : undefined} onClick={() => setEditing(true)}>
+            <Button size="sm" variant="outline" disabled={!d} onClick={() => guard(() => setEditing(true))}>
               <Pencil /> 고치기
             </Button>
           </>
@@ -347,6 +365,7 @@ function QuestionCard({
         <QuestionEditor
           q={q}
           d={d}
+          reset={reset}
           onCancel={() => setEditing(false)}
           onDone={(n) => {
             setEditing(false);
@@ -378,10 +397,12 @@ function QuestionCard({
                         type="number"
                         min={0}
                         step={0.5}
-                        disabled={locked}
+                        readOnly={open}
+                        title={open ? "루브릭을 만든 문항 — 눌러서 고치기" : undefined}
+                        onClick={() => open && guard(() => undefined)}
                         value={points[p.label] ?? String(p.points)}
                         onChange={(e) => setPoints({ ...points, [p.label]: e.target.value })}
-                        className="h-8 w-16 rounded-md border border-line bg-card px-2 text-right outline-none focus:border-accent disabled:opacity-60"
+                        className="h-8 w-16 rounded-md border border-line bg-card px-2 text-right outline-none focus:border-accent read-only:cursor-pointer read-only:opacity-60"
                       />
                       <span className="ml-1 text-text-3">점</span>
                     </td>
@@ -428,10 +449,39 @@ function QuestionCard({
         parts={q.parts}
         sourcePages={pages}
         initial={region ?? "question"}
+        resetRubric={locked}
         onDone={(n) => {
           setNotes(n);
           onSaved();
         }}
+      />
+      <Dialog
+        open={ask !== null}
+        onOpenChange={(v) => !v && setAsk(null)}
+        title={`${q.number}번은 루브릭을 이미 만들었습니다`}
+        desc={
+          <>
+            소문항·배점·본문을 고쳐 저장하면 이 문항의 루브릭은 맞지 않게 되어 비켜 둡니다 (지우지 않고 따로 보관). 고친 뒤 루브릭을 다시 만들고 승인해
+            주세요 — 이미 채점한 답안은 다시 채점해야 합니다. 해설만 고치면 루브릭은 그대로입니다.
+          </>
+        }
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAsk(null)}>
+              취소
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setUnlocked(true);
+                ask?.();
+                setAsk(null);
+              }}
+            >
+              고치기
+            </Button>
+          </>
+        }
       />
     </Card>
   );
@@ -539,7 +589,7 @@ export function ReadStep() {
         )}
         <Help>
           잘못 읽혔으면 문항마다 '고치기'로 소문항·배점·해설을 직접 고치거나, '원본에서 읽기'로 시험지에서 그 부분을 지정해 다시 읽힙니다. 배점 표시가
-          없는 시험지는 소문항마다 2점으로 두었습니다. 루브릭을 만들기 전에 맞게 고쳐 주세요.
+          없는 시험지는 소문항마다 2점으로 두었습니다. 루브릭을 만든 뒤에 소문항·배점·본문을 고치면 그 문항의 루브릭은 다시 만듭니다.
         </Help>
         <div className="flex-1" />
         {noRubric ? (

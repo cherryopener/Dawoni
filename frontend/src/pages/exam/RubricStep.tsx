@@ -1,11 +1,12 @@
-import { Check, Lock, ShieldCheck, Sparkles, X } from "lucide-react";
+import { Check, Lock, Pencil, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { RichText } from "@/components/Math";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { Dialog } from "@/components/ui/dialog";
 import { Help } from "@/components/ui/help";
-import { ErrorNote, Progress } from "@/components/ui/misc";
+import { ErrorNote, Input, Progress } from "@/components/ui/misc";
 import { api, enc, useAction, useApi, waitJob } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useTeacher } from "@/lib/session";
@@ -202,6 +203,192 @@ function Calibration({ q, rubric, onChanged }: { q: ExamQuestion; rubric: Rubric
   );
 }
 
+// ---------------------------------------------------------------- 루브릭 고치기
+
+type ItemRow = { key: number; id: string; part: string | null; points: string; criterion: string; evidence_hint: string };
+type PartialRow = { key: number; item_id: string; condition: string; points: string };
+let nextKey = 1;
+
+const textarea =
+  "w-full rounded-lg border border-line bg-card px-3 py-2 text-text outline-none placeholder:text-text-3 focus:border-accent";
+
+/** 채점 항목(기준·배점·소문항)과 부분 점수를 고친다. 승인·확정한 루브릭이면 새 판(초안)이 된다.
+ * 넓힌 표현·정답 후보는 아래 인정·제외로 정한다 (지운 항목을 가리키던 연결은 서버가 뗀다). */
+function RubricEditor({ q, r, onDone, onCancel }: { q: ExamQuestion; r: Rubric; onDone: () => void; onCancel: () => void }) {
+  const { base } = useExam();
+  const act = useAction();
+  const [items, setItems] = useState<ItemRow[]>(() =>
+    r.items.map((i) => ({ key: nextKey++, id: i.id, part: i.part, points: String(i.points), criterion: i.criterion, evidence_hint: i.evidence_hint })),
+  );
+  const [partial, setPartial] = useState<PartialRow[]>(() =>
+    r.partial.map((x) => ({ key: nextKey++, item_id: x.item_id, condition: x.condition, points: String(x.points) })),
+  );
+  const coded = new Set(r.answer_rules.map((a) => a.item_id));
+  const labels = q.parts.map((p) => p.label);
+  const total = items.reduce((a, i) => a + (Number(i.points) || 0), 0);
+  const sumOf = (label: string) => items.filter((i) => i.part === label).reduce((a, i) => a + (Number(i.points) || 0), 0);
+  const partsOff = q.parts.filter((p) => Math.abs(sumOf(p.label) - p.points) > 1e-9);
+  const totalOk = Math.abs(total - q.points) < 1e-9;
+  const filled = items.every((i) => i.criterion.trim() && Number(i.points) > 0) && partial.every((x) => x.condition.trim() && x.points !== "");
+  const approved = r.status === "approved";
+
+  const setItem = (key: number, patch: Partial<ItemRow>) => setItems((xs) => xs.map((x) => (x.key === key ? { ...x, ...patch } : x)));
+  const setPart = (key: number, patch: Partial<PartialRow>) => setPartial((xs) => xs.map((x) => (x.key === key ? { ...x, ...patch } : x)));
+  const addItem = (part: string | null) =>
+    setItems((xs) => {
+      const n = Math.max(0, ...xs.map((x) => Number(x.id.slice(1)) || 0), ...r.items.map((x) => Number(x.id.slice(1)) || 0)) + 1;
+      return [...xs, { key: nextKey++, id: `R${n}`, part, points: "", criterion: "", evidence_hint: "" }];
+    });
+  const removeItem = (row: ItemRow) => {
+    setItems((xs) => xs.filter((x) => x.key !== row.key));
+    setPartial((xs) => xs.filter((x) => x.item_id !== row.id));
+  };
+  const save = () =>
+    act.run(async () => {
+      await api.put(`${base}/questions/${enc(q.number)}/rubric/items`, {
+        items: items.map((i) => ({ id: i.id, part: i.part, points: Number(i.points), criterion: i.criterion.trim(), evidence_hint: i.evidence_hint.trim() })),
+        partial: partial.map((x) => ({ item_id: x.item_id, condition: x.condition.trim(), points: Number(x.points) })),
+      });
+      onDone();
+    });
+
+  const groups: (string | null)[] = labels.length ? labels : [null];
+  return (
+    <Card>
+      <CardHeader
+        title="채점 항목 고치기"
+        desc={
+          approved
+            ? "저장하면 새 판(초안)이 됩니다. 다시 승인·확정해야 하고, 이미 채점한 답안은 '다시 채점 필요'가 됩니다."
+            : "항목 배점의 합이 문항 배점과 같아야 저장할 수 있습니다."
+        }
+      />
+      <CardBody className="flex flex-col gap-4 pt-3">
+        {groups.map((label) => {
+          const part = label === null ? undefined : q.parts.find((p) => p.label === label);
+          const rows = items.filter((i) => (i.part ?? null) === label);
+          return (
+            <div key={label ?? ""} className="flex flex-col gap-2">
+              {part && (
+                <div className="flex items-center gap-2 text-[13px]">
+                  <span className="font-medium">{partLabel(q.number, label)}</span>
+                  <span className={cn("text-text-3", Math.abs(sumOf(part.label) - part.points) > 1e-9 && "text-warn")}>
+                    항목 합 {pts(sumOf(part.label))}점 / 소문항 {pts(part.points)}점
+                  </span>
+                </div>
+              )}
+              {rows.map((it) => (
+                <div key={it.key} className="rounded-lg border border-line p-3">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="w-10 text-text-3">{it.id}</span>
+                    {labels.length > 1 && (
+                      <select
+                        aria-label={`${it.id} 소문항`}
+                        value={it.part ?? ""}
+                        onChange={(e) => setItem(it.key, { part: e.target.value })}
+                        className="h-8 rounded-md border border-line bg-card px-2 outline-none focus:border-accent"
+                      >
+                        {labels.map((l) => (
+                          <option key={l} value={l}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <Input
+                      type="number"
+                      min={0}
+                      step={0.5}
+                      value={it.points}
+                      onChange={(e) => setItem(it.key, { points: e.target.value })}
+                      aria-label={`${it.id} 배점`}
+                      className="h-8 w-20 text-right"
+                    />
+                    <span className="text-text-3">점</span>
+                    <div className="flex-1" />
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`${it.id} 지우기`}
+                      disabled={coded.has(it.id)}
+                      title={coded.has(it.id) ? "코드 채점 항목은 지울 수 없습니다 (정답은 정답 고치기로)" : undefined}
+                      onClick={() => removeItem(it)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-[4.5rem_1fr] items-start gap-x-2 gap-y-1.5">
+                    <span className="pt-2 text-[13px] text-text-3">기준</span>
+                    <textarea
+                      rows={2}
+                      value={it.criterion}
+                      onChange={(e) => setItem(it.key, { criterion: e.target.value })}
+                      placeholder="무엇이 답안에 있으면 이 점수를 주는가 (식은 \( \)로)"
+                      className={textarea}
+                    />
+                    <span className="pt-2 text-[13px] text-text-3">찾을 것</span>
+                    <Input value={it.evidence_hint} onChange={(e) => setItem(it.key, { evidence_hint: e.target.value })} placeholder="답안에서 찾을 식·문장의 예" />
+                    {partial
+                      .filter((x) => x.item_id === it.id)
+                      .map((x) => (
+                        <div key={x.key} className="contents">
+                          <span className="pt-2 text-[13px] text-text-3">부분 점수</span>
+                          <div className="flex items-center gap-2">
+                            <Input value={x.condition} onChange={(e) => setPart(x.key, { condition: e.target.value })} placeholder="예: 식은 맞고 계산 실수" className="flex-1" />
+                            <Input
+                              type="number"
+                              min={0}
+                              step={0.5}
+                              value={x.points}
+                              onChange={(e) => setPart(x.key, { points: e.target.value })}
+                              aria-label="부분 점수"
+                              className="h-9 w-20 text-right"
+                            />
+                            <span className="text-text-3">점</span>
+                            <Button size="sm" variant="ghost" aria-label="부분 점수 지우기" onClick={() => setPartial((xs) => xs.filter((y) => y.key !== x.key))}>
+                              <X />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="mt-1"
+                    onClick={() => setPartial((xs) => [...xs, { key: nextKey++, item_id: it.id, condition: "", points: "" }])}
+                  >
+                    <Plus /> 부분 점수
+                  </Button>
+                </div>
+              ))}
+              <div>
+                <Button size="sm" variant="ghost" onClick={() => addItem(label)}>
+                  <Plus /> 항목{part ? ` (${label})` : ""}
+                </Button>
+              </div>
+            </div>
+          );
+        })}
+
+        <div className={cn("text-[13px]", totalOk && !partsOff.length ? "text-text-2" : "text-warn")}>
+          항목 합 {pts(total)}점 / 문항 {pts(q.points)}점
+          {partsOff.length > 0 && ` · 소문항 합이 다름: ${partsOff.map((p) => p.label).join(", ")} (저장은 됩니다)`}
+        </div>
+        {act.error && <ErrorNote message={act.error} />}
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="ghost" disabled={act.busy} onClick={onCancel}>
+            취소
+          </Button>
+          <Button variant="primary" disabled={act.busy || !totalOk || !filled} onClick={() => void save()}>
+            <Check /> 저장
+          </Button>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
 /** ② 루브릭: 해설지 넓히기 결과를 인정/빼고 승인 → 강사 손채점과 맞춰 보고 확정 (PLAN §4, §6). */
 export function RubricStep() {
   const { base, detail, reload } = useExam();
@@ -210,6 +397,8 @@ export function RubricStep() {
   const { details, error, reload: reloadDetails } = useQuestionDetails(base, numbers);
   const first = numbers.find((n) => stateOf(details[n]?.rubric) !== "확정") ?? numbers[0]!;
   const [picked, setPicked] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [askRemake, setAskRemake] = useState(false);
   const sel = picked ?? first;
   const q = detail.exam.questions.find((x) => x.number === sel)!;
   const r = details[sel]?.rubric;
@@ -220,7 +409,11 @@ export function RubricStep() {
     reloadDetails();
   };
   const call = (f: () => Promise<unknown>) => act.run(async () => void (await f(), changed()));
-  const make = () => call(async () => waitJob(await api.post<Job>(`${base}/rubrics`, { questions: [sel], by })));
+  const make = () =>
+    call(async () => {
+      setAskRemake(false);
+      await waitJob(await api.post<Job>(`${base}/rubrics`, { questions: [sel], by }));
+    });
   const approve = () => call(() => api.post(`${base}/questions/${enc(sel)}/rubric/approve`, { by }));
   const finalize = () => call(() => api.post(`${base}/calibration/${enc(sel)}/finalize`, { by }));
   const decide = (id: string, v: "accept" | "reject") =>
@@ -236,7 +429,10 @@ export function RubricStep() {
             <button
               key={n}
               type="button"
-              onClick={() => setPicked(n)}
+              onClick={() => {
+                setPicked(n);
+                setEditing(false);
+              }}
               className={cn("flex w-full cursor-pointer items-center rounded-lg px-3 py-2.5 text-left hover:bg-muted", sel === n && "bg-muted")}
             >
               <span className="flex-1">{n}번</span>
@@ -252,17 +448,27 @@ export function RubricStep() {
             <Badge tone={TONE[state]}>{state}</Badge>
             {r && <span className="text-[12px] text-text-3">{r.version}판</span>}
             <div className="flex-1" />
+            {r && !editing && (
+              <>
+                <Button variant="outline" disabled={act.busy} onClick={() => setEditing(true)}>
+                  <Pencil /> 고치기
+                </Button>
+                <Button variant="ghost" disabled={act.busy} onClick={() => setAskRemake(true)}>
+                  <RefreshCw /> 다시 만들기
+                </Button>
+              </>
+            )}
             {state === "없음" && (
               <Button variant="primary" disabled={act.busy} onClick={() => void make()}>
                 {act.busy ? "만드는 중…" : "루브릭 만들기"}
               </Button>
             )}
-            {state === "초안" && (
+            {state === "초안" && !editing && (
               <Button variant="primary" disabled={act.busy || proposed > 0} onClick={() => void approve()}>
                 <Check /> 승인 {proposed > 0 && `(남은 확인 ${proposed})`}
               </Button>
             )}
-            {state === "승인" && (
+            {state === "승인" && !editing && (
               <Button variant="primary" disabled={act.busy} onClick={() => void finalize()}>
                 <ShieldCheck /> 확정
               </Button>
@@ -275,7 +481,19 @@ export function RubricStep() {
           </div>
           {(error || act.error) && <ErrorNote message={(act.error ?? error)!} />}
 
-          {r && (
+          {r && editing && (
+            <RubricEditor
+              q={q}
+              r={r}
+              onCancel={() => setEditing(false)}
+              onDone={() => {
+                setEditing(false);
+                changed();
+              }}
+            />
+          )}
+
+          {r && !editing && (
             <Card>
               <CardHeader title="채점 항목" desc={r.based_on_key ? "해설지의 부분 점수를 옮겼습니다." : "AI 풀이로 만든 항목입니다."} />
               <CardBody className="pt-3">
@@ -289,6 +507,13 @@ export function RubricStep() {
                           정답: {a.all_correct ? "전원 정답" : a.answers.join(" 또는 ")}
                         </span>
                       ))}
+                      {r.partial
+                        .filter((x) => x.item_id === it.id)
+                        .map((x) => (
+                          <span key={x.condition} className="block text-[12px] text-text-2">
+                            부분 점수: <RichText text={x.condition} /> → {pts(x.points)}점
+                          </span>
+                        ))}
                     </span>
                     <span className="font-medium">{pts(it.points)}점</span>
                   </div>
@@ -337,9 +562,25 @@ export function RubricStep() {
             </Card>
           )}
 
-          {r && r.status === "approved" && <Calibration q={q} rubric={r} onChanged={changed} />}
+          {r && r.status === "approved" && !editing && <Calibration q={q} rubric={r} onChanged={changed} />}
         </div>
       </div>
+      <Dialog
+        open={askRemake}
+        onOpenChange={setAskRemake}
+        title={`${sel}번 루브릭을 다시 만들까요?`}
+        desc="해설지(또는 AI 풀이)로 새 초안을 만듭니다. 고친 채점 항목과 인정·제외한 정답 후보는 새 초안으로 바뀌고, 다시 승인·확정해야 합니다. 객관식·단답형에서 고친 정답은 그대로 둡니다."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAskRemake(false)}>
+              취소
+            </Button>
+            <Button variant="primary" disabled={act.busy} onClick={() => void make()}>
+              {act.busy ? "만드는 중…" : "다시 만들기"}
+            </Button>
+          </>
+        }
+      />
     </div>
   );
 }

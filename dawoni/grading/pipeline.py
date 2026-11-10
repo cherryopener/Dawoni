@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from pydantic import ValidationError
 from rapidfuzz import fuzz
 
 from dawoni.config import AgentName
@@ -66,9 +67,12 @@ from dawoni.models.grading import (
     KeyRubricDraft,
     PartAnswerSides,
     PartCheck,
+    PartialCredit,
     Rubric,
     RubricAudit,
     RubricDraft,
+    RubricEdit,
+    RubricItem,
     ScopedSolution,
     SolutionDraft,
     StudentAnswerSide,
@@ -530,6 +534,56 @@ def edit_rubric(
         agent=previous.agent,
         model=previous.model,
     )
+
+
+def edit_rubric_items(
+    previous: Rubric, edit: RubricEdit, q: ExamQuestion, solution: SolutionDraft | None
+) -> Rubric:
+    """루브릭 화면에서 강사가 채점 항목·부분 점수를 고친다 (승인·확정한 뒤에도).
+
+    승인된 루브릭이면 새 판(초안)이 되고 다시 승인해야 채점에 쓴다 — 예전 판으로 채점한 결과는
+    '다시 채점 필요'가 된다. 지운 항목을 가리키던 넓힌 표현·정답 후보의 연결은 떼어 낸다."""
+    old_items = {i.id: i for i in previous.items}
+    items = [
+        old_items[e.id].model_copy(update=e.model_dump())
+        if e.id in old_items
+        else RubricItem(**e.model_dump())
+        for e in edit.items
+    ]
+    ids = {i.id for i in items}
+    old_partial = {(p.item_id, p.condition): p for p in previous.partial}
+    partial = [
+        PartialCredit(
+            **p.model_dump(),
+            # 강사가 적은 부분 점수는 근거 있는 것 (AI 제안을 그대로 두면 예전 표시)
+            from_key=old.from_key if (old := old_partial.get((p.item_id, p.condition))) else True,
+        )
+        for p in edit.partial
+    ]
+    alts = [
+        a.model_copy(update={"item_ids": [x for x in a.item_ids if x in ids]})
+        for a in previous.accepted_alternatives
+        if any(x in ids for x in a.item_ids)
+    ]
+    cands = [
+        c.model_copy(update={"item_ids": [x for x in c.item_ids if x in ids]})
+        for c in previous.candidates
+    ]
+    data = {k: getattr(previous, k) for k in RubricDraft.model_fields}
+    data.update(items=items, partial=partial, accepted_alternatives=alts, candidates=cands)
+    try:
+        draft = RubricDraft.model_validate(data)
+    except ValidationError as e:
+        raise PipelineError(_validation_message(e)) from e
+    before = RubricDraft.model_validate({k: getattr(previous, k) for k in RubricDraft.model_fields})
+    if draft == before:
+        return previous  # 바뀐 것이 없으면 승인을 풀지 않는다
+    return edit_rubric(previous, draft, q, solution)
+
+
+def _validation_message(e: ValidationError) -> str:
+    msgs = [str(x["msg"]).removeprefix("Value error, ") for x in e.errors()]
+    return "; ".join(m for m in msgs if m) or str(e)
 
 
 def decide_candidates(rubric: Rubric, accept: list[str], reject: list[str]) -> Rubric:

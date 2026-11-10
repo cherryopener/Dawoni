@@ -139,7 +139,8 @@ def rubric_questions(
     def one(q: ExamQuestion) -> Rubric:
         with _working(svc, store, "rubric", q.number, by):
             key = store.answer_key(q.number)
-            previous = store.rubric(q.number)
+            # 문항을 고쳐 비켜 둔 루브릭도 앞 판 — 판 번호가 이어져야 예전 채점이 '다시 채점 필요'
+            previous = store.rubric(q.number) or store.retired_rubric(q.number)
             if q.number in coded:
                 r = code_rubric(q, key, previous).model_copy(update={"created_by": by})
                 store.save_rubric(r)

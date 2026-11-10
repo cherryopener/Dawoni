@@ -491,6 +491,13 @@ def extract_exam(
                 warnings.append(
                     f"문항 {pr.region.label}: 배점 표시가 없어 {points:g}점으로 둠 — 확인 필요"
                 )
+            elif pr.region.points is None and pr.region.text.strip():
+                # PDF 글자에 배점 표시가 없는데 AI가 배점을 냈다 — 그림에서 읽었거나 지어냈다
+                # (문서는 지어내지 못하게 막지만, PDF는 글꼴 탓에 표시가 깨져 그림이 맞을 때도 있다)
+                warnings.append(
+                    f"문항 {pr.region.label}: PDF 글자에서 배점 표시를 찾지 못해 AI가 읽은 "
+                    f"{points:g}점으로 둠 — 시험지에 배점이 없으면 고쳐 주세요"
+                )
             parts = q.parts
             if parts and abs(sum(p.points for p in parts) - points) > 1e-9:
                 warnings.append(

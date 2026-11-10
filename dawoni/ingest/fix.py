@@ -5,7 +5,11 @@
 레이아웃이 문항을 잘못 나눠 AI는 1·2번을 보지도 못함). 새 정보가 있어야 결과가 달라진다:
 강사가 정한 구조(소문항·배점)와 강사가 정한 영역.
 
-- 고치기는 그 문항의 루브릭을 만들기 전에만 (루브릭 항목 배점·소문항이 문항에 맞춰져 있다).
+- 루브릭 항목 배점·소문항이 문항에 맞춰져 있어, 루브릭이 있는 문항을 고치면 루브릭이
+  맞지 않게 된다. 강사가 확인하면(`reset_rubric`) 고치면서 루브릭을 `rubrics_retired/`로
+  비켜 두고, 루브릭은 다시 만든다 (2026-11-10 사용자 요청 — '확인하고 루브릭 만들기' 뒤에
+  문항을 고칠 길이 없었다). 다시 만들면 판 번호가 이어져 예전 판으로 채점한 결과는
+  '다시 채점 필요'가 된다.
   해설은 언제든 (지금의 해설 고치기와 같음 — 루브릭에 반영하려면 다시 만든다).
 - 문항·소문항 표시를 더하고 빼는 것은 학생 답안을 판독하기 전에만 (판독문이 그 표시를 쓴다).
 - 소문항 표시를 바꾸면 해설지의 그 소문항도 따라간다 (`PartEdit.was`). 새 소문항은 빈 해설.
@@ -102,9 +106,21 @@ class Box(DawoniModel):
 # ---------------------------------------------------------------- 공통
 
 
-def _locked(store: ExamStore, number: str) -> None:
-    if store.rubric(number) is not None:
-        raise PipelineError(f"문항 {number}: 루브릭이 이미 있어 고칠 수 없습니다.")
+def check_rubric_lock(store: ExamStore, number: str, reset: bool) -> None:
+    """루브릭이 있는 문항은 강사가 루브릭을 비켜 두기로 확인했을 때만 고친다."""
+    if not reset and store.rubric(number) is not None:
+        raise PipelineError(
+            f"문항 {number}: 루브릭이 이미 있습니다. 고치면 루브릭을 다시 만들어야 합니다 "
+            "— 확인하고 고쳐 주세요."
+        )
+
+
+def retire_for_edit(store: ExamStore, number: str) -> list[str]:
+    """고친 문항의 루브릭을 비켜 둔다 (고치기가 통과한 뒤에). 돌려주는 것: 강사에게 알릴 말."""
+    if store.rubric(number) is None:
+        return []
+    store.retire_rubric(number)
+    return [f"문항 {number}의 루브릭을 비켜 뒀습니다 — 루브릭을 다시 만들고 승인해 주세요"]
 
 
 def _no_transcripts(store: ExamStore) -> None:
@@ -169,12 +185,12 @@ def follow_key(store: ExamStore, new: ExamQuestion, was: dict[str, str | None]) 
 
 
 def edit_structure(
-    store: ExamStore, number: str, edit: StructureEdit
+    store: ExamStore, number: str, edit: StructureEdit, *, reset_rubric: bool = False
 ) -> tuple[ExamQuestion, list[str]]:
     """소문항 더하기·빼기·표시·유형·배점, 문항 유형(서술형·단답형). (고친 문항, 알림)."""
     exam = store.exam()
     q = exam.question(number)
-    _locked(store, number)
+    check_rubric_lock(store, number, reset_rubric)
     labels = [p.label.strip() for p in edit.parts]
     if any(not label for label in labels):
         raise PipelineError("소문항 표시를 적어 주세요.")
@@ -203,7 +219,7 @@ def edit_structure(
         item = item.model_copy(update={"item_type": edit.item_type})
     item = item.model_copy(update={"points": points})
     new = _save(store, exam, q.model_copy(update={"points": points, "parts": parts, "item": item}))
-    notes: list[str] = []
+    notes = retire_for_edit(store, number)
     if labels != _labels(q):
         was = {label: p.was for label, p in zip(labels, edit.parts, strict=True)}
         if not labels:  # 소문항을 모두 지움 → 문항 전체 해설 (소문항이 하나였으면 그 해설)
@@ -244,16 +260,17 @@ def add_question(store: ExamStore, body: NewQuestion) -> ExamQuestion:
     return new
 
 
-def delete_question(store: ExamStore, number: str) -> None:
-    """잘못 생긴 문항 지우기 (해설지·풀이·그림도)."""
+def delete_question(store: ExamStore, number: str, *, reset_rubric: bool = False) -> None:
+    """잘못 생긴 문항 지우기 (해설지·풀이·그림도. 루브릭은 비켜 둔다)."""
     exam = store.exam()
     exam.question(number)
-    _locked(store, number)
+    check_rubric_lock(store, number, reset_rubric)
     _no_transcripts(store)
     if len(exam.questions) == 1:
         raise PipelineError("문항이 하나뿐이라 지울 수 없습니다.")
     for kind in ("keys", "solutions", "candidate_matches"):
         store.drop(kind, number)
+    store.retire_rubric(number)
     shutil.rmtree(store.root / "figures" / safe_name(number), ignore_errors=True)
     questions = [q for q in exam.questions if q.number != number]
     store.save_exam(exam.model_copy(update={"questions": questions}))
@@ -295,16 +312,20 @@ def stem_from_text(s: str, item: ItemContent) -> list[Block]:
     return out
 
 
-def set_stem(store: ExamStore, number: str, s: str) -> ExamQuestion:
+def set_stem(
+    store: ExamStore, number: str, s: str, *, reset_rubric: bool = False
+) -> tuple[ExamQuestion, list[str]]:
+    """(고친 문항, 알림)."""
     exam = store.exam()
     q = exam.question(number)
-    _locked(store, number)
+    check_rubric_lock(store, number, reset_rubric)
     item = ItemContent.model_validate(
         q.item.model_copy(update={"stem": stem_from_text(s, q.item)}).model_dump()
     )
     new = _save(store, exam, q.model_copy(update={"item": item}))
+    notes = retire_for_edit(store, number)
     _stale(store, number)
-    return new
+    return new, notes
 
 
 # ---------------------------------------------------------------- 해설 직접 넣기
@@ -446,14 +467,20 @@ class RegionResult:
 
 
 def read_question_region(
-    svc: Services, store: ExamStore, number: str, boxes: list[Box], pasted: list[Path]
+    svc: Services,
+    store: ExamStore,
+    number: str,
+    boxes: list[Box],
+    pasted: list[Path],
+    *,
+    reset_rubric: bool = False,
 ) -> RegionResult:
     """문항 본문을 강사가 지정한 영역에서 다시 읽는다. 강사가 정한 소문항·배점은 그대로."""
     if not boxes and not pasted:
         raise PipelineError("원본에서 영역을 끌어 지정하거나 그림을 붙여 넣어 주세요.")
     exam = store.exam()
     q = exam.question(number)
-    _locked(store, number)
+    check_rubric_lock(store, number, reset_rubric)
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
     subject = q.item.subject or scope.subject
     work = _work(store, "region_reads", number)
@@ -498,6 +525,7 @@ def read_question_region(
         }
     )
     new = _save(store, exam, new)
+    notes += retire_for_edit(store, number)
     if _labels(new) != _labels(q):
         lost = follow_key(store, new, {label: label for label in _labels(new)})
         if lost:
