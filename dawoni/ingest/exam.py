@@ -286,9 +286,15 @@ def text_beyond_pdf(r: Region) -> bool:
 
 
 def check_page(
-    out: PageExtraction, regions: list[Region], subject: str | None, *, grounded: bool = True
+    out: PageExtraction,
+    regions: list[Region],
+    subject: str | None,
+    *,
+    grounded: bool = True,
+    doc: bool = False,
 ) -> list[str]:
-    """`grounded`: 본문 한글이 PDF 글자에 있는지 본다 (붙여 넣은 그림만 있으면 볼 글자가 없다)."""
+    """`grounded`: 본문 한글이 PDF 글자에 있는지 본다 (붙여 넣은 그림만 있으면 볼 글자가 없다).
+    `doc`: 문서(DOCX·HWPX)는 코드가 읽은 배점 표시가 맞다 — AI 배점이 다르면 고치게 한다."""
     problems: list[str] = []
     by_label = {r.label: r for r in regions}
     got = [q.label for q in out.questions]
@@ -323,6 +329,11 @@ def check_page(
             problems.append(
                 f"문항 {q.label}: 본문에 {UNGROUNDED} {outside:.0%} 들어갔다. "
                 "PDF 글자를 기준으로 그대로 옮길 것"
+            )
+        if doc and r.points and q.points is not None and abs(q.points - r.points) > 1e-9:
+            problems.append(
+                f"문항 {q.label}: 문서에 적힌 배점은 {r.points:g}점이다 (소문항에만 적혀 있으면 "
+                f"그 합). points를 {r.points:g}로"
             )
         problems += _check_parts(q, r)
         latex = [x.v for x in iter_runs(q.stem) if isinstance(x, MathRun)]
@@ -404,7 +415,7 @@ def extract_exam(
         page: int, group: list[PreparedRegion], regions: list[Region], cached: Path
     ) -> dict[str, ExtractedQuestion]:
         def check(out: PageExtraction, regions: list[Region] = regions) -> list[str]:
-            return check_page(out, regions, subject)
+            return check_page(out, regions, subject, doc=doc)
 
         files, slots = attachments_for(group)
         try:

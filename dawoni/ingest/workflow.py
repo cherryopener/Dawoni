@@ -56,7 +56,8 @@ def existing_exam(svc: Services, path: Path) -> AlreadyIngested | None:
 
 
 def readable_copy(path: Path, work_dir: Path) -> Path:
-    """앱이 직접 읽는 형식으로: `.hwp`는 설치된 한글로 HWPX를 만든다 (나머지는 그대로)."""
+    """앱이 직접 읽는 형식으로: `.hwp`는 HWPX로 바꾼다 (python-hwpx, 안 되면 Windows 한글 —
+    `convert.hwp_to_hwpx`). 나머지는 그대로."""
     suffix = path.suffix.lower()
     if suffix not in EXAM_SUFFIXES:
         raise IngestRefused(f"PDF·DOCX·HWPX·HWP 파일만 읽습니다: {path.name}")

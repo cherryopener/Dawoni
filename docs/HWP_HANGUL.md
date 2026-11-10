@@ -1,8 +1,9 @@
 # HWP 읽기와 한글 자동화 — 알려진 문제
 
-다워니는 HWPX(zip + XML)를 한글 없이 직접 읽는다. **HWP(바이너리)** 는 직접 못 읽어서, 그 PC에 설치된
-한글을 COM 자동화(`HWPFrame.HwpObject`)로 띄워 HWPX로 저장한 뒤 읽는다
-([`dawoni/ingest/convert.py`](../dawoni/ingest/convert.py)). 그래서 HWP는 PC의 한글 상태에 따라 실패할 수 있다.
+다워니는 HWPX(zip + XML)를 한글 없이 직접 읽는다. **HWP(바이너리)** 는 2026-11-10부터 먼저 python-hwpx로
+한글 없이 HWPX로 바꾼다 (맥에서도, 창 없이). python-hwpx가 실패하거나 수식·표 등을 다 옮기지 못했다고 할 때만
+그 PC에 설치된 한글을 COM 자동화(`HWPFrame.HwpObject`)로 띄워 HWPX로 저장한 뒤 읽는다
+([`dawoni/ingest/convert.py`](../dawoni/ingest/convert.py)). 아래 문제는 그 한글 경로에서만 생긴다.
 
 ## 1. 한글이 깔려 있는데 "한글이 설치되어 있지 않습니다" (2026-11-05)
 

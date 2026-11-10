@@ -46,8 +46,15 @@ _BARE_NUMBER = re.compile(r"^\s*\d{1,3}\s*[.．]\s*(?:[A-Za-z]{1,2})?\s*$")
 "7. 원운동" 같은 챕터 머리말은 해당하지 않는다."""
 MAX_STEP = 5
 """번호 흐름: 다음 문항 번호는 앞 번호보다 크고 이만큼 이내."""
-_POINTS = re.compile(r"[\[［~]\s*(?:총\s*)?(\d+(?:\.\d+)?)\s*점\s*[\]］₩]")
-"""배점 "[3점]" — 수능 PDF는 괄호가 글꼴 탓에 "~3점₩"로 나온다 (실측)."""
+_KINDS = r"(?:서술형|단답형|논술형|약술형|선택형|객관식|주관식)"
+_POINTS = re.compile(
+    r"[\[［~]\s*(?:" + _KINDS + r"\s*:?\s*)?(?:각\s*\d+(?:\.\d+)?\s*점\s*[/,]\s*)?"
+    r"(?:총\s*)?(\d+(?:\.\d+)?)\s*점\s*[\]］₩]"
+)
+"""배점 "[3점]", "[단답형 4점]", "[서술형 각 3점/총 9점]"(→ 9) — 수능 PDF는 괄호가 글꼴 탓에
+"~3점₩"로 나온다 (실측)."""
+_EACH_ONLY = re.compile(r"[\[［]\s*(?:" + _KINDS + r"\s*:?\s*)?각\s*\d+(?:\.\d+)?\s*점\s*[\]］]")
+""""[단답형 각 2점]" — 소문항 수를 알아야 합을 안다."""
 _TOTAL = re.compile(r"\[\s*총\s*(\d+(?:\.\d+)?)\s*점\s*\]")
 _SPLIT_TOTAL = re.compile(r"총\s*점\s*\[?\s*(\d+(?:\.\d+)?)\s*\]")
 """조각난 "[총 8점]": PDF가 "총 점"을 한 조각으로 두고 숫자·괄호를 따로 둬 "총 점 [ 8 ]",
@@ -55,9 +62,26 @@ _SPLIT_TOTAL = re.compile(r"총\s*점\s*\[?\s*(\d+(?:\.\d+)?)\s*\]")
 
 
 def marked_points(text: str) -> float | None:
-    """문항 글에 적힌 배점 — 총점 표시가 있으면 총점, 없으면 첫 "[N점]"."""
-    m = _TOTAL.search(text) or _SPLIT_TOTAL.search(text) or _POINTS.search(text)
-    return float(m.group(1)) if m else None
+    """문항 글에 적힌 배점.
+
+    - 총점 표시("[총 8점]", 조각난 "총 점 [ 8 ]")가 있으면 그것.
+    - 아니면 배점 표시들: 하나면 그것, 여럿이면 소문항마다 적은 것이라 그 합. 단 셋 이상인데
+      첫 표시가 나머지의 합이면 첫 표시가 문항 배점 (문항 머리에 "[8점]", 소문항에 "[3점]"·"[5점]").
+    - "[단답형 각 2점]"처럼 소문항 수를 알아야 하는 표시가 있으면 None.
+
+    실측(2026-11-10, 11월 월례평가 HWP): "1) … [단답형 4점]", "2) … [단답형 5점]"처럼 소문항에만
+    유형과 함께 적혀 하나도 읽지 못해, 9·8·13점 문항이 모두 자리값 4점이 됐다."""
+    m = _TOTAL.search(text) or _SPLIT_TOTAL.search(text)
+    if m:
+        return float(m.group(1))
+    if _EACH_ONLY.search(text):
+        return None
+    marks = [float(m.group(1)) for m in _POINTS.finditer(text)]
+    if not marks:
+        return None
+    if len(marks) >= 3 and abs(marks[0] - sum(marks[1:])) < 1e-9:
+        return marks[0]
+    return sum(marks)
 
 
 @dataclass(frozen=True)

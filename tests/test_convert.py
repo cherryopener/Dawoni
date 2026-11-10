@@ -1,9 +1,11 @@
-"""한글(COM)로 HWP → HWPX: 실패 이유별 안내, 보안 모듈 이름 (한글 없이 가짜 COM으로)."""
+"""HWP → HWPX: python-hwpx 먼저, 한글(COM)은 그 다음 — 실패 이유별 안내, 보안 모듈 이름
+(한글 없이 가짜 COM으로)."""
 
 from __future__ import annotations
 
 import sys
 import types
+from collections import Counter
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -91,3 +93,42 @@ def test_registers_security_module_by_registry_name(
     assert Hwp.calls[-1] == ("HWP", "HWPX")
     assert convert.register_security_module(Hwp()) == "내모듈"
     assert convert.KNOWN_MODULES[0] == "FilePathCheckerModuleExample"
+
+
+def test_python_hwpx_first_hangul_only_for_missing_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """python-hwpx로 바꾸고, 수식·표 같은 내용을 못 옮겼다고 할 때만 (Windows) 한글을 띄운다.
+    한글로도 안 되면 python-hwpx 결과를 쓴다. 맥은 한글을 부르지 않는다."""
+    calls: list[str] = []
+
+    def hangul(src: Path, dest: Path, fmt: str) -> Path:
+        calls.append(fmt)
+        dest.write_bytes(b"HANGUL")
+        return dest
+
+    def no_hangul(src: Path, dest: Path, fmt: str) -> Path:
+        raise convert.ConvertUnavailable("한글 없음")
+
+    skipped: Counter[str] = Counter({"master-page": 1})
+
+    def python_hwpx(src: Path) -> tuple[bytes, Counter[str]]:
+        return b"PYHWPX", skipped
+
+    monkeypatch.setattr(convert, "python_hwpx", python_hwpx)
+    monkeypatch.setattr(convert, "_hangul_save_as", hangul)
+    monkeypatch.setattr(convert.sys, "platform", "win32")
+    src = tmp_path / "a.hwp"
+
+    out = convert.hwp_to_hwpx(src, tmp_path / "o" / "1.hwpx")
+    assert out.read_bytes() == b"PYHWPX" and calls == [], "바탕쪽만 빠지면 한글을 띄우지 않음"
+    skipped["control-eqed"] = 2
+    out = convert.hwp_to_hwpx(src, tmp_path / "o" / "2.hwpx")
+    assert out.read_bytes() == b"HANGUL" and calls == ["HWPX"], "수식을 못 옮기면 한글로"
+    monkeypatch.setattr(convert, "_hangul_save_as", no_hangul)
+    out = convert.hwp_to_hwpx(src, tmp_path / "o" / "3.hwpx")
+    assert out.read_bytes() == b"PYHWPX", "한글도 안 되면 python-hwpx 결과"
+    monkeypatch.setattr(convert, "_hangul_save_as", hangul)
+    monkeypatch.setattr(convert.sys, "platform", "darwin")
+    out = convert.hwp_to_hwpx(src, tmp_path / "o" / "4.hwpx")
+    assert out.read_bytes() == b"PYHWPX" and calls == ["HWPX"], "맥은 한글을 부르지 않음"

@@ -20,6 +20,7 @@ import io
 import logging
 import re
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -69,6 +70,12 @@ class DocParagraph:
     """그림마다 바로 앞의 선지 번호 (①→1), 없으면 None."""
     note: bool = False
     """미주·각주 안의 문단 (학원 시험지의 답·해설)."""
+    note_lead: bool = False
+    """미주 안에서 그 미주의 번호("2)")보다 앞에 있는 문단 — 앞 미주의 끝이다.
+
+    한글·Word는 미주를 이어서 보여 주므로, 미주 번호 줄 앞에 친 글은 앞 미주 끝에 붙은 것처럼
+    보인다. 실측(2026-11-10, 11월 월례평가): 1-2)의 "[부분점수 없음]"과 2번의 부분 점수 기준이
+    다음 미주의 번호 앞에 들어 있어, 2번 해설이 "[부분점수 없음]"으로 시작했다."""
 
 
 @dataclass
@@ -85,11 +92,12 @@ IMAGE_MARK = "[그림]"
 class _Para:
     """문단 하나를 모으는 중: 글 조각 + 그림."""
 
-    def __init__(self, note: bool) -> None:
+    def __init__(self, note: bool, lead: bool = False) -> None:
         self.parts: list[str] = []
         self.images: list[str] = []
         self.marks: list[int | None] = []
         self.note = note
+        self.lead = lead
 
     def text(self, s: str) -> None:
         self.parts.append(s)
@@ -108,7 +116,13 @@ class _Para:
         text = re.sub(r"[ \t ]+", " ", "".join(self.parts)).strip()
         if not text and not self.images:
             return None
-        return DocParagraph(text, self.images, self.marks, self.note)
+        return DocParagraph(text, self.images, self.marks, self.note, self.lead)
+
+
+def _lead_count(blocks: list[_El], is_mark: Callable[[_El], bool]) -> int:
+    """미주의 문단·표 중 미주 번호가 든 것의 순번 — 그 앞의 것은 앞 미주 몫.
+    번호가 없는 미주(강사가 지움)는 0 (모두 이 미주 것)."""
+    return next((k for k, b in enumerate(blocks) if is_mark(b)), 0)
 
 
 # ---------------------------------------------------------------- DOCX
@@ -257,18 +271,29 @@ class _DocxReader:
             self.block(body, note=False, rels=self.rels)
         return self.out
 
-    def block(self, el: _El, *, note: bool, rels: dict[str, str]) -> None:
+    def block(self, el: _El, *, note: bool, rels: dict[str, str], lead: bool = False) -> None:
         for child in el:
-            if child.tag == W + "p":
-                self.paragraph(child, note=note, rels=rels)
-            elif child.tag == W + "tbl":
-                for tc in child.iter(W + "tc"):
-                    self.block(tc, note=note, rels=rels)
-            elif child.tag in (W + "sdt", W + "sdtContent", W + "customXml"):
-                self.block(child, note=note, rels=rels)
+            self.child(child, note=note, rels=rels, lead=lead)
 
-    def paragraph(self, p: _El, *, note: bool, rels: dict[str, str]) -> None:
-        para = _Para(note)
+    def child(self, child: _El, *, note: bool, rels: dict[str, str], lead: bool) -> None:
+        if child.tag == W + "p":
+            self.paragraph(child, note=note, rels=rels, lead=lead)
+        elif child.tag == W + "tbl":
+            for tc in child.iter(W + "tc"):
+                self.block(tc, note=note, rels=rels, lead=lead)
+        elif child.tag in (W + "sdt", W + "sdtContent", W + "customXml"):
+            self.block(child, note=note, rels=rels, lead=lead)
+
+    def note(self, n: _El, kind: str) -> None:
+        """미주·각주 하나. 그 번호(`w:endnoteRef`)가 든 문단보다 앞의 것은 `note_lead`."""
+        blocks = [b for b in n if isinstance(b.tag, str)]
+        mark = W + kind + "Ref"
+        lead = _lead_count(blocks, lambda b: next(b.iter(mark), None) is not None)
+        for k, b in enumerate(blocks):
+            self.child(b, note=True, rels=self.note_rels[kind], lead=k < lead)
+
+    def paragraph(self, p: _El, *, note: bool, rels: dict[str, str], lead: bool = False) -> None:
+        para = _Para(note, lead)
         para.text(self.numbering.label(p.find(W + "pPr"), note=note))
         after: list[_El] = []  # 글 상자 (이 문단 뒤에)
         refs: list[tuple[str, str]] = []  # 미주·각주 (이 문단 뒤에)
@@ -276,10 +301,10 @@ class _DocxReader:
         if (done := para.done()) is not None:
             self.out.append(done)
         for box in after:
-            self.block(box, note=note, rels=rels)
+            self.block(box, note=note, rels=rels, lead=lead)
         for kind, nid in refs:
             if (n := self.notes.get((kind, nid))) is not None:
-                self.block(n, note=True, rels=self.note_rels[kind])
+                self.note(n, kind)
 
     def inline(
         self, el: _El, para: _Para, after: list[_El], refs: list[tuple[str, str]],
@@ -339,6 +364,11 @@ _HWPX_FORMATS = {
 }  # fmt: skip
 """한글 문단 번호 형식 → `_format_number`의 이름 (DOCX와 같은 것을 쓴다). 모르는 형식은 숫자로."""
 _CIRCLED_GANADA = "㉮㉯㉰㉱㉲㉳㉴㉵㉶㉷㉸㉹㉺㉻"
+
+
+def _has_note_number(p: _El) -> bool:
+    """미주·각주 문단에 그 미주의 번호(자동 번호)가 들어 있나."""
+    return any(a.get("numType") in ("ENDNOTE", "FOOTNOTE") for a in p.iter(HP + "autoNum"))
 
 
 class _HwpxNumbering:
@@ -428,20 +458,31 @@ class _HwpxReader:
                 self.block(root, note=False)
         return self.out
 
-    def block(self, el: _El, *, note: bool) -> None:
+    def block(self, el: _El, *, note: bool, lead: bool = False) -> None:
         for p in el:
             if p.tag == HP + "p":
-                self.paragraph(p, note=note)
+                self.paragraph(p, note=note, lead=lead)
 
-    def paragraph(self, p: _El, *, note: bool) -> None:
-        para = _Para(note)
+    def note(self, sub: _El) -> None:
+        """미주·각주 하나. 그 번호(`hp:autoNum numType="ENDNOTE"`)가 든 문단보다 앞의 것은
+        `note_lead`."""
+        paras = [p for p in sub if p.tag == HP + "p"]
+        lead = _lead_count(paras, _has_note_number)
+        for k, p in enumerate(paras):
+            self.paragraph(p, note=True, lead=k < lead)
+
+    def paragraph(self, p: _El, *, note: bool, lead: bool = False) -> None:
+        para = _Para(note, lead)
         para.text(self.numbering.label(p.get("paraPrIDRef"), note=note))
         after: list[tuple[_El, bool]] = []  # (subList, 미주·각주인가)
         self.inline(p, para, after)
         if (done := para.done()) is not None:
             self.out.append(done)
         for sub, is_note in after:
-            self.block(sub, note=note or is_note)
+            if is_note:
+                self.note(sub)
+            else:
+                self.block(sub, note=note, lead=lead)
 
     def inline(self, el: _El, para: _Para, after: list[tuple[_El, bool]]) -> None:
         for c in el:
@@ -468,10 +509,12 @@ class _HwpxReader:
                 ref = img.get("binaryItemIDRef") if img is not None else None
                 if ref and (target := self.bin.get(ref)):
                     self._image(target, para)
+            # 바로 아래 subList만: 표 칸 안의 표·미주는 그 칸 문단을 읽을 때 읽는다
+            # (예전엔 표 아래 모든 subList를 모아 칸 속 미주를 본문으로 한 번 더 읽었다)
             elif tag in (HP + "endNote", HP + "footNote"):
-                after += [(s, True) for s in c.iter(HP + "subList")]
+                after += [(s, True) for s in c.findall(HP + "subList")]
             elif tag == HP + "tbl":
-                after += [(s, False) for s in c.iter(HP + "subList")]
+                after += [(s, False) for s in c.iterfind(f"{HP}tr/{HP}tc/{HP}subList")]
             elif tag == HP + "subList":  # 글 상자(drawText) 등
                 after.append((c, False))
             else:
@@ -573,10 +616,15 @@ def analyze_document(path: Path, work_dir: Path) -> DocAnalysis:
     regions: list[Region] = []
     notes: dict[str, list[DocParagraph]] = {}
     current: Region | None = None
+    last_note: str | None = None  # 바로 앞 미주가 달린 문항
     for i, p in enumerate(doc.paragraphs[:key_start]):
         if p.note:
-            if current is not None:
-                notes.setdefault(current.label, []).append(p)
+            # 미주 번호 앞의 글은 앞 미주(앞 문항 해설)의 끝 — 한글에서 그렇게 보인다
+            owner = last_note if p.note_lead and last_note is not None else None
+            if owner is None and current is not None:
+                owner = last_note = current.label
+            if owner is not None:
+                notes.setdefault(owner, []).append(p)
             continue
         if i in starts:
             current = Region(label=starts[i])

@@ -1,8 +1,13 @@
-"""PC에 이미 설치된 한글로 파일 형식 바꾸기 (PLAN.md §3 — 변환 프로그램을 싣지 않는다).
+"""`.hwp` → `.hwpx` (PLAN.md §3 — 따로 변환 프로그램을 싣지 않는다).
 
-학원 시험지는 대부분 `.hwp`(한글 바이너리)다. HWPX(zip + XML)만 직접 읽으므로, 한글이 설치된
-Windows PC에서는 한글(COM)로 HWPX로 저장해 읽는다. 한글이 없으면 강사에게 HWPX로 저장해 달라고 한다.
+학원 시험지는 대부분 `.hwp`(한글 바이너리)다. 앱은 HWPX(zip + XML)만 직접 읽으므로 먼저 바꾼다.
 
+1. python-hwpx(HWPX 쓰기에 이미 쓰는 라이브러리)의 HWP5 변환 — 한글 없이, 맥에서도, 창 없이.
+   실측(2026-11-10, 11월 월례평가 HWP): 자동 번호 문항·수식·그림·미주가 모두 그대로 나왔다.
+2. 그것이 실패하거나 내용(수식·표·그림 등)을 다 옮기지 못했다고 하면, Windows에서는 설치된
+   한글(COM)로 HWPX로 저장한다. 한글로도 안 되면 python-hwpx 결과를 쓴다 (못 옮긴 것은 로그에).
+
+한글(COM)에 대해:
 - 한글은 파일을 열 때 '접근 허용' 창을 띄울 수 있다. 자동화 보안 모듈이 등록된 PC면 뜨지 않는다.
   `RegisterModule`에 주는 이름은 강사가 레지스트리(HKCU 아래 `MODULES_KEY`)에
   적은 값 이름이어야 한다 — 한컴 예제 DLL은 `FilePathCheckerModuleExample`(2026-11-06: 예전엔
@@ -17,11 +22,15 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import logging
 import sys
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 HWP_HINT = "한글에서 [다른 이름으로 저장] → 'HWPX 문서'(또는 PDF)로 저장한 파일을 넣어 주세요."
 NOT_REGISTERED = (-2147221005, -2147221164)
@@ -80,9 +89,42 @@ def _dispatch_error(e: Exception) -> ConvertUnavailable:
     return ConvertUnavailable(f"한글을 띄우지 못했습니다 ({e}). {HWP_HINT}")
 
 
+COSMETIC = frozenset(
+    {"master-page", "memo-body", "track-changes", "presentation", "picture-effects",
+     "compose-frame", "textart-code"}
+)  # fmt: skip
+"""python-hwpx가 옮기지 못해도 시험 읽기와 상관없는 것 (바탕쪽·메모·변경 추적·꾸밈)."""
+
+
 def hwp_to_hwpx(src: Path, dest: Path) -> Path:
-    """`.hwp` → `.hwpx` (한글 COM). 실패하면 `ConvertUnavailable` (안내 문구 포함)."""
-    return _hangul_save_as(src, dest, "HWPX")
+    """`.hwp` → `.hwpx`: python-hwpx로, 안 되면 (Windows) 한글로.
+    실패하면 `ConvertUnavailable` (안내 문구 포함)."""
+    try:
+        data, skipped = python_hwpx(src)
+    except Exception as e:  # 깨진 파일, python-hwpx가 모르는 구조
+        log.warning("python-hwpx가 %s을 HWPX로 바꾸지 못함: %s", src.name, e)
+        if sys.platform != "win32":
+            raise ConvertUnavailable(f"HWP 파일을 읽지 못했습니다 ({e}). {HWP_HINT}") from e
+        return _hangul_save_as(src, dest, "HWPX")
+    missing = {k: n for k, n in skipped.items() if k not in COSMETIC}
+    if missing:
+        log.warning("python-hwpx가 %s에서 옮기지 못한 것: %s", src.name, missing)
+        if sys.platform == "win32":
+            try:
+                return _hangul_save_as(src, dest, "HWPX")
+            except ConvertUnavailable as e:
+                log.warning("한글로도 바꾸지 못해 python-hwpx 결과를 씀: %s", e)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    return dest
+
+
+def python_hwpx(src: Path) -> tuple[bytes, Counter[str]]:
+    """한글 없이 HWPX 바이트로 + 옮기지 못한 것 (종류 → 개수)."""
+    from hwpx.hwp5.package import convert, to_hwpx_bytes
+
+    converted = convert(src.read_bytes())
+    return to_hwpx_bytes(converted.files), converted.report.unconverted
 
 
 def _hangul_save_as(src: Path, dest: Path, fmt: str) -> Path:

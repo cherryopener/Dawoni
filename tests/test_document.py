@@ -323,6 +323,72 @@ def test_hwpx_key_section_after_mark(tmp_path: Path) -> None:
     assert all("정답 및 해설" not in r.text for r in doc.layout.regions)
 
 
+def _hnum(n: int) -> str:
+    """미주 자기 번호 — 한글이 미주 맨 앞에 넣는 자동 번호 ("2)")."""
+    return (
+        f'<hp:run><hp:ctrl><hp:autoNum num="{n}" numType="ENDNOTE">'
+        '<hp:autoNumFormat type="DIGIT" suffixChar=")"/></hp:autoNum></hp:ctrl></hp:run>'
+    )
+
+
+def _write_hwpx(path: Path, paras: list[str]) -> Path:
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/hwp+zip")
+        z.writestr("Contents/header.xml", HWPX_HEADER)
+        z.writestr("Contents/section0.xml", f"<hs:sec {HP_NS}>{''.join(paras)}</hs:sec>")
+    return path
+
+
+def test_hwpx_text_before_endnote_number_belongs_to_previous_question(tmp_path: Path) -> None:
+    """실측 2026-11-10 11월 월례평가 HWP: 1-2)의 "[부분점수 없음]"과 2번의 부분 점수 기준이 다음
+    미주의 번호("2)", "3)") 앞에 들어 있었다 — 한글에서는 앞 미주의 끝으로 보인다. 예전엔 2번
+    해설이 "[부분점수 없음]"으로 시작해 루브릭이 2번을 '부분 점수 없음'으로 만들었다.
+    3번 미주는 표 칸 안에 있다 — 본문으로 한 번 더 읽지 않는다."""
+    cell = "<hp:run><hp:tbl><hp:tr><hp:tc><hp:subList>{}</hp:subList></hp:tc></hp:tr></hp:tbl></hp:run>"
+    q1_note = _hnote(_hp(_hnum(1)), _hp(_ht("1) 답 W/2")), _hp(_ht("[부분점수 없음]")))
+    q2_note = _hnote(
+        _hp(_ht("[부분점수 없음]")), _hp(), _hp(_hnum(2), _ht(" A: ②")), _hp(_ht("굴절이 크다."))
+    )
+    q3_note = _hnote(_hp(_ht("[부분점수] A: ② 1점")), _hp(_hnum(3), _ht(" (1) (-)")))
+    paras = [
+        _hp(_ht("1. 장력을 구하라. [단답형 4점]"), q1_note),
+        _hp(_ht("2. 이유를 쓰라. [서술형 8점]"), q2_note),
+        _hp(_ht("3. 표를 보고 답하라.")),
+        _hp(cell.format(_hp(_ht("(1) 부호는? [단답형 각 1점/총 4점]"), q3_note))),
+        _hp(_ht("(2) 이유는? [서술형 각 3점/총 9점]")),
+    ]
+    doc = analyze_document(_write_hwpx(tmp_path / "n.hwpx", paras), tmp_path / "w")
+    assert {k: p.text for k, p in doc.keys.items()} == {
+        "1": "1) 답 W/2\n[부분점수 없음]\n[부분점수 없음]",
+        "2": "A: ②\n굴절이 크다.\n[부분점수] A: ② 1점",
+        "3": "(1) (-)",
+    }
+    q3 = doc.layout.regions[2]
+    assert "(-)" not in q3.text and "[부분점수]" not in q3.text, "칸 속 미주는 본문이 아님"
+    assert [(r.label, r.points) for r in doc.layout.regions] == [("1", 4), ("2", 8), ("3", 13)]
+
+
+def test_docx_text_before_endnote_number_belongs_to_previous_question(tmp_path: Path) -> None:
+    """Word도 미주 번호(`w:endnoteRef`) 앞에 친 글은 앞 미주의 끝으로 보인다."""
+    ref = "<w:r><w:endnoteRef/></w:r>"
+
+    def note_ref(n: int) -> str:
+        return f'<w:r><w:endnoteReference w:id="{n}"/></w:r>'
+
+    body = _wp(_wt("1. 첫 문항 [3점]"), note_ref(1)) + _wp(_wt("2. 둘째 문항 [5점]"), note_ref(2))
+    endnotes = (
+        f"<w:endnotes {W_NS}><w:endnote w:id='1'>{_wp(ref, _wt(' 답 3'))}</w:endnote>"
+        f"<w:endnote w:id='2'>{_wp(_wt('[부분점수 없음]'))}{_wp(ref, _wt(' 답 5'))}</w:endnote>"
+        "</w:endnotes>"
+    )
+    path = tmp_path / "n.docx"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml", f"<w:document {W_NS}><w:body>{body}</w:body></w:document>")
+        z.writestr("word/endnotes.xml", endnotes)
+    doc = analyze_document(path, tmp_path / "w")
+    assert doc.keys["1"].text == "답 3\n[부분점수 없음]" and doc.keys["2"].text == "답 5"
+
+
 def test_chunks_group_questions_for_calls(tmp_path: Path) -> None:
     from dawoni.ingest.document import QUESTIONS_PER_CALL, region_call
 
@@ -455,7 +521,25 @@ def test_cli_ingest_hwpx_with_level(
     assert "- 문항 2 [3점]: 묶음 1, 그림 2" in out and "해설 1: " in out
 
 
-def test_hwp_without_hangul_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hwp_is_read_without_hangul(tmp_path: Path) -> None:
+    """python-hwpx가 HWP를 HWPX로 바꾼다 — 한글 없이, 맥에서도 (테스트는 한글을 막아 둠)."""
+    from hwpx import HwpxDocument
+
+    from dawoni.ingest.workflow import readable_copy
+
+    d = HwpxDocument.new()
+    d.paragraphs[0].text = "1. 장력을 구하라. [단답형 4점]"
+    d.add_paragraph("2. 이유를 쓰라. [서술형 8점]")
+    hwp = tmp_path / "시험.hwp"
+    d.save_to_path(hwp)
+    assert hwp.read_bytes()[:4] == b"\xd0\xcf\x11\xe0", "HWP 5 (OLE) 파일"
+    hwpx = readable_copy(hwp, tmp_path / "w")
+    assert hwpx.suffix == ".hwpx" and hwpx.parent == tmp_path / "w"
+    doc = analyze_document(hwpx, tmp_path / "w")
+    assert [(r.label, r.points) for r in doc.layout.regions] == [("1", 4), ("2", 8)]
+
+
+def test_broken_hwp_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from dawoni.ingest import convert
     from dawoni.ingest.workflow import IngestRefused, readable_copy
 
@@ -537,6 +621,24 @@ def test_real_docx_auto_numbered_questions(path: Path, tmp_path: Path) -> None:
     assert all(re.search(r"(?m)^1\) \[그림 1\]", r.text) for r in doc.layout.regions)
     assert set(doc.keys) == {"1", "2", "3"}
     _assert_math_ok([r.text for r in doc.layout.regions])
+
+
+_MONTHLY_HWP = REAL / "11월 월례평가 문제-물리.hwp"
+
+
+@pytest.mark.skipif(not _MONTHLY_HWP.is_file(), reason="real_data/docs 없음")
+def test_real_hwp_endnote_numbers_and_typed_points(tmp_path: Path) -> None:
+    """2026-11-10 11월 월례평가 HWP (python-hwpx로 HWPX): 미주 번호 앞의 글은 앞 문항 해설,
+    배점은 소문항마다 적힌 "[단답형 4점]"·"[서술형 각 3점/총 9점]"의 합."""
+    from dawoni.ingest.workflow import readable_copy
+
+    doc = analyze_document(readable_copy(_MONTHLY_HWP, tmp_path), tmp_path)
+    assert [(r.label, r.points) for r in doc.layout.regions] == [("1", 9), ("2", 8), ("3", 13)]
+    keys = {k: p.text for k, p in doc.keys.items()}
+    assert keys["1"].count("[부분점수 없음]") == 2, "1-1)과 1-2) 둘 다"
+    assert keys["2"].startswith("A: ②") and "기호 정답 [총 2점]" in keys["2"]
+    assert keys["3"].startswith("(1) ㉠") and "기호 정답" not in keys["3"]
+    _assert_math_ok([r.text for r in doc.layout.regions] + list(keys.values()))
 
 
 def _assert_math_ok(texts: list[str]) -> None:

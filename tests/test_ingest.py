@@ -184,8 +184,27 @@ def test_split_total_points() -> None:
     assert marked_points("답하시오 . . 1) 총 점 [ 8 ]\n. [ 단답형 : 4 점 ]") == 8
     assert marked_points("[ 총 점 9 ]\n[ 서술형점 :5 ]") == 9
     assert marked_points(". 1) 총 [ 10 점 ] 를 따라") == 10
-    assert marked_points("[3점]") == 3
-    assert marked_points("[ 단답형 : 4 점 ]") is None
+    assert marked_points("[3점]") == 3 and marked_points("~3점₩") == 3
+
+
+@pytest.mark.parametrize(
+    ("text", "want"),
+    [("1) 장력은? [단답형 4점]\n2) 줄이면? [단답형 5점]", 9),  # 소문항에만 → 합
+     ("이유를 서술하라. [서술형 8점]", 8),
+     ("(1) 부호는? [단답형 각 1점/총 4점]\n(2) 이유는? [서술형 각 3점/총 9점]", 13),
+     ("[ 단답형 : 4 점 ]", 4),
+     ("(1) [4점]\n(2) [4점]", 8),
+     ("물음에 답하라. [8점]\n(1) [3점]\n(2) [5점]", 8),  # 머리 배점 = 소문항 합
+     ("[총 6점]\n(1) [2점]\n(2) [4점]", 6),
+     ("(1) 각각 쓰시오. [단답형 각 2점]", None),  # 소문항 수를 모름
+     ("[실험결과 1] [㉠] (3점)", None)],
+)  # fmt: skip
+def test_marked_points_typed_and_per_part(text: str, want: float | None) -> None:
+    """실측 2026-11-10 11월 월례평가 HWP: 배점이 "[단답형 4점]"처럼 소문항마다 유형과 함께 적혀
+    하나도 읽지 못해 9·8·13점 문항이 모두 4점(소문항마다 2점)이 됐다."""
+    from dawoni.ingest.layout import marked_points
+
+    assert marked_points(text) == want
 
 
 # ---------------------------------------------------------------- 시험지 구조화 검증
@@ -287,6 +306,20 @@ def test_check_page_problems(exam_pdf: Path) -> None:
             lambda d: d["questions"][0]["stem"][0]["runs"].append({"t": "math", "v": "\\frac{1}{"})
         )
     )
+
+
+def test_check_page_document_points_follow_the_marks() -> None:
+    """문서는 코드가 읽은 배점 표시(소문항에만 있으면 합)가 맞다 — AI가 첫 표시만 옮기면 고치게."""
+    from dawoni.ingest.layout import Line, Rect, Region
+
+    lines = ("1. 실에 물체를 매단다.", "1) 장력은? [단답형 4점]", "2) 줄이면? [단답형 5점]")
+    r = Region(label="1", lines=[Line(1, Rect(0, 0, 0, 0), t) for t in lines], points=9)
+    q = {"label": "1", "item_type": "short_answer", "points": 4,
+         "stem": [_p(_t("실에 물체를 매단다."))], "parts": [{"label": "1)", "points": 4}]}  # fmt: skip
+    out = PageExtraction.model_validate({"questions": [q]})
+    doc = check_page(out, [r], None, grounded=False, doc=True)
+    assert any("문서에 적힌 배점은 9점" in p for p in doc)
+    assert not any("문서에 적힌 배점" in p for p in check_page(out, [r], None, grounded=False))
 
 
 def test_to_item_uses_raster_crops_and_captions_as_notes(exam_pdf: Path) -> None:
