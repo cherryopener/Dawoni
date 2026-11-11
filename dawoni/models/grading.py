@@ -318,6 +318,46 @@ class AcceptedAlternative(DawoniModel):
     )
 
 
+KeyChoice = Literal["question", "key", "edited"]
+"""해설지와 다른 기준을 어느 쪽으로 채점하는가: 문제 기준 · 해설지 기준 · 강사가 직접 고침."""
+
+
+class KeyConflict(DawoniModel):
+    """해설지의 기준이 문제의 요구와 맞지 않는 곳 (문제가 요구하지 않은 것을 0점 조건으로 요구하는
+    등). AI는 그 항목을 문제 기준으로 쓰고 해설지대로의 기준을 함께 적는다 — 어느 쪽으로
+    채점할지는 강사가 고른다 (2026-11-11)."""
+
+    note: str = Field(description="해설지와 문제가 어떻게 다른지, 항목을 무엇을 기준으로 썼는지")
+    item_id: str | None = Field(
+        default=None,
+        description="이 차이가 걸린 채점 항목 ID (R1 …). 해설지 오타·의심처럼 고를 기준이 아니거나 "
+        "특정 항목이 아니면 null",
+    )
+    key_criterion: str | None = Field(
+        default=None,
+        description="해설지대로 채점한다면 그 항목의 `criterion` 전체 문장 "
+        "(해설지의 0점 조건 포함). item_id가 null이면 null",
+    )
+    id: str | None = Field(default=None, pattern=r"^K[1-9][0-9]*$", description="앱이 채움")
+    question_criterion: str | None = Field(
+        default=None, description="문제 기준으로 쓴 그 항목의 `criterion` (앱이 채움)"
+    )
+    choice: KeyChoice | None = Field(
+        default=None, description="강사가 고른 기준 (앱이 채움). null이면 아직 정하지 않음"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_text(cls, v: object) -> object:
+        """2026-11-11 전 저장본: 설명 문장만 있었다 (고를 수 없고 확인만 한다)."""
+        return {"note": v} if isinstance(v, str) else v
+
+    @property
+    def switchable(self) -> bool:
+        """두 기준을 오갈 수 있는가 (항목과 두 기준 문장이 모두 있음)."""
+        return bool(self.item_id and self.key_criterion and self.question_criterion)
+
+
 class KeyExpansion(DawoniModel):
     """해설지 답과 **같은 뜻**의 다른 표현·다른 풀이 (서술형). 강사가 인정해야 쓴다."""
 
@@ -332,6 +372,20 @@ class KeyExpansion(DawoniModel):
     )
 
 
+def _check_items(items: list[RubricItem], partial: list[PartialCredit]) -> dict[str, float]:
+    """항목 ID 중복·부분점수 참조와 크기 (AI 출력은 검증에서 걸려 수리 요청이 된다)."""
+    ids = [i.id for i in items]
+    if len(ids) != len(set(ids)):
+        raise ValueError(f"루브릭 항목 ID 중복: {ids}")
+    points = {i.id: i.points for i in items}
+    for p in partial:
+        if p.item_id not in points:
+            raise ValueError(f"부분점수가 없는 항목을 참조: {p.item_id}")
+        if p.points >= points[p.item_id]:
+            raise ValueError(f"부분점수({p.points})는 항목 {p.item_id} 배점보다 작아야 함")
+    return points
+
+
 class KeyRubricDraft(DawoniModel):
     """AI 출력: 강사 해설지를 넓혀 만든 루브릭 (AI 풀이 없이)."""
 
@@ -342,10 +396,22 @@ class KeyRubricDraft(DawoniModel):
         default_factory=lambda: list[KeyExpansion](),
         description="서술형 소문항에서 해설지와 같은 뜻으로 인정할 다른 표현 (강사 확인 전)",
     )
-    key_conflicts: list[str] = Field(
-        default_factory=lambda: list[str](),
-        description="해설지의 기준이 문제의 요구와 맞지 않는 곳 — 무엇을 어떻게 기준으로 삼았는지",
+    key_conflicts: list[KeyConflict] = Field(
+        default_factory=lambda: list[KeyConflict](),
+        description="해설지의 기준이 문제의 요구와 맞지 않는 곳 — 항목은 문제 기준으로 쓰고, "
+        "해설지대로의 기준을 함께 적는다",
     )
+
+    @model_validator(mode="after")
+    def _refs(self) -> KeyRubricDraft:
+        """루브릭 초안으로 바꿀 때 걸릴 것을 여기서 — 검사 함수 안에서 터지면 수리 요청 없이 문항이
+        실패했다 (2026-11-11 실측: 1점 항목에 1점 부분점수)."""
+        points = _check_items(self.items, self.partial)
+        for e in self.expansions:
+            bad = sorted(set(e.item_ids) - set(points))
+            if bad:
+                raise ValueError(f"넓힌 표현이 없는 항목을 참조: {bad}")
+        return self
 
     def to_rubric_draft(self) -> RubricDraft:
         """넓힌 표현은 `accepted_alternatives`에 제안(proposed)으로 (E1, E2 …)."""
@@ -381,23 +447,32 @@ class RubricDraft(DawoniModel):
         default_factory=lambda: list[AnswerCandidate](),
         description="해설지와 다르지만 정답일 수 있는 답 (강사 확인 전에는 점수 없음)",
     )
-    key_conflicts: list[str] = Field(
-        default_factory=lambda: list[str](),
+    key_conflicts: list[KeyConflict] = Field(
+        default_factory=lambda: list[KeyConflict](),
         description="해설지의 기준이 문제의 요구와 맞지 않는 곳 (문제가 요구하지 않은 것을 "
-        "0점 조건으로 요구하는 등) — 무엇을 어떻게 기준으로 삼았는지",
+        "0점 조건으로 요구하는 등) — 항목은 문제 기준으로 쓰고, 해설지대로의 기준을 함께 적는다",
     )
+
+    @field_validator("key_conflicts")
+    @classmethod
+    def _conflict_ids(cls, v: list[KeyConflict]) -> list[KeyConflict]:
+        """ID가 없는 것(예전 저장본)에 K1, K2 …를 붙인다 — 화면에서 확인하려면 ID가 있어야 한다."""
+        taken = {c.id for c in v if c.id}
+        out: list[KeyConflict] = []
+        n = 0
+        for c in v:
+            if c.id is None:
+                n += 1
+                while f"K{n}" in taken:
+                    n += 1
+                taken.add(f"K{n}")
+                c = c.model_copy(update={"id": f"K{n}"})
+            out.append(c)
+        return out
 
     @model_validator(mode="after")
     def _refs(self) -> RubricDraft:
-        ids = [i.id for i in self.items]
-        if len(ids) != len(set(ids)):
-            raise ValueError(f"루브릭 항목 ID 중복: {ids}")
-        points = {i.id: i.points for i in self.items}
-        for p in self.partial:
-            if p.item_id not in points:
-                raise ValueError(f"부분점수가 없는 항목을 참조: {p.item_id}")
-            if p.points >= points[p.item_id]:
-                raise ValueError(f"부분점수({p.points})는 항목 {p.item_id} 배점보다 작아야 함")
+        points = _check_items(self.items, self.partial)
         for a in self.accepted_alternatives:
             bad = sorted(set(a.item_ids) - set(points))
             if bad:

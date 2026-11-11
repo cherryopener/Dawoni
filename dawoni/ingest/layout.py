@@ -71,17 +71,40 @@ def marked_points(text: str) -> float | None:
 
     실측(2026-11-10, 11월 월례평가 HWP): "1) … [단답형 4점]", "2) … [단답형 5점]"처럼 소문항에만
     유형과 함께 적혀 하나도 읽지 못해, 9·8·13점 문항이 모두 자리값 4점이 됐다."""
+    return _marked(text)[0]
+
+
+def summed_marks(text: str) -> bool:
+    """배점이 소문항 표시 여럿의 합인가 (총점 표시·표시 하나가 아님). 그렇다면 표시가 없는 소문항이
+    있을 때 합이 모자란다 — 실측(2026-11-11): "(1)·(2)"에는 표시가 없고 (3)~(8)에만 "[1점]"이 있어
+    6점이 되고, AI가 맞춰 (1)·(2)를 뺐다. 다른 시험은 (1) 5점에 표시가 없어 AI의 15점이 세 번 거절돼
+    시험 읽기가 실패했다."""
+    return _marked(text)[1]
+
+
+_PART_LABEL = re.compile(r"(?:^|\s)(?:\(\s*\d{1,2}\s*\)|\d{1,2}\s*\)|[①-⑳])")
+"""소문항 표시 ("(1)", "1)", "①")."""
+
+
+def _marked(text: str) -> tuple[float | None, bool]:
+    # 문항 첫 줄에서 소문항 표시보다 앞에 있는 배점이 문항 배점 — 소문항 안의 "[총 10점]"을 문항
+    # 총점으로 읽으면 안 된다 (실측 2026-11-11 서울형 4회 2번: 머리 "[서술형 15점]",
+    # (2)에 "[총 10점]")
+    head = text.lstrip().split("\n", 1)[0]
+    m = _TOTAL.search(head) or _SPLIT_TOTAL.search(head) or _POINTS.search(head)
+    if m and not _EACH_ONLY.search(head) and not _PART_LABEL.search(head[: m.start()]):
+        return float(m.group(1)), False
     m = _TOTAL.search(text) or _SPLIT_TOTAL.search(text)
     if m:
-        return float(m.group(1))
+        return float(m.group(1)), False
     if _EACH_ONLY.search(text):
-        return None
+        return None, False
     marks = [float(m.group(1)) for m in _POINTS.finditer(text)]
     if not marks:
-        return None
+        return None, False
     if len(marks) >= 3 and abs(marks[0] - sum(marks[1:])) < 1e-9:
-        return marks[0]
-    return sum(marks)
+        return marks[0], False
+    return sum(marks), len(marks) > 1
 
 
 @dataclass(frozen=True)
@@ -237,6 +260,14 @@ def _columns(
 ) -> list[tuple[float, float]]:
     """2단이면 [(왼쪽), (오른쪽)], 아니면 [(전체)]."""
     body = [ln for ln in lines if top <= ln.rect.cy <= bottom]
+    # 첫 문항 번호 줄 위(쪽 제목·이름 칸)는 단을 가르는 데 쓰지 않는다 — 실측(2026-11-11, DT3 2쪽):
+    # 가운데를 가로지르는 제목 "DAY 3. 회로와 정전기 DT 이름:"이 머리말 아래에 있어 1단으로 잡혔고,
+    # 같은 높이의 오른쪽 단 2번이 1번에 붙어 사라졌다.
+    first = _first_anchor_y(lines, top, bottom)
+    if first is not None:
+        below = [ln for ln in body if ln.rect.y0 >= first - 1]
+        if len(below) >= 4:
+            body = below
     if len(body) < 4:
         return [(0.0, width)]
     xs: list[tuple[float, int]] = []
@@ -264,6 +295,29 @@ def _columns(
     if best_cross <= max(1, len(body) * 0.05) and left >= side and right >= side:
         return [(0.0, best_x), (best_x, width)]
     return [(0.0, width)]
+
+
+def _first_anchor_y(lines: list[Line], top: float, bottom: float) -> float | None:
+    """머리말·꼬리말 사이에서 처음 나오는 문항 번호 줄의 위쪽 y."""
+    ys = [ln.rect.y0 for ln in lines if top <= ln.rect.cy <= bottom and _ANCHOR.match(ln.text)]
+    return min(ys, default=None)
+
+
+def _title_above_columns(
+    lines: list[Line], boundary: float, header_y: float, footer_y: float
+) -> float:
+    """2단 쪽에서 첫 문항 번호 위에 있고 단 경계를 가로지르는 줄(쪽 제목·이름 칸)까지를 머리말로.
+    오른쪽 단에 넣으면 단의 왼쪽 끝이 그 줄로 잡혀 오른쪽 단 문항 번호가 들여쓴 줄로 빠진다
+    (실측 2026-11-11, DT3 2쪽: 2번이 1번에 붙어 사라짐)."""
+    first = _first_anchor_y(lines, header_y, footer_y)
+    if first is None:
+        return header_y
+    crossing = [
+        ln.rect.y1
+        for ln in lines
+        if header_y < ln.rect.cy < first and ln.rect.x0 < boundary < ln.rect.x1
+    ]
+    return max([header_y, *crossing])
 
 
 def _column_of(rect: Rect, columns: list[tuple[float, float]]) -> int:
@@ -378,6 +432,8 @@ def _page_info(page: pymupdf.Page, number: int, repeated: set[str]) -> PageInfo:
     lines = _lines(page, number)
     header_y, footer_y = _header_footer(page, lines, repeated)
     columns = _columns(lines, w, header_y, footer_y)
+    if len(columns) == 2:
+        header_y = _title_above_columns(lines, columns[0][1], header_y, footer_y)
     body_lines = [ln for ln in lines if header_y < ln.rect.cy < footer_y]
 
     figures: list[Figure] = []

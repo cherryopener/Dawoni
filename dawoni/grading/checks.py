@@ -327,7 +327,12 @@ def _check_against_key(
             bad = sorted(i.id for i in items if i.id in partial_items)
             if bad:
                 problems.append(f"{name}: '부분 점수 없음'인데 {bad}에 부분점수(partial)를 넣었다")
-        elif kp.credit_policy == "listed" and abs(kp.credit_total - points) < 1e-9:
+        elif (
+            # 단계(하나만 받음)는 항목 하나 + 낮은 단계 부분점수 — 표기마다 합을 보지 않는다
+            kp.credit_policy == "listed"
+            and not kp.credit_tiers
+            and abs(kp.credit_total - points) < 1e-9
+        ):
             n = len(kp.credits)
             for i in items:
                 if i.key_credit is None or not 1 <= i.key_credit <= n:
@@ -337,10 +342,11 @@ def _check_against_key(
                     )
             for k, c in enumerate(kp.credits, start=1):
                 got = sum(i.points for i in items if i.key_credit == k)
-                if abs(got - c.points) > 1e-9:
+                if abs(got - c.total) > 1e-9:
+                    each = f" × {c.each}개" if c.each > 1 else ""
                     problems.append(
-                        f"{name}: 해설지 부분 점수 {k}번 '{c.what} {c.points:g}점'에 해당하는 "
-                        f"항목 배점의 합이 {got:g}점이다. {c.points:g}점이 되도록"
+                        f"{name}: 해설지 부분 점수 {k}번 '{c.what} {c.points:g}점{each}'에 "
+                        f"해당하는 항목 배점의 합이 {got:g}점이다. {c.total:g}점이 되도록"
                     )
     for a in draft.accepted_alternatives:
         if a.part is not None and key.part(a.part) is None:

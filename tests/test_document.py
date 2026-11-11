@@ -80,6 +80,13 @@ def test_omml_to_latex(body: str, want: str) -> None:
         ("L overv_0", r"\frac{L}{v_0}"),
         ("v oversqrt2", r"\frac{v}{\sqrt{2}}"),
         ('R "over" x', "R over x"),  # 따옴표 안은 그대로
+        # 대문자 명령 (실측 2026-11-11 학원 HWP 15개: OVER 51, BULLET 12, ANGLE 12, SIM 4)
+        ("{1} OVER {2} m", r"\frac{1}{2} m"),
+        ("1.5kcal/kg BULLET 다원", r"1.5 kcal / kg \cdot 다원"),
+        ("ANGLE  FBC= ANGLE  FCB", r"\angle FBC = \angle FCB"),
+        ("0 DEG  SIM 90 DEG", r"0 ^{\circ} \sim 90 ^{\circ}"),
+        ("C=800 rm W/ CENTIGRADE", r"C = 800 \mathrm{W} / {}^{\circ}\mathrm{C}"),
+        ('"OVER" x', r"\text{OVER} x"),  # 따옴표 안은 명령이 아님
     ],
 )
 def test_hangul_equation_glued_commands(script: str, want: str) -> None:
@@ -655,19 +662,52 @@ def test_read_document_rejects_other_suffix(tmp_path: Path) -> None:
 
 
 def test_unmarked_document_points_are_not_invented() -> None:
-    """배점 표시가 없는 문서 문항: AI 배점은 버리고, 소문항은 본문 (1)(2) 줄에서 (실측 주말반)."""
+    """배점 표시가 없는 문서 문항: AI 배점은 버리고 ⌊100 ÷ 문항 수⌋를 소문항(본문 (1)(2) 줄)에 나눈다."""
     from dawoni.ingest.exam import ExtractedQuestion, sub_labels, unmarked_points
     from dawoni.ingest.layout import Line, Rect, Region
 
     r = Region(label="5", lines=[Line(1, Rect(0, 0, 0, 0), t) for t in
-                                 ("5. 두 물체가 만난다.", "(1) 거리를 구하시오.", "(2) 속력을 구하시오.")])  # fmt: skip
+                                 ("5. 두 물체가 만난다.", "(1) 거리를 구하시오.", "(2) 속력을 구하시오.",
+                                  "(3) 시간을 구하시오.")])  # fmt: skip
     q = ExtractedQuestion.model_validate(
         {"label": "5", "item_type": "short_answer", "points": 7, "stem": [_p(_t("두 물체"))]}
     )
-    points, parts, why = unmarked_points(q, r, 4)
-    assert points == 4 and [(p.label, p.points) for p in parts] == [("(1)", 2), ("(2)", 2)]
-    assert "소문항마다 2점" in why
+    parts, why = unmarked_points(q, r, 14, 7)
+    assert [(p.label, p.points) for p in parts] == [("(1)", 4), ("(2)", 5), ("(3)", 5)]
+    assert "14점(100점 ÷ 7문항)" in why and "소문항 4·5·5점" in why
     assert sub_labels("(2) 먼저\n(1) 나중") == [] and sub_labels("(1) 하나뿐") == []
     assert sub_labels("1) [그림 1] 비커\n2) [그림 2] 마찰") == ["1)", "2)"]
     alone = Region(label="1", lines=[Line(1, Rect(0, 0, 0, 0), "1. 합성저항은?")])
-    assert unmarked_points(q, alone, 4)[:2] == (4, [])
+    assert unmarked_points(q, alone, 11, 9)[0] == []
+    # PDF: 원문 영역에 딸려 온 답안지의 (1)(2)(3)은 쓰지 않고 AI가 옮긴 본문에서만 (DT3 10번)
+    sheet = Region(label="10", lines=[Line(7, Rect(0, 0, 0, 0), t) for t in
+                                      ("10. 어느 시각인지 구하시오.", "(1)", "(2)", "(3)")])  # fmt: skip
+
+    def ask(*paras: str, item_type: str = "short_answer") -> ExtractedQuestion:
+        stem = [_p(_t(x)) for x in paras]
+        return ExtractedQuestion.model_validate(
+            {"label": "10", "item_type": item_type, "stem": stem}
+        )
+
+    plain = ask("어느 시각인지 구하시오.")
+    assert unmarked_points(plain, sheet, 10, 10, doc=False)[0] == []
+    asked = ask("물음에 답하시오.", "(1) E를 구하시오.", "(2) 전류를 구하시오.")
+    assert [p.label for p in unmarked_points(asked, sheet, 10, 10, doc=False)[0]] == ["(1)", "(2)"]
+    # 선택형에는 소문항을 만들지 않는다 (DT3 8번의 1)~5) 목록)
+    listed = Region(label="8", lines=[Line(5, Rect(0, 0, 0, 0), t) for t in
+                                      ("8. 가능한 경우를 고르시오.", "1) A>B", "2) B>C")])  # fmt: skip
+    mc = ExtractedQuestion.model_validate(
+        {"label": "8", "item_type": "multiple_choice", "stem": [_p(_t("고르시오."))],
+         "choices": [{"label": i, "runs": [_t(f"경우 {i}")]} for i in range(1, 6)]}
+    )  # fmt: skip
+    assert unmarked_points(mc, listed, 10, 10)[0] == []
+
+
+def test_suggested_points_and_split() -> None:
+    """⌊100 ÷ 문항 수⌋ (2026-11-11 사용자 결정): 7문항 14점, 9문항 11점. 소문항에는 정수로 나눈다."""
+    from dawoni.ingest.exam import split_points, suggested_points
+
+    assert suggested_points(7) == 14 and suggested_points(9) == 11 and suggested_points(3) == 33
+    assert suggested_points(150) == 1, "문항이 100개를 넘어도 1점"
+    assert split_points(14, 3) == [4, 5, 5] and split_points(11, 2) == [5, 6]
+    assert split_points(1, 3) == [1 / 3] * 3 and sum(split_points(20, 4)) == 20

@@ -307,7 +307,7 @@ def put_points(
     reset_rubric: Annotated[bool, Query()] = False,
     st: AppState = State,
 ) -> ExamQuestion:
-    """배점 표시가 없던 시험지의 자리값 배점(소문항마다 2점)을 강사가 고친다. 루브릭 항목
+    """배점 표시가 없던 시험지의 추천 배점(⌊100 ÷ 문항 수⌋)을 강사가 고친다. 루브릭 항목
     배점이 문항 배점에 맞춰져 있어, 루브릭이 있으면 강사가 확인(`reset_rubric`)해야 고치고
     루브릭은 비켜 둔다."""
     store = ExamStore(st.services().workspace, exam_id)

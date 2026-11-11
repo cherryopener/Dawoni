@@ -73,9 +73,19 @@ def _labels(q: ExamQuestion) -> list[str]:
     return [p.label for p in q.parts] or [""]
 
 
+_ITEM_TYPES = {
+    "multiple_choice": "선택형 — answer는 정답 선지 번호(①~⑤)",
+    "short_answer": "단답형",
+    "essay": "서술형",
+}
+
+
 def _question_line(q: ExamQuestion) -> str:
+    """해설지 읽기에 주는 문항 줄. 문항 유형을 알려 준다 — 실측(2026-11-11 데일리 테스트 전기2 2번):
+    선택형인 줄 모르고 해설의 결론("x=0.5 m일 때 최대")을 답으로 적어 선지 번호를 정하지 못했다."""
     stem = blocks_text(q.item.stem).replace("\n", " ")
-    head = f"- 문항 번호 {q.number} ({q.points:g}점): {stem[:80]}…"
+    kind = _ITEM_TYPES.get(q.item.item_type, q.item.item_type)
+    head = f"- 문항 번호 {q.number} ({q.points:g}점, {kind}): {stem[:80]}…"
     if not q.parts:
         return head + '\n  소문항 없음 → parts에 label "" 하나'
     kinds = {"essay": "서술형", "short_answer": "단답형", None: "유형 표시 없음"}
@@ -323,8 +333,10 @@ def key_warnings(k: AnswerKey, q: ExamQuestion) -> list[str]:
             )
         if p.credit_policy == "range" and p.credit_max is not None and p.credit_max > points:
             out.append(f"{name}: 부분 점수 범위 최댓값({p.credit_max:g})이 배점({points:g})보다 큼")
-        if not p.answer and not p.solution:
-            out.append(f"{name}: 해설지에 해설이 없음 — AI 풀이로만 루브릭을 만듦")
+        if not p.answer and not p.solution and not k.empty:
+            out.append(f"{name}: 해설지에 이 소문항 해설이 없음 — 루브릭 기준을 꼭 확인")
+    if k.empty:
+        out.append(f"문항 {q.number}: 해설지에 답·해설이 없음 — 서술형은 AI가 풀어 루브릭을 만듦")
     return out
 
 
@@ -467,7 +479,10 @@ def extract_answer_key(
             + text,
             attachments=images,
         )
-        cached = cache_dir / f"p{group[0]}-{group[-1]}.json"
+        # 프롬프트 판을 이름에 — 해설지 읽기 프롬프트가 바뀌면 다시 읽는다 (2026-11-11:
+        # "각"·단계 표시를 더했는데 예전 판으로 읽은 결과를 그대로 써 표시가 비어 있었다)
+        version = engine.templates.version(EXTRACT_KEY.template)
+        cached = cache_dir / f"p{group[0]}-{group[-1]}-v{version}.json"
         raw: KeyExtraction | None = None
         if not cross and cached.is_file():  # 다시 할 때: 읽은 쪽은 AI 없이
             try:
@@ -476,16 +491,20 @@ def extract_answer_key(
                 raw = None
             if raw is not None and (problems := check(raw)) and not only_ungrounded(problems):
                 raw = None  # 검사가 강해졌으면 다시 읽는다 (예: 빠뜨린 문항)
-        if raw is None:
+
+        def run_once() -> KeyExtraction:
             try:
-                raw = engine.run(task, inp).value
+                return engine.run(task, inp).value
             except TaskFailed as e:
                 accepted = accept_ungrounded(e, KeyExtraction)
                 if accepted is None or not src.beyond_text(group, text):
                     raise
                 log.warning("해설 %s쪽: 근거 검사만 남아 받아들임 (강사 확인): %s", group,
                             e.errors[:3])  # fmt: skip
-                raw = accepted
+                return accepted
+
+        if raw is None:
+            raw = run_once()
             cached.parent.mkdir(parents=True, exist_ok=True)
             cached.write_text(raw.model_dump_json(), encoding="utf-8")
         first = _fitting(raw.questions) if ignore_other_numbers else (
@@ -493,7 +512,14 @@ def extract_answer_key(
         )  # fmt: skip
         doubts: dict[str, list[str]] = {}
         if cross:
-            second = {kq.number: kq for kq in engine.run(task, inp).value.questions}
+            # 두 번째 읽기는 비교용 — 실패해도 첫 읽기를 버리지 않는다 (실측 2026-11-11 DT3 해답:
+            # 손글씨 해설이라 근거 검사에 걸려 두 번째 읽기가 실패하자 해설지 전체를 잃음)
+            try:
+                second = {kq.number: kq for kq in run_once().questions}
+            except TaskFailed as e:
+                log.warning("해설 %s쪽: 두 번째 읽기 실패 — 비교 없이 첫 읽기를 씀: %s", group,
+                            e.errors[:2])  # fmt: skip
+                second = {}
             for kq in first:
                 if kq.number in second:
                     doubts.setdefault(kq.number, []).extend(compare_reads(kq, second[kq.number]))

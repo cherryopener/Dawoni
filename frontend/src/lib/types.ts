@@ -84,6 +84,16 @@ export type AnswerKey = { question_number: string; parts: KeyPart[]; source?: st
 
 export type RubricItem = { id: string; points: number; criterion: string; evidence_hint: string; part: string | null; concepts: string[] };
 export type Decision = "proposed" | "accepted" | "rejected";
+/** 해설지와 다른 기준을 어느 쪽으로: 문제 기준 · 해설지 기준 · 강사가 기준을 직접 고침 (null = 아직 안 정함) */
+export type KeyChoice = "question" | "key" | "edited";
+export type KeyConflict = {
+  id: string;
+  note: string;
+  item_id: string | null;
+  key_criterion: string | null;
+  question_criterion: string | null;
+  choice: KeyChoice | null;
+};
 export type Rubric = {
   question_number: string;
   items: RubricItem[];
@@ -91,7 +101,7 @@ export type Rubric = {
   candidates: { id: string; part: string; answer: string; argument: string; status: Decision }[];
   partial: { item_id: string; condition: string; points: number; from_key: boolean }[];
   never_deduct: string[];
-  key_conflicts: string[];
+  key_conflicts: KeyConflict[];
   review_notes: string[];
   version: number;
   status: "draft" | "approved";

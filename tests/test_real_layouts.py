@@ -92,3 +92,21 @@ def test_cho_basic_doubled_number_is_reported() -> None:
     """회로 이론 기본 문제: 교재에 10번이 두 번 인쇄돼 11번이 없다 → 7번은 찾고(2단 경계), 11만 빠짐."""
     got = labels(need(CHO_BASIC), 50, 60, 105)
     assert got == [str(n) for n in range(1, 24) if n != 11]
+
+
+DOCS = REAL / "docs"
+
+
+def test_daily_test_title_line_does_not_hide_columns() -> None:
+    """DT3 2쪽: 머리말 아래 가운데를 가로지르는 제목 줄 때문에 1단으로 잡혀, 같은 높이의 오른쪽 단
+    2번이 1번에 붙어 사라졌다 (실측 2026-11-11)."""
+    lay = analyze(need(DOCS / "DT3 (11_2).pdf"))
+    assert [r.label for r in lay.regions] == [str(n) for n in range(1, 11)]
+
+
+def test_daily_earth_science_tests() -> None:
+    """지구과학 데일리 테스트 (2026-11-11 실측에서 sonnet이 맞게 읽은 문항 수)."""
+    moon = analyze(need(DOCS / "3회 달의 운동 테스트지(답안지 포함).pdf"))
+    assert [r.label for r in moon.regions] == [str(n) for n in range(1, 21)]
+    crust = analyze(need(DOCS / "03_지각변동(시험용).pdf"))
+    assert [r.label for r in crust.regions] == [str(n) for n in range(1, 8)]

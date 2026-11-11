@@ -177,6 +177,22 @@ def test_nested_lists_only_restarting_indented_runs() -> None:
     assert nested_lists([(1, 0), (2, 0), (3, 0)]) == set()
 
 
+def test_title_line_above_questions_does_not_hide_two_columns() -> None:
+    """쪽 제목이 가운데를 가로질러도, 첫 문항 번호 줄부터 아래로 단을 가른다 (DT3 2쪽 실측)."""
+    from dawoni.ingest.layout import Line, Rect, _columns  # pyright: ignore[reportPrivateUsage]
+
+    def ln(x0: float, y: float, x1: float, text: str) -> Line:
+        return Line(2, Rect(x0, y, x1, y + 12), text)
+
+    lines = [ln(215, 119, 387, "DAY 3. 회로와 정전기 DT 이름:"), ln(150, 140, 450, "다원교육 영재관"),
+             ln(78, 193, 88, "1."), ln(96, 193, 290, "그림과 같은 정팔면체에서"),
+             ln(96, 208, 288, "각 변의 저항이 R일 때"), ln(96, 224, 200, "합성 저항을 구하시오."),
+             ln(304, 193, 314, "2."), ln(322, 193, 520, "그림은 저항, 직류 전원으로"),
+             ln(322, 208, 515, "연결된 회로를 나타낸"), ln(322, 224, 500, "것이다.")]  # fmt: skip
+    cols = _columns(lines, 595.0, 100.0, 841.0)
+    assert len(cols) == 2 and 290 < cols[0][1] < 304
+
+
 def test_split_total_points() -> None:
     """실측 공통형3회: "[총 8점]"이 "총 점 [ 8 ]", "[ 총 점 9 ]"로 조각나 배점을 못 읽음."""
     from dawoni.ingest.layout import marked_points
@@ -197,6 +213,8 @@ def test_split_total_points() -> None:
      ("물음에 답하라. [8점]\n(1) [3점]\n(2) [5점]", 8),  # 머리 배점 = 소문항 합
      ("[총 6점]\n(1) [2점]\n(2) [4점]", 6),
      ("(1) 각각 쓰시오. [단답형 각 2점]", None),  # 소문항 수를 모름
+     ("2. 글을 읽고 답하시오. [서술형 15점]\n(1) 몇 픽셀? [서술형: 5점]\n(2) 스캔한다. [총 10점]"
+      "\n1) 방향은? [서술형: 3점]\n2) 날개 수는? [서술형: 4점]\n3) 방법은? [서술형: 3점]", 15),
      ("[실험결과 1] [㉠] (3점)", None)],
 )  # fmt: skip
 def test_marked_points_typed_and_per_part(text: str, want: float | None) -> None:
@@ -322,6 +340,36 @@ def test_check_page_document_points_follow_the_marks() -> None:
     assert not any("문서에 적힌 배점" in p for p in check_page(out, [r], None, grounded=False))
 
 
+def test_check_page_summed_marks_are_a_minimum() -> None:
+    """실측(2026-11-11, 2605 서울형 4회 2번): (1)에는 배점 표시가 없고 (2)의 1)~3)에만 3·4·3점 →
+    표시 합 10점. AI가 15점으로 읽을 때마다 10점으로 고치라고 해 세 번 만에 시험 읽기가 실패했다.
+    소문항 표시의 합은 최소로만 본다. 총점 표시·표시 하나는 그대로 맞춰야 한다."""
+    from dawoni.ingest.layout import Line, Rect, Region, summed_marks
+
+    def region(*lines: str, points: float) -> Region:
+        return Region(label="2", lines=[Line(1, Rect(0, 0, 0, 0), t) for t in lines], points=points)
+
+    def q(points: float) -> PageExtraction:
+        return PageExtraction.model_validate({"questions": [
+            {"label": "2", "item_type": "essay", "points": points, "stem": [_p(_t("글을 읽고"))],
+             "parts": [{"label": "(1)", "points": 5}, {"label": "(2)", "points": points - 5}]}]})  # fmt: skip
+
+    summed = region(
+        "(1) 몇 픽셀?", "1) [서술형: 3점]", "2) [서술형: 4점]", "3) [서술형: 3점]", points=10
+    )
+    assert summed_marks(summed.text)
+    ok = check_page(q(15), [summed], None, grounded=False, doc=True)
+    assert not any("문서에 적힌 배점" in p for p in ok)
+    low = check_page(q(8), [summed], None, grounded=False, doc=True)
+    assert any("문서에 적힌 배점은 10점" in p for p in low), "합보다 작으면 여전히 고치게"
+    total = region("[총 10점]", "(1) [3점]", "(2) [4점]", points=10)
+    assert not summed_marks(total.text)
+    assert any(
+        "문서에 적힌 배점은 10점" in p
+        for p in check_page(q(15), [total], None, grounded=False, doc=True)
+    )
+
+
 def test_to_item_uses_raster_crops_and_captions_as_notes(exam_pdf: Path) -> None:
     layout = analyze(exam_pdf)
     q4 = PageExtraction.model_validate(PAGE1).questions[3]
@@ -350,8 +398,9 @@ def test_extract_exam_by_page_with_repair(
     )
     result = extract_exam(_engine(app_paths, exe), analyze(exam_pdf), tmp_path / "work")
     assert [q.number for q in result.questions] == ["1", "2", "3", "4", "5", "서술형 1"]
-    assert [q.points for q in result.questions] == [4, 3, 4, 4, 4, 6]
-    assert sum("배점 표시가 없어" in w for w in result.warnings) == 4  # 1·3·4·5번
+    # 배점 표시가 없는 1·3·4·5번은 ⌊100 ÷ 6문항⌋ = 16점 (2026-11-11 사용자 결정)
+    assert [q.points for q in result.questions] == [16, 3, 16, 16, 16, 6]
+    assert sum("배점 표시가 없어 16점(100점 ÷ 6문항)" in w for w in result.warnings) == 4
     prompts = fake_prompts(exe)
     assert len(prompts) == 3 and "['5']이 빠졌다" in prompts[1]
     assert "레이아웃상 1번 선지 기호 옆" in prompts[0] and "글 상자 1개" in prompts[0]

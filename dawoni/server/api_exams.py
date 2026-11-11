@@ -17,6 +17,7 @@ from dawoni.grading.pipeline import (
     PipelineError,
     SecondOpinion,
     approve_rubric,
+    choose_key_conflicts,
     decide_candidates,
     edit_rubric,
     edit_rubric_items,
@@ -29,6 +30,7 @@ from dawoni.models.grading import (
     Exam,
     ExamQuestion,
     GradeResult,
+    KeyChoice,
     Rubric,
     RubricDraft,
     RubricEdit,
@@ -85,7 +87,8 @@ def question_state(store: ExamStore, q: ExamQuestion) -> dict[str, Any]:
             "based_on_key": r.based_on_key,
             "attention": sum(c.verdict != "same" for c in r.checks)
             + sum(c.status == "proposed" for c in r.candidates)
-            + sum(a.status == "proposed" for a in r.accepted_alternatives),
+            + sum(a.status == "proposed" for a in r.accepted_alternatives)
+            + sum(k.choice is None for k in r.key_conflicts),
         },
     }
 
@@ -438,6 +441,25 @@ def candidates(exam_id: str, number: str, body: CandidatesBody, st: AppState = S
     r = decide_candidates(r, body.accept, body.reject)
     store.save_rubric(r)
     return r
+
+
+class KeyConflictsBody(BaseModel):
+    choices: dict[str, KeyChoice] = Field(description="K1 → question(문제 기준) · key(해설지 기준)")
+
+
+@router.post("/{exam_id}/questions/{number}/rubric/key-conflicts")
+def key_conflicts(
+    exam_id: str, number: str, body: KeyConflictsBody, st: AppState = State
+) -> Rubric:
+    """해설지와 다른 기준 고르기. 항목 기준이 바뀌면(승인된 것이면 새 판) 다시 승인해야 한다."""
+    _, store = _store(st, exam_id)
+    r = store.rubric(number)
+    if r is None:
+        raise PipelineError(f"문항 {number}: 루브릭이 없습니다.")
+    out = choose_key_conflicts(r, body.choices)
+    if out is not r:
+        store.save_rubric(out)
+    return out
 
 
 @router.post("/{exam_id}/questions/{number}/rubric/candidates/match")

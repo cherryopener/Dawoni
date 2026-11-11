@@ -101,7 +101,13 @@ def exam_question_text(q: ExamQuestion) -> str:
 def credit_text(p: KeyPart) -> str:
     match p.credit_policy:
         case "listed":
-            body = " / ".join(f"{i}) {c.what} {c.points:g}점" for i, c in enumerate(p.credits, 1))
+            body = " / ".join(
+                f"{i}) {c.what} {c.points:g}점"
+                + (f"씩 {c.each}개 (합 {c.total:g}점)" if c.each > 1 else "")
+                for i, c in enumerate(p.credits, 1)
+            )
+            if p.credit_tiers:
+                body = f"단계 — 이 중 하나만 받음 (더하지 않음): {body}"
         case "none":
             body = "없음 (맞으면 만점, 아니면 0점)"
         case "range":

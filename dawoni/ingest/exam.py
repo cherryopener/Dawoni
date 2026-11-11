@@ -34,12 +34,12 @@ from dawoni.ingest.grounding import (
     hangul_outside,
     review_note,
 )
-from dawoni.ingest.layout import DocumentLayout, Region, render_clip
+from dawoni.ingest.layout import DocumentLayout, Region, render_clip, summed_marks
 from dawoni.ingest.layout import Figure as LayoutFigure
 from dawoni.mathx.latex import latex_problems
 from dawoni.models.base import DawoniModel
 from dawoni.models.content import Block, MathRun, iter_runs
-from dawoni.models.grading import ExamPart, ExamQuestion
+from dawoni.models.grading import ExamPart, ExamQuestion, PartKind
 from dawoni.models.item import Choice, ItemContent, ItemType
 from dawoni.parallel import Progress
 
@@ -49,8 +49,6 @@ def _quiet(done: int, total: int, message: str) -> None:
 
 
 log = logging.getLogger(__name__)
-
-DEFAULT_POINTS = 4.0
 
 
 class FigureUse(DawoniModel):
@@ -212,8 +210,26 @@ def to_item(q: ExtractedQuestion, region: Region, subject: str | None) -> ItemCo
     )
 
 
-PART_POINTS = 2.0
-"""배점 표시가 없는 문서 문항의 소문항 하나 배점 (강사 확인 전 자리값)."""
+TOTAL_POINTS = 100
+"""배점 표시가 없는 문항은 100점을 문항 수로 나눈 몫(소수점 버림)으로 둔다 — 7문항이면 14점,
+9문항이면 11점 (2026-11-11 사용자 결정, 데일리 테스트는 배점이 없는 것이 많다).
+강사 확인 전 추천값."""
+
+
+def suggested_points(n_questions: int) -> float:
+    """배점 표시가 없는 문항 하나의 추천 배점: ⌊100 ÷ 문항 수⌋ (적어도 1점)."""
+    return float(max(1, TOTAL_POINTS // max(1, n_questions)))
+
+
+def split_points(total: float, n: int) -> list[float]:
+    """소문항 n개에 정수로 고르게 나눈다 (나머지는 뒤 소문항부터 1점씩) — 합은 정확히 total.
+    한 소문항에 1점도 안 돌아가면 똑같이 나눈다."""
+    base, rem = divmod(int(total), n)
+    if base == 0 or total != int(total):
+        return [total / n] * n
+    return [float(base)] * (n - rem) + [float(base + 1)] * rem
+
+
 _SUB_LABELS = (
     (re.compile(r"(?m)^\s*(\(\d{1,2}\))"), "({})"),
     (re.compile(r"(?m)^\s*(\d{1,2}\))"), "{})"),  # Word 자동 번호 "1)" (실측 월례 시험지)
@@ -230,21 +246,42 @@ def sub_labels(text: str) -> list[str]:
 
 
 def unmarked_points(
-    q: ExtractedQuestion, r: Region, default: float
-) -> tuple[float, list[ExamPart], str]:
-    """문서에 배점 표시가 없는 문항: (배점, 소문항, 경고).
+    q: ExtractedQuestion, r: Region, points: float, n_questions: int, *, doc: bool = True
+) -> tuple[list[ExamPart], str]:
+    """배점 표시가 없는 문항: (소문항, 경고). 배점은 `points`(⌊100 ÷ 문항 수⌋)를 소문항에 나눈다.
 
     문서 글이 전부이므로 AI가 적은 배점은 지어낸 것이고, 배점을 못 정하면 소문항을 빼먹는다
-    (실측 2026-11-04 주말반 시험: 4번은 1+1점을 지어내고, (1)(2)가 있는 5·7번은 소문항 없이 옮김).
-    소문항은 AI 것이 없으면 본문의 (1)(2) 줄에서 가져온다."""
-    parts = [p.model_copy(update={"points": PART_POINTS}) for p in q.parts] or [
-        ExamPart(label=label, points=PART_POINTS) for label in sub_labels(r.text)
-    ]
-    if not parts:
-        return default, [], f"배점 표시가 없어 {default:g}점으로 둠 — 확인 필요"
-    total = PART_POINTS * len(parts)
-    why = f"배점 표시가 없어 소문항마다 {PART_POINTS:g}점(합 {total:g}점)으로 둠 — 확인 필요"
-    return total, parts, why
+    (실측 2026-11-04 주말반 시험: 4번은 1+1점을 지어내고, (1)(2)가 있는 5·7번은 소문항 없이 옮김;
+    2026-11-11 DT3 PDF: 5·9번의 (1)~(3)을 한 번은 옮기고 한 번은 빠뜨림).
+    소문항은 AI 것이 없으면 AI가 옮긴 본문의 (1)(2) 줄에서, 문서는 원문 글에서도 가져온다 —
+    PDF 원문은 뒤쪽 답안지의 "(1) (2) (3)"까지 영역에 들어올 수 있다 (DT3 10번). 선택형에는
+    소문항을 만들지 않는다 (8번 "다음 중 가능한 경우"의 1)~5) 목록)."""
+    if q.item_type == "multiple_choice":
+        labels: list[str] = []
+    else:
+        labels = (
+            [p.label for p in q.parts]
+            or sub_labels(blocks_text(q.stem))
+            or (sub_labels(r.text) if doc else [])
+        )
+    kinds: dict[str, PartKind | None] = {p.label: p.kind for p in q.parts}
+    parts = [
+        ExamPart(label=label, points=pts, kind=kinds.get(label))
+        for label, pts in zip(labels, split_points(points, len(labels)), strict=True)
+    ] if labels else []  # fmt: skip
+    why = f"배점 표시가 없어 {points:g}점(100점 ÷ {n_questions}문항)으로 둠"
+    if parts:
+        why += f" — 소문항 {'·'.join(f'{p.points:g}' for p in parts)}점"
+    return parts, why + " — 확인 필요"
+
+
+def _doc_points_differ(points: float, r: Region) -> bool:
+    """AI 배점이 문서의 배점 표시와 다른가. 표시가 소문항 여럿의 합이면 표시 없는 소문항이 있을 수
+    있어 그 합은 최소다 — AI가 더 크게 읽으면 받아 두고 경고한다 (`summed_marks`)."""
+    assert r.points is not None
+    if abs(points - r.points) < 1e-9:
+        return False
+    return not (points > r.points and summed_marks(r.text))
 
 
 def _check_parts(q: ExtractedQuestion, r: Region) -> list[str]:
@@ -330,7 +367,7 @@ def check_page(
                 f"문항 {q.label}: 본문에 {UNGROUNDED} {outside:.0%} 들어갔다. "
                 "PDF 글자를 기준으로 그대로 옮길 것"
             )
-        if doc and r.points and q.points is not None and abs(q.points - r.points) > 1e-9:
+        if doc and r.points and q.points is not None and _doc_points_differ(q.points, r):
             problems.append(
                 f"문항 {q.label}: 문서에 적힌 배점은 {r.points:g}점이다 (소문항에만 적혀 있으면 "
                 f"그 합). points를 {r.points:g}로"
@@ -358,7 +395,6 @@ def extract_exam(
     workers: int = 1,
     progress: Progress | None = None,
     partial: bool = False,
-    default_points: float = DEFAULT_POINTS,
 ) -> IngestResult:
     """`workers`: 쪽 여러 개를 동시에 구조화 (쪽마다 새 세션 — 두꺼운 교재·문제집용).
 
@@ -452,6 +488,7 @@ def extract_exam(
         progress=progress or _quiet,
     )  # fmt: skip
     questions: list[ExamQuestion] = []
+    unmarked: list[tuple[int, ExtractedQuestion, Region]] = []
     warnings: list[str] = list(layout.warnings)
     notes: dict[str, str] = {}
     for page, by_label in zip(pages, reads, strict=True):
@@ -469,29 +506,36 @@ def extract_exam(
                 notes[pr.region.label] = f"본문: {review_note(share)}"
                 warnings.append(f"문항 {pr.region.label}: {notes[pr.region.label]}")
             item = to_item(q, pr.region, subject)
-            if doc and pr.region.points is None:
-                points, parts, why = unmarked_points(q, pr.region, default_points)
-                item = item.model_copy(update={"points": points})
-                warnings.append(f"문항 {pr.region.label}: {why}")
+            # 배점 표시가 없다: 문서는 글이 전부, PDF도 글자가 있고 깨지지 않았으면 (깨진 쪽은 AI가
+            # 그림에서 읽은 배점이 맞을 수 있다) — 문항 수를 다 센 뒤 ⌊100 ÷ 문항 수⌋로
+            text = pr.region.text
+            if pr.region.points is None and (doc or (text.strip() and not broken_glyphs(text))):
+                unmarked.append((len(questions), q, pr.region))
                 questions.append(
                     ExamQuestion(
-                        number=pr.region.label,
-                        points=points,
-                        item=item,
-                        parts=parts,
+                        number=pr.region.label, points=1, item=item,
                         source_pages=pr.region.pages,
                     )
-                )
+                )  # fmt: skip
                 continue
             points = item.points
             if points is None and q.parts:
                 points = sum(p.points for p in q.parts)
-            if points is None:
-                points = default_points
+            if doc and points is not None and pr.region.points and points > pr.region.points:
                 warnings.append(
-                    f"문항 {pr.region.label}: 배점 표시가 없어 {points:g}점으로 둠 — 확인 필요"
+                    f"문항 {pr.region.label}: 배점 표시가 일부 소문항에만 있어(표시 합 "
+                    f"{pr.region.points:g}점) AI가 읽은 {points:g}점으로 둠 — 확인 필요"
                 )
-            elif pr.region.points is None and pr.region.text.strip():
+            if points is None:  # AI도 배점을 못 읽음 (글자가 없는 쪽 등)
+                unmarked.append((len(questions), q, pr.region))
+                questions.append(
+                    ExamQuestion(
+                        number=pr.region.label, points=1, item=item,
+                        source_pages=pr.region.pages,
+                    )
+                )  # fmt: skip
+                continue
+            if pr.region.points is None and text.strip():
                 # PDF 글자에 배점 표시가 없는데 AI가 배점을 냈다 — 그림에서 읽었거나 지어냈다
                 # (문서는 지어내지 못하게 막지만, PDF는 글꼴 탓에 표시가 깨져 그림이 맞을 때도 있다)
                 warnings.append(
@@ -514,6 +558,12 @@ def extract_exam(
                     source_pages=pr.region.pages,
                 )
             )
+    per = suggested_points(len(questions))
+    for i, q, region in unmarked:
+        parts, why = unmarked_points(q, region, per, len(questions), doc=doc)
+        item = questions[i].item.model_copy(update={"points": per})
+        questions[i] = questions[i].model_copy(update={"points": per, "item": item, "parts": parts})
+        warnings.append(f"문항 {region.label}: {why}")
     return IngestResult(
         questions=questions,
         figure_files={pr.region.label: pr.figure_files for pr in prepared},

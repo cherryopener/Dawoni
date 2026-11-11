@@ -11,7 +11,7 @@ import { api, enc, useAction, useApi, waitJob } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useTeacher } from "@/lib/session";
 import { pts } from "@/lib/steps";
-import type { Compare, Decision, ExamQuestion, Job, Rubric } from "@/lib/types";
+import type { Compare, Decision, ExamQuestion, Job, KeyChoice, Rubric } from "@/lib/types";
 import { useExam } from "../Exam";
 import { partLabel, useQuestionDetails } from "./shared";
 
@@ -37,6 +37,73 @@ function Decide({ status, onDecide, busy }: { status: Decision; onDecide: (v: "a
         <X /> 빼기
       </Button>
     </div>
+  );
+}
+
+/** 해설지와 다른 기준 (2026-11-11): 해설지의 0점 조건이 문제가 요구하지 않은 것을 요구할 때, AI는 문제
+ * 기준으로 항목을 쓰고 해설지대로의 기준을 함께 적는다. 강사가 고른 쪽이 그 항목의 기준이 된다. */
+function KeyConflicts({ r, busy, onChoose }: { r: Rubric; busy: boolean; onChoose: (id: string, v: Exclude<KeyChoice, "edited">) => void }) {
+  const option = (id: string, v: Exclude<KeyChoice, "edited">, label: string, text: string, on: boolean) => (
+    <button
+      type="button"
+      disabled={busy}
+      aria-pressed={on}
+      onClick={() => onChoose(id, v)}
+      className={cn(
+        "flex cursor-pointer flex-col gap-1 rounded-lg border px-3 py-2 text-left disabled:cursor-default",
+        on ? "border-accent bg-accent-soft" : "border-line hover:bg-muted",
+      )}
+    >
+      <span className={cn("inline-flex items-center gap-1 text-[12px] font-medium", on ? "text-accent" : "text-text-2")}>
+        {on && <Check className="size-3.5" />} {label}
+      </span>
+      <span className="text-[13px]">
+        <RichText text={text} />
+      </span>
+    </button>
+  );
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <>
+            해설지와 다른 기준{" "}
+            <Help>해설지가 문제에서 요구하지 않은 것을 0점 조건으로 건 곳입니다. AI는 먼저 문제가 요구한 것으로 기준을 썼습니다.</Help>
+          </>
+        }
+        desc="어느 쪽으로 채점할지 고르면 그 기준이 채점 항목에 들어갑니다. 모두 정해야 승인할 수 있습니다."
+      />
+      <CardBody className="pt-3">
+        {r.key_conflicts.map((k) => {
+          const switchable = Boolean(k.item_id && k.key_criterion && k.question_criterion);
+          return (
+            <div key={k.id} className="flex flex-col gap-2 border-t border-line py-3 first:border-t-0">
+              <div className="flex items-start gap-3">
+                <span className="w-8 shrink-0 text-text-3">{k.id}</span>
+                <span className="flex-1 text-[13px]">
+                  <RichText text={k.note} />
+                  {k.item_id && <span className="text-[12px] text-text-3"> → {k.item_id}</span>}
+                </span>
+                {k.choice === null ? <Badge tone="warn">정하기 전</Badge> : k.choice === "edited" && <Badge tone="ok">직접 고침</Badge>}
+              </div>
+              {switchable ? (
+                <div className="ml-11 grid gap-2 sm:grid-cols-2">
+                  {option(k.id, "question", "문제 기준", k.question_criterion!, k.choice === "question")}
+                  {option(k.id, "key", "해설지 기준", k.key_criterion!, k.choice === "key")}
+                </div>
+              ) : (
+                <div className="ml-11 flex items-center gap-2">
+                  <Button size="sm" variant="ghost" disabled={busy} className={cn(k.choice !== null && "bg-ok-soft text-ok")} onClick={() => onChoose(k.id, "question")}>
+                    <Check /> 확인
+                  </Button>
+                  <span className="text-[12px] text-text-3">해설지대로 채점하려면 [고치기]로 기준을 바꾸세요.</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </CardBody>
+    </Card>
   );
 }
 
@@ -418,7 +485,13 @@ export function RubricStep() {
   const finalize = () => call(() => api.post(`${base}/calibration/${enc(sel)}/finalize`, { by }));
   const decide = (id: string, v: "accept" | "reject") =>
     call(() => api.post(`${base}/questions/${enc(sel)}/rubric/candidates`, v === "accept" ? { accept: [id] } : { reject: [id] }));
-  const proposed = r ? r.accepted_alternatives.filter((a) => a.status === "proposed").length + r.candidates.filter((c) => c.status === "proposed").length : 0;
+  const chooseBasis = (id: string, v: Exclude<KeyChoice, "edited">) =>
+    call(() => api.post(`${base}/questions/${enc(sel)}/rubric/key-conflicts`, { choices: { [id]: v } }));
+  const proposed = r
+    ? r.accepted_alternatives.filter((a) => a.status === "proposed").length +
+      r.candidates.filter((c) => c.status === "proposed").length +
+      r.key_conflicts.filter((k) => k.choice === null).length
+    : 0;
 
   return (
     <div className="flex h-full">
@@ -518,14 +591,11 @@ export function RubricStep() {
                     <span className="font-medium">{pts(it.points)}점</span>
                   </div>
                 ))}
-                {r.key_conflicts.map((k) => (
-                  <div key={k} className="mt-2 rounded-lg bg-warn-soft px-3 py-2 text-[13px] text-warn">
-                    해설지와 충돌: {k}
-                  </div>
-                ))}
               </CardBody>
             </Card>
           )}
+
+          {r && !editing && r.key_conflicts.length > 0 && <KeyConflicts r={r} busy={act.busy} onChoose={(id, v) => void chooseBasis(id, v)} />}
 
           {r && (r.accepted_alternatives.length > 0 || r.candidates.length > 0) && (
             <Card>
@@ -569,7 +639,7 @@ export function RubricStep() {
         open={askRemake}
         onOpenChange={setAskRemake}
         title={`${sel}번 루브릭을 다시 만들까요?`}
-        desc="해설지(또는 AI 풀이)로 새 초안을 만듭니다. 고친 채점 항목과 인정·제외한 정답 후보는 새 초안으로 바뀌고, 다시 승인·확정해야 합니다. 객관식·단답형에서 고친 정답은 그대로 둡니다."
+        desc="해설지(또는 AI 풀이)로 새 초안을 만듭니다. 고친 채점 항목, 인정·제외한 정답 후보, 해설지와 다른 기준에서 고른 것은 새 초안으로 바뀌고, 다시 승인·확정해야 합니다. 객관식·단답형에서 고친 정답은 그대로 둡니다."
         footer={
           <>
             <Button variant="ghost" onClick={() => setAskRemake(false)}>

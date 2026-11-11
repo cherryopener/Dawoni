@@ -16,7 +16,12 @@ from test_grading import FIX
 from test_server import _client, _wait  # pyright: ignore[reportPrivateUsage]
 
 from dawoni.fsio import read_json
-from dawoni.grading.pipeline import PipelineError, edit_rubric_items
+from dawoni.grading.pipeline import (
+    PipelineError,
+    approve_rubric,
+    decide_candidates,
+    edit_rubric_items,
+)
 from dawoni.models.grading import (
     AcceptedAlternative,
     AnswerCandidate,
@@ -103,6 +108,16 @@ def test_editing_an_approved_rubric_makes_a_new_draft() -> None:
         ("E2", ["R1"]),
     ]
     assert new.candidates[0].item_ids == []
+
+
+def test_deciding_candidates_on_a_finalized_rubric_needs_finalizing_again() -> None:
+    """확정한 루브릭에서 넓힌 표현을 인정·빼면 초안이 되는데 확정 기록이 남아, 다시 승인만 해도
+    손채점과 맞춰 보지 않은 판이 '확정'으로 보였다 (2026-11-11 고침)."""
+    r = decide_candidates(_rubric(), [], ["E1"])
+    assert (r.status, r.version) == ("draft", 4)
+    assert (r.approved_by, r.approved_at, r.finalized_by, r.finalized_note) == (None,) * 4
+    again = approve_rubric(r, "김선생")
+    assert again.status == "approved" and again.finalized_by is None
 
 
 def test_unchanged_edit_keeps_approval() -> None:

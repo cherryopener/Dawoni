@@ -257,8 +257,20 @@ def _unglue(script: str) -> str:
     return _OVER_SCRIPT.sub(lambda m: f"{m.group(1)} {{{m.group(2)}}}", script)
 
 
+_UPPER_WORDS = {
+    "OVER": "over", "ATOP": "atop", "SQRT": "sqrt", "CDOT": "cdot", "TIMES": "times",
+    "ANGLE": "angle", "SIM": "sim", "BULLET": "cdot",
+}  # fmt: skip
+"""한글 수식은 명령을 대문자로 써도 같다 — 변환기는 소문자만 안다. 실측(2026-11-11, 학원 HWP 15개의
+수식 1023개): `OVER` 51(분수가 깨짐), `BULLET`(가운뎃점) 12, `ANGLE` 12, `SIM` 4가 그대로 남았다."""
+_CENTIGRADE = re.compile(r"\\mathrm\{CENTIGRADE\}|(?<![\\A-Za-z])CENTIGRADE(?![A-Za-z])")
+"""`CENTIGRADE` = ℃ (단위 글꼴 `rm` 안에서는 `\\mathrm{CENTIGRADE}`로 나온다)."""
+
+
 def from_eqedit(script: str) -> str:
+    script = _GLUE_RUN.sub(lambda m: _UPPER_WORDS.get(m.group(0), m.group(0)), script)
     latex = eqedit_to_latex(_unglue(script))
+    latex = _CENTIGRADE.sub(lambda _: r"{}^{\circ}\mathrm{C}", latex)
     latex = re.sub(r"(?<![\\A-Za-z])DEG(?![A-Za-z])", r"^{\\circ}", latex)
     for cmd, word in _EQ_WORDS.items():
         latex = re.sub(rf"(?<![\\A-Za-z]){word}(?![A-Za-z])", lambda _, c=cmd: c, latex)

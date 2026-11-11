@@ -64,6 +64,8 @@ from dawoni.models.grading import (
     GradeOutput,
     GradeResult,
     ItemJudgement,
+    KeyChoice,
+    KeyConflict,
     KeyRubricDraft,
     PartAnswerSides,
     PartCheck,
@@ -291,7 +293,7 @@ def expand_key_rubric(
             "해설지 판독을 강사가 아직 확인하지 않았습니다 — 원본과 비교한 뒤 확인하세요"
             " (AI가 수식의 숫자를 바꿔 읽은 사례가 있음)"
         )
-    notes += [f"해설지 기준 확인: {x}" for x in draft.key_conflicts]
+    notes += [f"해설지 기준 확인: {x.note}" for x in draft.key_conflicts]
     if draft.accepted_alternatives:
         notes.append(
             f"AI가 넓힌 표현 {len(draft.accepted_alternatives)}개 — 인정한 것만 채점에 씁니다"
@@ -299,6 +301,7 @@ def expand_key_rubric(
     notes.append("해설지를 넓혀 만든 루브릭 (AI 풀이 없음) — 해설지 오타가 걱정되면 'AI 풀기'")
     data = draft.model_dump()
     data["never_deduct"] = checks.merge_never_deduct(draft, DEFAULT_NEVER_DEDUCT)
+    data["key_conflicts"] = [c.model_dump() for c in start_key_conflicts(draft)]
     return Rubric(
         **data,
         question_number=q.number,
@@ -414,11 +417,12 @@ def derive_rubric(
         for c in draft.checks
     ]
     notes += [n for c in part_checks if (n := _disagreement_note(c))]
-    notes += [f"해설지 기준 확인: {x}" for x in draft.key_conflicts]
+    notes += [f"해설지 기준 확인: {x.note}" for x in draft.key_conflicts]
     data = draft.model_dump()
     data["never_deduct"] = checks.merge_never_deduct(draft, DEFAULT_NEVER_DEDUCT)
     data["candidates"] = [c.model_dump() for c in candidates]
     data["checks"] = [c.model_dump() for c in part_checks]
+    data["key_conflicts"] = [c.model_dump() for c in start_key_conflicts(draft)]
     return Rubric(
         **data,
         question_number=q.number,
@@ -521,8 +525,12 @@ def edit_rubric(
     if lost:
         raise PipelineError(f"코드 채점 항목을 지울 수 없습니다 (소문항 {', '.join(lost)})")
     bump = 1 if previous.status == "approved" else 0
+    data = draft.model_dump()
+    data["key_conflicts"] = [
+        c.model_dump() for c in sync_key_conflicts(draft.key_conflicts, draft.items)
+    ]
     return Rubric(
-        **draft.model_dump(),
+        **data,
         question_number=previous.question_number,
         answer_rules=previous.answer_rules,
         based_on_key=previous.based_on_key,
@@ -586,6 +594,17 @@ def _validation_message(e: ValidationError) -> str:
     return "; ".join(m for m in msgs if m) or str(e)
 
 
+_UNAPPROVED: dict[str, object] = {
+    "status": "draft",
+    "approved_by": None,
+    "approved_at": None,
+    "finalized_by": None,
+    "finalized_at": None,
+    "finalized_note": None,
+}
+"""초안으로 돌아갈 때 지울 승인·확정 기록 — 남기면 다시 승인만 해도 '확정'으로 보인다."""
+
+
 def decide_candidates(rubric: Rubric, accept: list[str], reject: list[str]) -> Rubric:
     """강사가 다른 정답 후보(A…)·해설지 넓히기 제안(E…)을 인정·제외 (승인 전에).
     결정이 바뀌면 다시 승인해야 한다."""
@@ -609,8 +628,116 @@ def decide_candidates(rubric: Rubric, accept: list[str], reject: list[str]) -> R
         update={
             "candidates": cands,
             "accepted_alternatives": alts,
-            "status": "draft",
             "version": rubric.version + bump,
+            **_UNAPPROVED,
+        }
+    )
+
+
+# ---------------------------------------------------------------- 해설지와 다른 기준 (강사가 고름)
+
+
+def _same_text(a: str, b: str) -> bool:
+    return " ".join(a.split()) == " ".join(b.split())
+
+
+def start_key_conflicts(draft: RubricDraft) -> list[KeyConflict]:
+    """AI가 적은 '해설지와 다른 기준'을 강사가 고를 수 있게: K1, K2 …, 문제 기준 문장, 아직 안 정함.
+
+    항목이 없거나 해설지대로의 기준이 빠졌거나 항목 기준과 같으면 고를 수 없는 것(확인만)으로 둔다
+    — 이것 때문에 루브릭 만들기가 실패하지 않게 수리 요청은 하지 않는다."""
+    items = {i.id: i for i in draft.items}
+    out: list[KeyConflict] = []
+    for n, c in enumerate(draft.key_conflicts, start=1):
+        item = items.get(c.item_id) if c.item_id else None
+        key = (c.key_criterion or "").strip() if item else ""
+        ok = item is not None and bool(key) and not _same_text(key, item.criterion)
+        out.append(
+            c.model_copy(
+                update={
+                    "id": f"K{n}",
+                    "item_id": item.id if item else None,
+                    "key_criterion": key if ok else None,
+                    "question_criterion": item.criterion if ok and item else None,
+                    "choice": None,
+                }
+            )
+        )
+    return out
+
+
+def _choice_of(c: KeyConflict, items: dict[str, RubricItem]) -> KeyChoice | None:
+    """항목의 지금 기준 문장으로 본 선택. 강사가 고친 문장이면 edited, 항목을 지웠어도 edited."""
+    if not c.switchable:
+        return c.choice
+    item = items.get(c.item_id or "")
+    if item is None:
+        return "edited"
+    if _same_text(item.criterion, c.key_criterion or ""):
+        return "key"
+    if _same_text(item.criterion, c.question_criterion or ""):
+        # 아직 정하지 않았으면 그대로 (AI가 쓴 문제 기준을 강사가 고른 것은 아니다)
+        return None if c.choice is None else "question"
+    return "edited"
+
+
+def sync_key_conflicts(conflicts: list[KeyConflict], items: list[RubricItem]) -> list[KeyConflict]:
+    """항목을 고친 뒤(화면의 고치기·보정 제안 적용): 선택을 항목의 지금 기준 문장에 맞춘다."""
+    by_id = {i.id: i for i in items}
+    return [
+        c
+        if (choice := _choice_of(c, by_id)) == c.choice
+        else c.model_copy(update={"choice": choice})
+        for c in conflicts
+    ]
+
+
+def choose_key_conflicts(rubric: Rubric, choices: dict[str, KeyChoice]) -> Rubric:
+    """강사가 해설지와 다른 기준을 고른다: question=문제 기준, key=해설지 기준 (항목 기준 문장을
+    바꾼다). 고를 수 없는 것(예전 저장본 등)은 question으로 확인만 한다.
+
+    항목 기준이 바뀌면 다시 승인해야 한다 (승인된 것이면 새 판). 확인만 하면 승인은 그대로다."""
+    conflicts = {c.id: c for c in rubric.key_conflicts if c.id}
+    unknown = sorted(set(choices) - set(conflicts))
+    if unknown:
+        raise PipelineError(f"해설지와 다른 기준에 없는 ID: {unknown}")
+    if any(v == "edited" for v in choices.values()):
+        raise PipelineError("'직접 고침'은 고르는 것이 아니라 고치기로 기준을 바꾸면 됩니다")
+    have = {i.id for i in rubric.items}
+    criteria: dict[str, str] = {}
+    for cid, v in choices.items():
+        c = conflicts[cid]
+        if not c.switchable:
+            if v == "key":
+                raise PipelineError(f"{cid}: 해설지대로의 기준이 없습니다 — 고치기로 바꾸세요")
+            continue
+        assert c.item_id and c.key_criterion and c.question_criterion
+        if c.item_id not in have:
+            raise PipelineError(f"{cid}: 항목 {c.item_id}을 지워서 고를 수 없습니다")
+        new = c.key_criterion if v == "key" else c.question_criterion
+        if criteria.setdefault(c.item_id, new) != new:
+            raise PipelineError(f"{c.item_id}에 서로 다른 기준을 함께 골랐습니다")
+    items = [
+        i.model_copy(update={"criterion": criteria[i.id]}) if i.id in criteria else i
+        for i in rubric.items
+    ]
+    by_id = {i.id: i for i in items}
+    # 고르지 않은 것도 바뀐 문장에 맞춘다 (한 항목에 충돌이 둘 걸린 경우)
+    conflicts_out = [
+        c.model_copy(update={"choice": choices[c.id] if c.id in choices else _choice_of(c, by_id)})
+        for c in rubric.key_conflicts
+    ]
+    if items == rubric.items and conflicts_out == rubric.key_conflicts:
+        return rubric
+    if items == rubric.items:
+        return rubric.model_copy(update={"key_conflicts": conflicts_out})
+    bump = 1 if rubric.status == "approved" else 0
+    return rubric.model_copy(
+        update={
+            "items": items,
+            "key_conflicts": conflicts_out,
+            "version": rubric.version + bump,
+            **_UNAPPROVED,
         }
     )
 

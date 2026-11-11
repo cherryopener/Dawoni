@@ -174,6 +174,12 @@ CHECK_TEXT = {
     None: "검산 안 함",
 }
 STATUS_TEXT = {"proposed": "강사 미확인", "accepted": "인정", "rejected": "제외"}
+KEY_CHOICE_TEXT = {
+    None: "강사 미확인",
+    "question": "문제 기준",
+    "key": "해설지 기준",
+    "edited": "직접 고침",
+}
 
 
 def _quote(q: str, n: int = 60) -> str:
@@ -219,6 +225,10 @@ def _rubric_review(r: Rubric, matches: CandidateMatches | None = None) -> list[s
         if e.id:
             where = e.part or "전체"
             out.append(f"  넓힌 표현 {e.id} ({where}): {e.description} — {STATUS_TEXT[e.status]}")
+    for k in r.key_conflicts:
+        out.append(
+            f"  해설지와 다른 기준 {k.id} ({k.item_id or '전체'}): {KEY_CHOICE_TEXT[k.choice]}"
+        )
     if matches is not None:
         shown: set[str] = set()
         for a in r.candidates:

@@ -21,6 +21,16 @@ class KeyCredit(DawoniModel):
 
     what: str = Field(min_length=1, description="해설지에 적힌 대상 그대로 (예: θ, 과정, 답, (가))")
     points: float = Field(gt=0)
+    each: int = Field(
+        default=1,
+        ge=1,
+        description="'답 각 1점'처럼 같은 점수를 여러 개에 따로 주면 그 개수 (답이 두 개면 2). "
+        "하나면 1",
+    )
+
+    @property
+    def total(self) -> float:
+        return self.points * self.each
 
 
 class KeyPart(DawoniModel):
@@ -40,6 +50,11 @@ class KeyPart(DawoniModel):
     )
     credits: list[KeyCredit] = Field(
         default_factory=lambda: list[KeyCredit](), description="listed일 때 항목별 점수"
+    )
+    credit_tiers: bool = Field(
+        default=False,
+        description="listed일 때: 점수들을 더하는 것이 아니라 그중 하나만 받는 단계면 true "
+        "(예: '2가지 정답 1점, 3가지 정답 2점', '①이면 4점, ②이면 2점, 그 외 0점')",
     )
     credit_min: float | None = Field(default=None, ge=0, description="range일 때 최소 점수")
     credit_max: float | None = Field(default=None, gt=0, description="range일 때 최대 점수")
@@ -67,7 +82,25 @@ class KeyPart(DawoniModel):
 
     @property
     def credit_total(self) -> float:
-        return sum(c.points for c in self.credits)
+        """해설지 표기대로의 만점: 단계면 가장 높은 단계, 아니면 합 ("각"은 개수만큼)."""
+        if self.credit_tiers:
+            return max((c.points for c in self.credits), default=0.0)
+        return sum(c.total for c in self.credits)
+
+    def gives_partial(self, points: float) -> bool:
+        """해설지가 이 소문항에 부분 점수를 주는가 (맞으면 만점·아니면 0점이 아님).
+        실측(2026-11-11): 단답형 소문항에 "2가지 정답 1점, 3가지 2점", "[그림 2점]/[2점]",
+        "답 하나에 2점"이 적혀 있는데 코드 채점이라 줄 수 없었다."""
+        if self.credit_policy == "range":
+            return True
+        if self.credit_policy != "listed":
+            return False
+        return (
+            self.credit_tiers
+            or len(self.credits) > 1
+            or self.credits[0].each > 1
+            or self.credits[0].points < points - 1e-9
+        )
 
 
 _NUMBER_WRAP = re.compile(r"\[?\s*(?:문항\s*)?(.+?)\s*(?:번)?\s*\]?")
@@ -116,6 +149,11 @@ class AnswerKey(DawoniModel):
 
     def part(self, label: str | None) -> KeyPart | None:
         return next((p for p in self.parts if p.label == (label or "")), None)
+
+    @property
+    def empty(self) -> bool:
+        """답도 해설도 없는 해설지 — 넓힐 것이 없다 (데일리 테스트: 해설이 앞 문항까지만 있음)."""
+        return all(not p.answer and not p.solution.strip() for p in self.parts)
 
     @property
     def concepts(self) -> list[str]:

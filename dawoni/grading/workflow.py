@@ -20,7 +20,13 @@ from dawoni.agents import AgentError, AgentErrorCode
 from dawoni.context import TaskFailed, situation
 from dawoni.export.exam_files import ExportResult, write_files
 from dawoni.grading import assign, calibration
-from dawoni.grading.answers import code_gradable, code_rubric, grade_by_code
+from dawoni.grading.answers import (
+    answerless_parts,
+    code_gradable,
+    code_rubric,
+    grade_by_code,
+    partial_parts,
+)
 from dawoni.grading.pipeline import (
     PipelineError,
     SecondOpinion,
@@ -121,14 +127,19 @@ def rubric_questions(
     """객관식·단답형은 코드로 (AI 호출 0회 — 정답은 해설지나 시험지에서). 해설지가 있는 서술형은
     해설지 넓히기(호출 1번). 해설지가 없거나 `ai_solve`("AI 풀기 (해설지 검산)")면 AI 풀이 →
     루브릭 → 검토 → 검산 — 해설이 없으면 먼저 푼다(`ai_solve`). 해설지도 해설도 없는 서술형은
-    거절한다."""
+    거절한다. 해설지가 있어도 답·해설이 하나도 없는 서술형은 넓힐 것이 없어 AI가 푼다 (실측
+    2026-11-11: 빈 해설지를 넓혀 "강사가 확정한 정답과 같다"뿐인 루브릭을 지어냄)."""
     exam = store.exam()
     scope = ScopeStore(svc.workspace).get(exam.scope_id)
     qs = select_questions(exam, only)
-    coded = {q.number for q in qs if code_gradable(q)}
-    keyed = {q.number for q in qs if store.answer_key(q.number) is not None and not ai_solve}
+    keys = {q.number: store.answer_key(q.number) for q in qs}
+    coded = {q.number for q in qs if code_gradable(q, keys[q.number])}
+    blank = {n for n, k in keys.items() if k is not None and k.empty and n not in coded}
+    keyed = {n for n, k in keys.items() if k is not None and n not in blank and not ai_solve}
     missing = [
-        q.number for q in qs if q.number not in keyed | coded and store.solution(q.number) is None
+        q.number
+        for q in qs
+        if q.number not in keyed | coded | blank and store.solution(q.number) is None
     ]
     if missing and not ai_solve:
         raise PipelineError(
@@ -149,6 +160,18 @@ def rubric_questions(
                 assert key is not None
                 r = expand_key_rubric(svc.engine, q, key, scope, previous=previous)
                 r = r.model_copy(update={"created_by": by, "created_at": utcnow()})
+                if not q.needs_rubric():  # 단답형인데 코드로는 채점할 수 없어 AI 루브릭
+                    why: list[str] = []
+                    if partial := partial_parts(q, key):
+                        why.append(f"부분 점수가 있어({', '.join(x or '전체' for x in partial)})")
+                    if drawn := answerless_parts(q, key):
+                        labels = ", ".join(x or "전체" for x in drawn)
+                        why.append(f"글로 된 답이 없어({labels} — 그림 답 등)")
+                    note = (
+                        f"단답형이지만 해설지에 {' · '.join(why)} AI가 채점합니다 "
+                        "— 코드 채점은 맞으면 만점, 아니면 0점뿐"
+                    )
+                    r = r.model_copy(update={"review_notes": [note, *r.review_notes]})
                 store.save_rubric(r)
                 return r
             sol = store.solution(q.number)
@@ -156,7 +179,8 @@ def rubric_questions(
                 sol = solve_question(svc.engine, q, scope)
                 sol = sol.model_copy(update={"created_by": by, "created_at": utcnow()})
                 store.save_solution(sol)
-            r = derive_rubric(svc.engine, q, sol, scope, key=key, previous=previous)
+            used = None if q.number in blank else key  # 빈 해설지는 비교할 것도 없다
+            r = derive_rubric(svc.engine, q, sol, scope, key=used, previous=previous)
             r = r.model_copy(update={"created_by": by, "created_at": utcnow()})
             store.save_rubric(r)
             return r

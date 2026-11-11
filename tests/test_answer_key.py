@@ -538,6 +538,32 @@ def test_edit_keeps_review_notes(q3: ExamQuestion) -> None:
     assert edited.based_on_key and edited.review_notes == ["해설지 메모"]
 
 
+def test_failed_second_read_keeps_the_first(
+    engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path
+) -> None:
+    """PDF 해설지는 두 번 읽어 비교한다 — 두 번째 읽기가 끝내 실패해도 첫 읽기로 해설지를 만든다
+    (실측 2026-11-11 DT3 해답: 두 번째 읽기 실패로 해설지 전체를 잃음)."""
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
+
+    pdf = _key_pdf(
+        tmp_path / "key.pdf",
+        [
+            "3) (1) 수평 이동 시간과 연직 운동 시간이 일치해야 한다. 부분 점수 없음",
+            "(2) 세 번 반사하여 P로 되돌아오려면 두 번째 반사점은 A이다. 부분 점수 과정 답",
+        ],
+    )
+    good = {"questions": [{"number": "3", "parts": KEY["parts"]}]}
+    bad = {
+        "questions": [{"number": "9", "parts": KEY["parts"]}]
+    }  # 시험에 없는 번호 — 수리해도 그대로
+    engine, exe = engine_with([good, bad, bad, bad])
+    exam = Exam(title="t", scope_id="s", questions=[q3])
+    res = extract_answer_key(engine, pdf, [1], exam, tmp_path / "work")
+    assert [k.question_number for k in res.keys] == ["3"]
+    assert len(fake_prompts(exe)) == 4, "첫 읽기 1번 + 두 번째 읽기 3번(수리 2번)"
+
+
 def test_extract_answer_key_from_pdf(
     engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path
 ) -> None:
@@ -621,8 +647,37 @@ def test_lone_choice_answer_without_number_is_kept(
     res = extract_answer_key(engine, pdf, [1], exam, tmp_path / "work", cross=False,
                              ignore_other_numbers=True)  # fmt: skip
     assert len(fake_prompts(exe)) == 1, "수리 요청 없음"
+    # 선택형인 줄 알려 준다 — 모르면 해설의 결론 문장을 답으로 적었다 (2026-11-11 전기2 2번)
+    assert "(3점, 선택형 — answer는 정답 선지 번호(①~⑤))" in fake_prompts(exe)[0]
     assert [k.question_number for k in res.keys] == ["10", "12"]
     assert set(res.notes) == {"10", "12"} and "모양이 다름" in res.notes["10"]
+
+
+def test_key_read_cache_follows_the_prompt_version(
+    engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path
+) -> None:
+    """다시 읽을 때 읽은 쪽은 AI 없이 — 단 해설지 읽기 프롬프트가 바뀌었으면 다시 읽는다
+    (2026-11-11: "각"·단계 표시를 더했는데 예전 판으로 읽은 결과를 써서 표시가 비어 있었다)."""
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
+
+    pdf = _key_pdf(tmp_path / "key.pdf", SUNEUNG)
+    out = {"questions": [_kq("10", "b와 c"), _kq("12", "\\(\\rho_B=\\rho\\)", "B의 저항")]}
+    engine, exe = engine_with([out, out])
+    exam = Exam(title="t", scope_id="s", questions=[_mc(q3, "10"), _mc(q3, "12")])
+
+    def read() -> None:
+        extract_answer_key(engine, pdf, [1], exam, tmp_path / "work", cross=False,
+                           ignore_other_numbers=True)  # fmt: skip
+
+    read()
+    read()
+    assert len(fake_prompts(exe)) == 1, "같은 판이면 AI 없이"
+    reads = tmp_path / "work" / "reads"
+    for f in reads.iterdir():  # 예전 판(이름에 판이 없음)으로 남은 것
+        f.rename(reads / "p1-1.json")
+    read()
+    assert len(fake_prompts(exe)) == 2, "판이 다르면 다시 읽음"
 
 
 def test_odd_answer_dropped_when_fitting_one_exists(
@@ -709,6 +764,42 @@ def test_expand_key_is_one_call_without_solution(
     ok = decide_candidates(r, ["E1"], [])
     assert ok.accepted_alternatives[0].status == "accepted"
     assert "두 번째로 반사되는 곳" in rubric_text(ok, q3.parts)
+
+
+def test_expand_key_lets_the_teacher_pick_the_key_basis(
+    engine_with: EngineWith, q3: ExamQuestion, scope: ScopeProfile
+) -> None:
+    """해설지와 다른 기준: AI는 문제 기준으로 쓰고 해설지대로의 기준을 함께 적는다 (2026-11-11).
+    항목이 없거나 해설지 기준이 빠진 것은 루브릭 만들기를 막지 않고 '확인만'으로 둔다."""
+    out = copy.deepcopy(EXPANDED)
+    out["key_conflicts"] = [
+        {"note": "해설지는 그림 없으면 0점 — 문제는 그림을 요구하지 않음", "item_id": "R2",
+         "key_criterion": "두 번째 반사점이 A (그림 없으면 0점)", "choice": "key"},
+        {"note": "해설지 표기가 모호함", "item_id": "R9", "key_criterion": "?"},
+        {"note": "같은 문장", "item_id": "R3", "key_criterion": " l=√3R/2 "},
+    ]  # fmt: skip
+    engine, _ = engine_with([out])
+    r = expand_key_rubric(engine, q3, AnswerKey.model_validate(KEY), scope)
+    k1, k2, k3 = r.key_conflicts
+    assert (k1.id, k1.item_id, k1.choice) == ("K1", "R2", None), "AI가 고른 것으로 두지 않는다"
+    assert k1.switchable and k1.question_criterion == "두 번째 반사점이 A"
+    assert (k2.id, k2.item_id, k2.switchable) == ("K2", None, False)
+    assert (k3.item_id, k3.key_criterion, k3.switchable) == ("R3", None, False)
+    assert any("해설지 기준 확인: 해설지는 그림 없으면" in n for n in r.review_notes)
+
+
+def test_expand_key_repairs_partial_credit_as_big_as_the_item(
+    engine_with: EngineWith, q3: ExamQuestion, scope: ScopeProfile
+) -> None:
+    """실측(2026-11-11, 2604 서울형 3회 3번): 1점 항목에 1점 부분점수 → 루브릭 초안으로 바꾸는 검사
+    안에서 터져 수리 요청 없이 문항이 실패했다. 이제 응답 검증에서 걸려 수리 요청이 된다."""
+    bad = copy.deepcopy(EXPANDED)
+    bad["partial"] = [{"item_id": "R2", "condition": "A만 맞음", "points": 2}]
+    engine, exe = engine_with([bad, EXPANDED])
+    r = expand_key_rubric(engine, q3, AnswerKey.model_validate(KEY), scope)
+    assert r.partial == []
+    first, repair = fake_prompts(exe)
+    assert "부분점수(2.0)는 항목 R2 배점보다 작아야" in repair and first != repair
 
 
 def test_expand_key_gives_up_after_one_repair(

@@ -43,9 +43,39 @@ CODE_AGENT = "code"
 """코드로 채점한 결과의 `agent` 값 (AI 호출 없음)."""
 
 
-def code_gradable(q: ExamQuestion) -> bool:
-    """객관식, 단답형, 소문항이 모두 단답형인 문항."""
-    return not q.needs_rubric()
+def code_gradable(q: ExamQuestion, key: AnswerKey | None = None) -> bool:
+    """객관식, 단답형, 소문항이 모두 단답형인 문항 — 해설지가 부분 점수를 주거나(`partial_parts`)
+    글로 된 답 없이 그림 등으로만 답한(`answerless_parts`) 소문항이 있으면 AI 루브릭으로."""
+    return not q.needs_rubric() and not partial_parts(q, key) and not answerless_parts(q, key)
+
+
+def answerless_parts(q: ExamQuestion, key: AnswerKey | None) -> list[str]:
+    """단답형인데 해설지에 글로 된 답이 없고 해설(대개 "(그림: …)")만 있는 소문항 — 코드 채점은
+    비교할 답이 없다. 실측(2026-11-11, 8월 월례평가 1번 ①: "힘을 화살표로 그려라", 해설지는 그림).
+    선택형은 빼고(강사가 번호를 적으면 된다), 시험지에 답이 있으면 뺀다."""
+    if key is None or q.item.item_type == "multiple_choice":
+        return []
+    out: list[str] = []
+    for label in [p.label for p in q.parts] or [""]:
+        kp = key.part(label)
+        if kp is None or kp.answer or not kp.solution.strip():
+            continue
+        if not label and _item_answer(q.item)[0]:
+            continue
+        out.append(label)
+    return out
+
+
+def partial_parts(q: ExamQuestion, key: AnswerKey | None) -> list[str]:
+    """해설지가 부분 점수를 주는 소문항 (소문항이 없으면 "") — 코드 채점은 맞으면 만점·아니면
+    0점이라 줄 수 없다. 실측(2026-11-11, 학원 HWP 15개 중 6개): "2가지 정답 1점, 3가지 2점",
+    "[그림 2점]/[2점]", "답 하나에 2점/다 맞으면 11점"이 단답형 소문항에 적혀 있었다."""
+    if key is None:
+        return []
+    slots = [(p.label, p.points) for p in q.parts] or [("", q.points)]
+    return [
+        label for label, points in slots if (kp := key.part(label)) and kp.gives_partial(points)
+    ]
 
 
 def part_lines(t: Transcript, part: str) -> list[TranscriptLine]:
@@ -574,6 +604,7 @@ def pre_grade(q: ExamQuestion, rubric: Rubric, t: Transcript) -> PreGraded:
         if (
             p is None or p.kind != "short_answer" or len(items) != 1 or not key
             or part in proposed or not labelled or not lines
+            or any(x.item_id == items[0].id for x in rubric.partial)  # 부분 점수는 AI가
         ):  # fmt: skip
             continue
         item = items[0]
