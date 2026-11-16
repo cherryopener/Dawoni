@@ -24,9 +24,9 @@ uv run pyright
   자동 번호인 `경기형 2회 물리시험지.hwp`)을 둔다. PC를 옮길 때 손으로 복사한다.
 - Windows에서 한글·Word COM을 쓰는 기능(선택): `uv sync --extra windows`
   (그 뒤 `uv run`은 `uv run --extra windows`로 — 그냥 `uv run`은 pywin32를 지운다)
-- 화면(`frontend/`, M7): `npm --prefix frontend install`, `npm --prefix frontend run build`(→ `dawoni/web/`)
+- 화면(`frontend/`, M7): `pnpm --dir frontend install`, `pnpm --dir frontend build`(→ `dawoni/web/`)
   후 `uv run python -m dawoni ui`. 화면을 고치는 중이면 `uv run python -m dawoni ui --no-window`를 켜 두고
-  `npm --prefix frontend run dev`(http://localhost:5173, API는 8765로 프록시). 화면 테스트 `npm --prefix frontend test`.
+  `pnpm --dir frontend dev`(http://localhost:5173, API는 8765로 프록시). 화면 테스트 `pnpm --dir frontend test`.
 - 가짜 AI CLI(`tests/fake_agy.py`)는 macOS·Linux에서 셸 스크립트, Windows에서 `.cmd`로 만든다.
   그래서 Windows에서도 테스트를 건너뛰지 않는다.
 
@@ -473,7 +473,7 @@ Windows 배포본은 PyInstaller exe가 아니라 **서명된 python.org 파이�
 (`packaging/build_bundle.py`, 이유는 그 파일 머리말과 [docs/M8_PACKAGING_AUTH.md](docs/M8_PACKAGING_AUTH.md)).
 
 ```bash
-npm --prefix frontend run build
+pnpm --dir frontend build
 uv run python packaging/build_bundle.py --access access.json   # 없으면 로그인 없는 묶음
 ```
 

@@ -41,7 +41,7 @@
 
 ## 맥으로 옮길 때 (PC를 바꿀 때)
 
-1. `git pull` → `uv sync` → `npm --prefix frontend install` → `npm --prefix frontend run build`(→ `dawoni/web/`,
+1. `git pull` → `uv sync` → `pnpm --dir frontend install` → `pnpm --dir frontend build`(→ `dawoni/web/`,
    git 제외라 PC마다 만든다).
 2. **`real_data/`는 git에 없다** — 손으로 복사한다 (옛 다워니 실측 시험·답안, `real_data/docs/` 학원 시험지 원본:
    HWP·HWPX·PDF·DOCX, `경기형 2회 물리시험지.hwp`는 한글 자동 번호 시험지, `11월 월례평가 문제-물리.hwp`는

@@ -40,7 +40,7 @@ WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 _NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>다워니</title>
 <body style="font-family:sans-serif;padding:40px">
 <h2>화면 파일이 아직 없습니다</h2>
-<p><code>cd frontend &amp;&amp; npm install &amp;&amp; npm run build</code> 후 다시 여세요.</p>
+<p><code>cd frontend &amp;&amp; pnpm install &amp;&amp; pnpm build</code> 후 다시 여세요.</p>
 <p>API는 동작 중입니다.</p></body>"""
 
 

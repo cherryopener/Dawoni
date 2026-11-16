@@ -47,18 +47,22 @@ jobs:
       - name: 시험
         run: uv run pytest -q -x
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: 화면 빌드 (→ dawoni/web/)
         working-directory: frontend
         run: |
-          npm ci
-          npm test
-          npm run build
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm run build
 
       - name: 묶음 만들기
         shell: pwsh
@@ -125,18 +129,22 @@ jobs:
       - name: 시험
         run: uv run pytest -q -x
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.21.0
+
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: 화면 빌드 (→ dawoni/web/)
         working-directory: frontend
         run: |
-          npm ci
-          npm test
-          npm run build
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm run build
 
       - name: 묶음 만들기 + 켜 보기
         env:

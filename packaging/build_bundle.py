@@ -1,6 +1,6 @@
 """Windows 배포 묶음 만들기 — `dist/Dawoni/` 폴더와 `dist/Dawoni-<버전>-windows.zip`.
 
-    cd frontend && npm run build          # 화면 → dawoni/web/
+    cd frontend && pnpm build             # 화면 → dawoni/web/
     uv run python packaging/build_bundle.py [--access access.json]
 
 PyInstaller exe 대신 이렇게 하는 이유 (2026-11-05 실측): Windows 11 **스마트 앱 컨트롤**이 켜진 PC는
@@ -189,7 +189,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if not (ROOT / "dawoni" / "web" / "index.html").is_file():
-        raise SystemExit("화면 빌드가 없습니다: cd frontend && npm run build")
+        raise SystemExit("화면 빌드가 없습니다: cd frontend && pnpm build")
     base = Path(sys.base_prefix)
     if (status := _signed(base / "pythonw.exe")) != "Valid":
         raise SystemExit(f"python.org 설치본이 아닙니다: {base}\\pythonw.exe 서명 {status}")
