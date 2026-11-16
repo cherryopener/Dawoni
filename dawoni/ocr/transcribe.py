@@ -17,6 +17,7 @@ from dawoni.context import ContextEngine, TaskDef, TaskInput
 from dawoni.grading.pipeline import SecondOpinion
 from dawoni.grading.render import exam_question_text
 from dawoni.models.grading import (
+    GRAPH,
     Exam,
     TranscribedLine,
     Transcript,
@@ -58,7 +59,15 @@ def check_transcription(
             )
         if line.page > n_pages:
             problems.append(f"{i}번째 줄의 page {line.page}는 첨부 {n_pages}장을 넘는다")
-        if not line.text.strip() and not (line.math or "").strip():
+        if line.graph is not None:
+            if line.text.strip() or (line.math or "").strip():
+                problems.append(
+                    f"{i}번째 줄은 graph가 있는데 text·math도 있다 — 그래프 줄의 text·math는 "
+                    "비우고, 그래프 옆에 쓴 글·식은 다른 줄로"
+                )
+        elif line.text.lstrip().startswith(GRAPH):
+            problems.append(f"{i}번째 줄: 그래프는 text가 아니라 graph에 적는다")
+        elif not line.text.strip() and not (line.math or "").strip():
             problems.append(f"{i}번째 줄이 비어 있다 (text나 math 중 하나는 필요)")
         if line.math and "$" in line.math:
             problems.append(f"{i}번째 줄의 math에 $ 기호를 쓰지 말 것")
@@ -76,10 +85,11 @@ class TranscriptionOutcome:
 
 
 def _to_line(x: TranscribedLine) -> TranscriptLine:
+    """AI가 구조로 적은 그래프는 판독문에서 `[그래프] …` 글 한 줄이 된다 (`GraphSketch.text`)."""
     return TranscriptLine(
-        text=x.text,
+        text=x.graph.text if x.graph else x.text,
         part=x.part,
-        math=x.math,
+        math=None if x.graph else x.math,
         confidence=x.confidence,
         uncertain=list(x.uncertain),
         struck=x.struck,

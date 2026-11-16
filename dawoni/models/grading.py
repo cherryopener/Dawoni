@@ -659,6 +659,95 @@ class StudentRecord(DawoniModel):
 UNREADABLE = "[판독불가]"
 """판독문에서 끝내 읽지 못한 자리. AI가 남기고 강사가 채운다 (ocr/review.py)."""
 
+GRAPH = "[그래프]"
+"""학생이 좌표평면에 그린 그래프를 글로 옮긴 판독문 줄의 머리 (`GraphSketch.text`).
+판독문에서는 보통 글 줄이라 판독본 HWPX·강사 수정·채점 인용이 다른 줄과 같게 돈다 (2026-11-17)."""
+
+
+class GraphValue(DawoniModel):
+    """AI 출력: 그래프 위 점의 좌표 하나 — 값과, 그 값을 어떻게 알았는지."""
+
+    value: str = Field(
+        min_length=1,
+        description="좌표 값. written·tick이면 숫자·문자 그대로 (식이면 \\( \\)로). position이면 "
+        "짐작한 값, 눈금이 없으면 '두 절편의 가운데쯤'처럼 다른 점과 견준 말",
+    )
+    how: Literal["written", "tick", "position"] = Field(
+        description="written: 학생이 그 숫자·문자를 적음 / tick: 학생은 안 적었지만 인쇄된 눈금 "
+        "숫자에 맞춰 그림 / position: 적은 값도 눈금도 없이 위치로만 짐작"
+    )
+
+    @property
+    def text(self) -> str:
+        """판독문 표기: 적은 값은 그대로, 눈금 값은 `(눈금)`, 위치로만 짐작한 값은 `≈`."""
+        match self.how:
+            case "written":
+                return self.value
+            case "tick":
+                return f"{self.value}(눈금)"
+            case "position":
+                return f"≈{self.value}"
+
+
+class GraphPoint(DawoniModel):
+    """AI 출력: 학생이 그래프에 표시한 점 (절편·꼭짓점·꺾이는 점 등)."""
+
+    name: str = Field(
+        min_length=1,
+        description="무슨 점인가 (예: 가로축 절편, 세로축 절편, 꼭짓점, 최댓값, 꺾이는 점, 끝점)",
+    )
+    x: GraphValue | None = Field(default=None, description="가로축 좌표. 알 수 없으면 null")
+    y: GraphValue | None = Field(default=None, description="세로축 좌표. 알 수 없으면 null")
+
+    @property
+    def text(self) -> str:
+        if self.x and self.y:
+            return f"{self.name} ({self.x.text}, {self.y.text})"
+        if self.x:
+            return f"{self.name} (가로 {self.x.text})"
+        if self.y:
+            return f"{self.name} (세로 {self.y.text})"
+        return self.name
+
+
+class GraphSketch(DawoniModel):
+    """AI 출력: 학생이 좌표평면에 그린 그래프 하나. 판독문에는 `text` 한 줄로 들어간다."""
+
+    label: str | None = Field(
+        default=None, description="학생이 그래프에 붙인 이름 (A, (가) 등). 없으면 null"
+    )
+    axes: str = Field(
+        default="",
+        description="축 이름·단위와 눈금, 인쇄된 것인지 학생이 적은 것인지 "
+        "(예: '가로 t(s), 세로 v(m/s) — 인쇄, 눈금 숫자 없음')",
+    )
+    shape: str = Field(
+        min_length=1,
+        description="개형 — 그려진 그대로: 어디서 시작해 어디서 끝나는지, 구간마다 직선·곡선, "
+        "증가·감소, 위·아래로 볼록, 꺾이는 곳, 축과 만나는 곳",
+    )
+    points: list[GraphPoint] = Field(
+        default_factory=lambda: list[GraphPoint](),
+        description="학생이 표시하거나 축과 만나는 점들 (절편·꼭짓점·최댓값·꺾이는 점·끝점)",
+    )
+    marks: list[str] = Field(
+        default_factory=lambda: list[str](),
+        description="그래프에 더한 표시 (점선 보조선, 화살표, 빗금 친 넓이 등)",
+    )
+
+    @property
+    def text(self) -> str:
+        """`[그래프] 축: … / 개형: … / 점: 꼭짓점 (2, ≈15); … / 표시: …`"""
+        parts = [f"이름: {self.label}"] if self.label else []
+        if self.axes.strip():
+            parts.append(f"축: {self.axes.strip()}")
+        parts.append(f"개형: {self.shape.strip()}")
+        if self.points:
+            parts.append("점: " + "; ".join(p.text for p in self.points))
+        if self.marks:
+            parts.append("표시: " + "; ".join(self.marks))
+        return f"{GRAPH} " + " / ".join(parts)
+
 
 class TranscriptLine(DawoniModel):
     text: str = Field(default="", description="학생이 쓴 글 (원문 그대로)")
@@ -671,6 +760,11 @@ class TranscriptLine(DawoniModel):
     @property
     def joined(self) -> str:
         return " ".join(x for x in (self.text, self.math or "") if x)
+
+    @property
+    def is_graph(self) -> bool:
+        """학생이 그린 그래프를 글로 옮긴 줄 (`GRAPH`)."""
+        return self.text.startswith(GRAPH)
 
 
 class Transcript(DawoniModel):
@@ -728,6 +822,11 @@ class TranscribedLine(DawoniModel):
     def _unescape(cls, v: str | None) -> str | None:
         return fix_overescaped(v) if v else v
 
+    graph: GraphSketch | None = Field(
+        default=None,
+        description="학생이 좌표평면·축 위에 그린 그래프 하나 (이 줄의 text·math는 비운다). "
+        "그래프가 아니면 null",
+    )
     confidence: float = Field(ge=0, le=1)
     uncertain: list[str] = Field(
         default_factory=lambda: list[str](),
@@ -737,7 +836,8 @@ class TranscribedLine(DawoniModel):
 
     @property
     def joined(self) -> str:
-        return " ".join(x for x in (self.text, self.math or "") if x)
+        graph = self.graph.text if self.graph else ""
+        return " ".join(x for x in (self.text, self.math or "", graph) if x)
 
 
 class TranscriptionDraft(DawoniModel):

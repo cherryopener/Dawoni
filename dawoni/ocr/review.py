@@ -91,6 +91,9 @@ def line_flags(line: TranscriptLine, material: str, letter_count: Counter[str]) 
     text = line.text + " " + (line.math or "")
     if UNREADABLE in text:
         flags.append(f"{UNREADABLE} — 강사가 원본을 보고 채울 것")
+    if line.is_graph:  # 판독자가 그래프를 글로 옮긴 줄 — 학생 글의 오독 검사는 맞지 않는다
+        flags += [f"식이 깨짐 `{x}` ({err})" for x in _maths(line) if (err := latex_error(x))]
+        return [REVIEW + f for f in flags]
     if odd := sorted({x for x in _LABELS.findall(text) if x not in material}):
         flags.append(f"문제에 없는 기호 {' '.join(odd)}")
     prose = _prose(line)

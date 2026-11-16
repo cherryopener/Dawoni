@@ -20,6 +20,7 @@ from dawoni.export.hwpx import (
     from_eqedit,
     prose_pieces,
     read_back,
+    reconcile,
     sheet_lines,
     to_eqedit,
 )
@@ -98,6 +99,24 @@ def test_student_file_reads_back(tmp_path: Path) -> None:
     assert not any("[식:" in x for v in got.parts.values() for x in v), "모든 식이 한글 수식으로"
     breaks = [p for p in HwpxDocument.open(path).paragraphs if p.element.get("pageBreak") == "1"]
     assert len(breaks) == 1, "채점은 새 쪽에서"
+
+
+def test_graph_line_reads_back_unchanged(tmp_path: Path) -> None:
+    """판독문의 그래프 줄(`[그래프] …`)은 판독본에서 보통 글 줄 — 안 고치면 그대로 돌아온다."""
+    graph = (
+        r"[그래프] 축: 가로 t(s), 세로 h(m) / 개형: 위로 볼록한 곡선"
+        r" / 점: 꼭짓점 (≈두 절편의 가운데쯤, 15); 끝점 (\(t_0\), 0(눈금))"
+    )
+    original = [TranscriptLine(text=graph), TranscriptLine(text="최고점에서 속력 0")]
+    lines = sheet_lines("1", original)
+    sheet = Sheet(head="시험 · 1반 · 김다원", lines=lines)
+    path = build_student(tmp_path / "1반_김다원_1.hwpx", sheet)
+    assert not HwpxDocument.open(path).validate().issues
+    got = read_back(path)
+    want = expected_text(lines)
+    assert [canon(x) for x in got.parts["1"]] == [canon(x) for x in want["1"]]
+    again = reconcile("1", got.parts, original)
+    assert again.changed == 0 and again.lines[0].is_graph and again.lines[0].text == graph
 
 
 def test_bundle_keeps_waiting_students(tmp_path: Path) -> None:

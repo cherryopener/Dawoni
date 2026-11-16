@@ -158,6 +158,49 @@ def test_review_is_idempotent_and_normalizes_marker() -> None:
     assert confirm_problems(t) == [f"{UNREADABLE} 1곳을 원본을 보고 채우거나 지워 주세요."]
 
 
+GRAPH_SKETCH: dict[str, Any] = {
+    "axes": "가로 t(s), 세로 h(m) — 인쇄, 눈금 숫자 없음",
+    "shape": "원점에서 시작해 위로 볼록한 곡선, 가로축에서 끝남",
+    "points": [
+        {"name": "가로축 절편", "x": {"value": "4", "how": "written"}},
+        {"name": "꼭짓점", "x": {"value": "두 절편의 가운데쯤", "how": "position"},
+         "y": {"value": "15", "how": "written"}},
+        {"name": "끝점", "x": {"value": "5", "how": "tick"}, "y": {"value": "0", "how": "tick"}},
+    ],
+    "marks": ["꼭짓점에서 세로축으로 점선"],
+}  # fmt: skip
+
+
+def test_graph_sketch_text_marks_how_each_value_was_read() -> None:
+    line = _line(graph=GRAPH_SKETCH)
+    assert line.graph is not None
+    assert line.graph.text == (
+        "[그래프] 축: 가로 t(s), 세로 h(m) — 인쇄, 눈금 숫자 없음"
+        " / 개형: 원점에서 시작해 위로 볼록한 곡선, 가로축에서 끝남"
+        " / 점: 가로축 절편 (가로 4); 꼭짓점 (≈두 절편의 가운데쯤, 15); 끝점 (5(눈금), 0(눈금))"
+        " / 표시: 꼭짓점에서 세로축으로 점선"
+    )
+    assert line.joined == line.graph.text, "교차 판독도 그래프 글로 비교한다"
+
+
+def test_check_transcription_graph_lines() -> None:
+    ok = TranscriptionDraft(lines=[_line(graph=GRAPH_SKETCH), _line("최고점에서 속력 0")])
+    assert check_transcription(ok, {"1"}, 1) == []
+    both = TranscriptionDraft(lines=[_line("포물선", graph=GRAPH_SKETCH)])
+    assert any("text·math도 있다" in p for p in check_transcription(both, {"1"}, 1))
+    as_text = TranscriptionDraft(lines=[_line("[그래프] 개형: 직선")])
+    assert any("graph에 적는다" in p for p in check_transcription(as_text, {"1"}, 1))
+
+
+def test_review_skips_prose_checks_on_graph_lines() -> None:
+    """그래프 줄은 판독자가 쓴 글이다 — 낱말이 겹치거나 문제에 없는 기호가 있어도 오독이 아니다."""
+    flags = _review(
+        TranscriptLine(text="[그래프] 개형: 점점 가팔라지는 직선 ㉣ / 점: 끝점 (가로 \\(t_0\\))"),
+        TranscriptLine(text=f"[그래프] 개형: 직선 / 점: 끝점 (가로 {UNREADABLE})"),
+    )
+    assert flags == [[], [f"{UNREADABLE} — 강사가 원본을 보고 채울 것"]]
+
+
 def test_cross_check_identical() -> None:
     a = [_line(math="y=(x-2)^2+3"), _line("최솟값 3")]
     b = [_line(math="y = (x-2)^{2} + 3"), _line("최솟값 3")]
@@ -277,6 +320,30 @@ def test_transcribe_assigns_lines_and_keeps_unconfirmed(
     prompt = fake_prompts(exe)[0]
     assert "inputs/input_01.png" in prompt and "고쳐 읽지 않는다" in prompt
     assert "[문항 1]" in prompt
+
+
+def test_transcribe_turns_graph_into_one_text_line(
+    app_paths: AppPaths, make_fake: MakeFake, exam_q1: Exam, tmp_path: Path
+) -> None:
+    draft = {
+        "lines": [
+            {"question_number": "1", "page": 1, "graph": GRAPH_SKETCH, "confidence": 0.8},
+            {"question_number": "1", "page": 1, "text": "최고점에서 속력 0", "confidence": 0.9},
+        ],
+        "notes": [],
+    }
+    exe = make_fake("script", script=[{"response": json.dumps(draft, ensure_ascii=False)}])
+    page = prepare_pages([SCAN], tmp_path / "scan")[0]
+    out = transcribe_student(
+        _engine(app_paths, exe), exam_q1, "고1", "F", [page.image], page_refs=[]
+    )
+    t = out.transcripts["1"]
+    assert t.lines[0].is_graph and t.lines[0].math is None
+    assert "꼭짓점 (≈두 절편의 가운데쯤, 15)" in t.lines[0].text
+    assert not t.is_blank and not t.lines[0].uncertain
+    assert not t.lines[1].is_graph
+    prompt = fake_prompts(exe)[0]
+    assert "그려진 그대로 적는다" in prompt and '"graph"' in prompt
 
 
 def test_transcribe_with_cross_check(
