@@ -378,10 +378,10 @@ def student_history(st: AppState = State) -> list[dict[str, Any]]:
         exam = store.exam()
         for r in store.student_records():
             key = r.roster_id or f"{r.class_name or ''}|{r.name or r.student_id}"
-            p = people.setdefault(
+            p = people.setdefault(  # 명부에서 뺀 학생은 ID로 묶되 '명부 밖'
                 key,
                 {"key": key, "name": r.name or r.student_id, "class_name": r.class_name,
-                 "school": r.school, "roster_id": r.roster_id, "exams": []},
+                 "school": r.school, "roster_id": None, "exams": []},
             )  # fmt: skip
             grades = [store.grade(r.student_id, q.number) for q in exam.questions]
             done = [g for g in grades if g is not None]

@@ -131,6 +131,7 @@ export type StudentRecord = {
   class_name: string | null;
   school: string | null;
   cover_name: string | null;
+  roster_id: string | null;
   needs_rename: boolean;
   roster_note: string | null;
 };

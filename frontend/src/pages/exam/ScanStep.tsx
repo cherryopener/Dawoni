@@ -1,4 +1,4 @@
-import { AlertTriangle, FileText, FolderOpen, Printer, RefreshCw } from "lucide-react";
+import { AlertTriangle, FileText, FolderOpen, Pencil, Printer, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,6 +7,7 @@ import { Dialog } from "@/components/ui/dialog";
 import { Help } from "@/components/ui/help";
 import { Chips, Dropzone, ErrorNote, Input, Progress } from "@/components/ui/misc";
 import { api, enc, examFileUrl, onJobsChanged, useAction, useApi, waitJob } from "@/lib/api";
+import { refreshNotices } from "@/lib/notices";
 import { useTeacher } from "@/lib/session";
 import type { ExamStudent, InboxPdf, Job, RosterStudent } from "@/lib/types";
 import { useExam } from "../Exam";
@@ -107,27 +108,57 @@ function BatchDialog({ pdf, onClose }: { pdf: InboxPdf | null; onClose: () => vo
   );
 }
 
-type Fix = { name?: string; off?: boolean };
+type Fix = { name?: string; klass?: string; off?: boolean; add?: boolean };
 
-function RenameDialog({ open, onClose, students }: { open: boolean; onClose: () => void; students: ExamStudent[] }) {
+/** 서버(`students/roster.py`)와 같은 맞추기: 띄어쓰기·대소문자 무시, "2반" = "2". */
+const normName = (n: string | null | undefined) => (n ?? "").replace(/\s+/g, "").toLowerCase();
+function normClass(c: string | null | undefined): string {
+  const x = normName(c);
+  return x.length > 1 && x.endsWith("반") ? x.slice(0, -1) : x;
+}
+
+/** 지금 상태 한 줄: 무엇을 확인해야 하는지, 또는 명부와 어떻게 이어졌는지. */
+function stateLine(s: ExamStudent, rosterEmpty: boolean): { text: string; cls: string } {
+  const r = s.record;
+  if (r?.needs_rename) return { text: "같은 반에 같은 이름이 또 있음 — 김다원A, 김다원B처럼 나누세요", cls: "text-bad" };
+  if (r?.roster_note) return { text: r.roster_note, cls: "text-warn" };
+  if (r?.roster_id) return { text: `명부와 이어짐 (${r.roster_id})`, cls: "text-text-3" };
+  return { text: rosterEmpty ? "명부 없음 — 표지에서 읽은 이름" : "명부에 없는 학생", cls: "text-text-3" };
+}
+
+/** 이름 확인·고치기: 확인이 필요한 시험지 전부, 또는 표에서 누른 학생 한 명. 반·이름을 명부에서 고르거나
+ * 고쳐 쓰고, 명부에 없으면 명부에 넣어 잇거나 명부 밖 학생으로 둔다. 고치면 판독문·채점이 새 이름으로
+ * 옮겨지고 판독본 HWPX를 다시 쓴다. */
+function RenameDialog({ students, onClose }: { students: ExamStudent[] | null; onClose: () => void }) {
   const { id, base } = useExam();
-  const roster = useApi<{ students: RosterStudent[] }>(open ? "/students" : null, { refreshOnJobs: false });
+  const open = students !== null;
+  const roster = useApi<{ students: RosterStudent[]; classes: string[] }>(open ? "/students" : null, { refreshOnJobs: false });
   const [fixes, setFixes] = useState<Record<string, Fix>>({});
   const act = useAction();
-  const pending = students.filter(namePending);
   const everyone = roster.data?.students ?? [];
-  const inClass = (s: ExamStudent) => everyone.filter((r) => (r.class_name ?? "") === (s.record?.class_name ?? ""));
+  const now = (s: ExamStudent) => {
+    const f = fixes[s.student] ?? {};
+    return { f, name: (f.name ?? s.record?.name ?? "").trim(), klass: (f.klass ?? s.record?.class_name ?? "").trim() };
+  };
+  const inClass = (klass: string) => everyone.filter((r) => normClass(r.class_name) === normClass(klass));
+  const hitOf = (name: string, klass: string) => (name ? inClass(klass).find((r) => normName(r.name) === normName(name)) : undefined);
   const set = (sid: string, f: Fix) => setFixes({ ...fixes, [sid]: { ...fixes[sid], ...f } });
   const save = () =>
     act.run(async () => {
-      for (const s of pending) {
-        const f = fixes[s.student] ?? {};
-        const name = f.name?.trim();
-        const changed = Boolean(name && name !== s.record?.name);
-        if (!changed && !f.off) continue;
-        // 명부에서 고른 이름이면 그 학생과 잇는다 (서버도 이름·반으로 다시 맞춰 본다)
-        const hit = changed ? inClass(s).find((r) => r.name === name) : undefined;
-        await api.put(`${base}/students/${enc(s.student)}/identity`, hit ? { roster_id: hit.id } : { name: changed ? name : undefined, off_roster: Boolean(f.off) });
+      for (const s of students ?? []) {
+        const { f, name, klass } = now(s);
+        const rec = s.record;
+        if (!name) throw new Error(`${rec?.name ?? s.student}: 이름을 적어 주세요`);
+        const classChanged = normClass(klass) !== normClass(rec?.class_name);
+        const renamed = name !== (rec?.name ?? "") || classChanged;
+        const found = hitOf(name, klass);
+        if (!renamed && !(found && found.id !== rec?.roster_id) && !f.off && !f.add) continue;
+        // 명부에 있는 반·이름이면 그 학생과 잇는다. 없으면 '명부에 넣기'로 넣고 잇거나, 이름만 고친다 (서버가 명부와 다시 맞춰 본다)
+        const hit = found ?? (f.add ? await api.post<RosterStudent>("/students", { name, class_name: klass || null, school: rec?.school ?? null }) : undefined);
+        const body = hit
+          ? { roster_id: hit.id }
+          : { name: renamed ? name : undefined, class_name: classChanged && klass ? klass : undefined, off_roster: Boolean(f.off) };
+        await api.put(`${base}/students/${enc(s.student)}/identity`, body);
       }
       onClose();
     });
@@ -136,11 +167,11 @@ function RenameDialog({ open, onClose, students }: { open: boolean; onClose: () 
       open={open}
       onOpenChange={(v) => !v && onClose()}
       title="이름 확인"
-      desc="표지 그림을 보고 이름을 고르거나 고쳐 주세요. 같은 반에 같은 이름이면 김다원A, 김다원B처럼 나눕니다."
+      desc="표지 그림을 보고 반·이름을 명부에서 고르거나 고쳐 주세요. 같은 반에 같은 이름이면 김다원A, 김다원B처럼 나눕니다."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
-            나중에
+            취소
           </Button>
           <Button variant="primary" disabled={act.busy} onClick={() => void save()}>
             {act.busy ? "판독본 다시 쓰는 중…" : "확인"}
@@ -148,9 +179,16 @@ function RenameDialog({ open, onClose, students }: { open: boolean; onClose: () 
         </>
       }
     >
-      <div className="flex max-h-[55vh] flex-col gap-3 overflow-auto">
-        {pending.map((s) => {
-          const f = fixes[s.student] ?? {};
+      <div className="flex max-h-[55vh] flex-col gap-4 overflow-auto">
+        <datalist id="roster-classes">
+          {(roster.data?.classes ?? []).map((c) => (
+            <option key={c} value={c} />
+          ))}
+        </datalist>
+        {(students ?? []).map((s) => {
+          const { f, name, klass } = now(s);
+          const hit = hitOf(name, klass);
+          const state = stateLine(s, everyone.length === 0);
           const list = `roster-${s.student}`;
           return (
             <div key={s.student} className="flex items-start gap-3">
@@ -164,29 +202,55 @@ function RenameDialog({ open, onClose, students }: { open: boolean; onClose: () 
               </a>
               <div className="min-w-0 flex-1 text-[13px]">
                 <div className="text-text-2">
-                  {s.record?.class_name ?? "반 모름"} · {s.record?.school ?? "학교 모름"}
+                  {s.record?.school ?? "학교 모름"}
                   {s.record?.cover_name && s.record.cover_name !== s.record.name && <span className="text-text-3"> · 표지: {s.record.cover_name}</span>}
                 </div>
-                <div className={s.record?.needs_rename ? "text-bad" : "text-warn"}>{s.record?.needs_rename ? "같은 반에 같은 이름이 또 있음" : s.record?.roster_note}</div>
-                {!s.record?.needs_rename && (
-                  <label className="mt-1 flex items-center gap-1.5 text-text-2">
-                    <input type="checkbox" checked={Boolean(f.off)} onChange={(e) => set(s.student, { off: e.target.checked })} />
-                    명부에 없는 학생으로 두기
-                  </label>
+                <div className={state.cls}>{state.text}</div>
+                <div className="mt-2 flex gap-2">
+                  <Input
+                    list="roster-classes"
+                    value={f.klass ?? s.record?.class_name ?? ""}
+                    onChange={(e) => set(s.student, { klass: e.target.value })}
+                    placeholder="반"
+                    className="w-24"
+                    aria-label={`${s.record?.name ?? s.student} 반`}
+                  />
+                  <Input
+                    list={list}
+                    value={f.name ?? s.record?.name ?? ""}
+                    onChange={(e) => set(s.student, { name: e.target.value })}
+                    placeholder="이름"
+                    className="w-32"
+                    aria-label={`${s.record?.name ?? s.student} 이름`}
+                  />
+                  <datalist id={list}>
+                    {inClass(klass).map((r) => (
+                      <option key={r.id} value={r.name} />
+                    ))}
+                  </datalist>
+                </div>
+                {hit ? (
+                  <div className="mt-1.5 text-text-2">
+                    명부: {[hit.class_name, hit.name].filter(Boolean).join(" ")}
+                    {hit.school ? ` (${hit.school})` : ""}
+                  </div>
+                ) : (
+                  name && (
+                    <div className="mt-1.5 flex flex-col gap-1 text-text-2">
+                      <label className="flex items-center gap-1.5">
+                        <input type="checkbox" checked={Boolean(f.add)} onChange={(e) => set(s.student, { add: e.target.checked, off: false })} />
+                        명부에 넣고 잇기
+                      </label>
+                      {everyone.length > 0 && (
+                        <label className="flex items-center gap-1.5">
+                          <input type="checkbox" checked={Boolean(f.off)} onChange={(e) => set(s.student, { off: e.target.checked, add: false })} />
+                          명부에 없는 학생으로 두기
+                        </label>
+                      )}
+                    </div>
+                  )
                 )}
               </div>
-              <Input
-                list={list}
-                value={f.name ?? s.record?.name ?? ""}
-                onChange={(e) => set(s.student, { name: e.target.value })}
-                className="w-32"
-                aria-label={`${s.record?.name ?? s.student} 이름`}
-              />
-              <datalist id={list}>
-                {inClass(s).map((r) => (
-                  <option key={r.id} value={r.name} />
-                ))}
-              </datalist>
             </div>
           );
         })}
@@ -205,7 +269,7 @@ export function ScanStep() {
   const fileMap = useApi<Record<string, Record<string, string>>>(`${base}/student-files`);
   const jobs = useScanJobs(id);
   const [pdf, setPdf] = useState<InboxPdf | null>(null);
-  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameFor, setRenameFor] = useState<string[] | null>(null); // 이름 확인 창에 보일 학생
   const [result, setResult] = useState<string | null>(null);
   const act = useAction();
 
@@ -304,7 +368,7 @@ export function ScanStep() {
             이름을 확인할 시험지가 있습니다 ({dup}장{twins ? ` · 같은 반 같은 이름 ${twins}` : ""}{offRoster ? ` · 명부에 없음 ${offRoster}` : ""}). 판독·채점은
             계속하고, 판독본은 이름을 확인하면 만듭니다.
           </span>
-          <Button size="sm" variant="outline" onClick={() => setRenameOpen(true)}>
+          <Button size="sm" variant="outline" onClick={() => setRenameFor(rows.filter((r) => namePending(r.s)).map((r) => r.s.student))}>
             이름 확인
           </Button>
         </div>
@@ -318,7 +382,7 @@ export function ScanStep() {
           {waiting > 0 && <Badge tone="bad">입력 대기 {waiting}</Badge>}
           <Help>
             [판독불가]가 남은 답안은 "입력 대기"입니다. 한글에서 판독본을 열어 채우고 저장한 뒤 "한글에서 고친 것 반영"을 누르면 그 학생·문항만
-            채점합니다. 나머지는 확인 전에도 채점까지 갑니다.
+            채점합니다. 나머지는 확인 전에도 채점까지 갑니다. 표지 이름을 잘못 읽었으면 이름을 눌러 고칩니다.
           </Help>
           <div className="flex-1" />
           <Button size="sm" variant="ghost" onClick={() => void reveal()}>
@@ -342,10 +406,13 @@ export function ScanStep() {
             </thead>
             <tbody>
               {rows.map(({ s, status, unreadable }) => (
-                <tr key={s.student} className="border-t border-line hover:bg-muted">
+                <tr key={s.student} className="group border-t border-line hover:bg-muted">
                   <td className="px-5 py-2.5 text-text-2">{s.record?.class_name ?? "—"}</td>
                   <td className="px-2 py-2.5">
-                    {s.record?.name ?? s.student}
+                    <button type="button" onClick={() => setRenameFor([s.student])} className="cursor-pointer text-left hover:underline" title="이름·반 고치기">
+                      {s.record?.name ?? s.student}
+                      <Pencil className="ml-1 inline size-3.5 text-text-3 opacity-0 group-hover:opacity-100" />
+                    </button>
                     {s.record?.roster_note && (
                       <span className="ml-2" title={s.record.roster_note}>
                         <Badge tone="warn">명부 확인</Badge>
@@ -378,14 +445,15 @@ export function ScanStep() {
 
       <BatchDialog pdf={pdf} onClose={() => setPdf(null)} />
       <RenameDialog
-        open={renameOpen}
+        key={renameFor?.join("|") ?? ""}
+        students={renameFor && (students.data ?? []).filter((s) => renameFor.includes(s.student))}
         onClose={() => {
-          setRenameOpen(false);
+          setRenameFor(null);
           students.reload();
           fileMap.reload(); // 이름이 바뀌면 HWPX 파일 이름도 바뀐다
           reload();
+          refreshNotices(); // 단계 표시의 '이름 확인' 수
         }}
-        students={students.data ?? []}
       />
     </div>
   );

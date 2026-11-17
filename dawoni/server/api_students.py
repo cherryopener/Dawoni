@@ -1,4 +1,5 @@
-"""학생 명부 API (PLAN.md §7): 엑셀·CSV 가져오기, 보기, 한 명 넣기. 전화번호는 받지 않는다."""
+"""학생 명부 API (PLAN.md §7): 엑셀·CSV 가져오기, 보기, 한 명 넣기·고치기·빼기. 전화번호는
+받지 않는다."""
 
 from __future__ import annotations
 
@@ -34,6 +35,18 @@ class AddBody(BaseModel):
 @router.post("")
 def add_student(body: AddBody, st: AppState = State) -> RosterStudent:
     return _roster(st).add(body.name, body.class_name, body.school)
+
+
+@router.put("/{student_id}")
+def edit_student(student_id: str, body: AddBody, st: AppState = State) -> RosterStudent:
+    """이름·반·학교 고치기 (지난 시험의 이름·파일은 그대로)."""
+    return _roster(st).update(student_id, body.name, body.class_name, body.school)
+
+
+@router.delete("/{student_id}")
+def remove_student(student_id: str, st: AppState = State) -> RosterStudent:
+    """명부에서 빼기 (이어진 시험 기록은 남고 '명부 밖'이 된다)."""
+    return _roster(st).remove(student_id)
 
 
 @router.post("/import")

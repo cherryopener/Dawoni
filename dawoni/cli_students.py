@@ -67,6 +67,30 @@ def _cmd_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_edit(args: argparse.Namespace) -> int:
+    roster = _roster(args)
+    old = roster.get(args.id)
+    if old is None:
+        return _err(f"명부에 {args.id}가 없습니다 (`students list`)")
+    s = roster.update(  # 안 준 것은 그대로
+        args.id,
+        old.name if args.name is None else args.name,
+        old.class_name if args.klass is None else args.klass,
+        old.school if args.school is None else args.school,
+    )
+    _out(f"{s.id} {s.class_name or '-'} {s.name} {s.school or ''}".rstrip())
+    return 0
+
+
+def _cmd_remove(args: argparse.Namespace) -> int:
+    roster = _roster(args)
+    if roster.get(args.id) is None:
+        return _err(f"명부에 {args.id}가 없습니다 (`students list`)")
+    s = roster.remove(args.id)
+    _out(f"뺌: {s.id} {s.class_name or '-'} {s.name}")
+    return 0
+
+
 def _wrap(fn: Any) -> Any:
     def run(args: argparse.Namespace) -> int:
         try:
@@ -92,3 +116,12 @@ def register(sub: Any) -> None:
     sa.add_argument("--class", dest="klass")
     sa.add_argument("--school")
     sa.set_defaults(func=_wrap(_cmd_add))
+    se = ss.add_parser("edit", help='명부 학생 고치기 (안 준 것은 그대로, 빈 값 ""은 지움)')
+    se.add_argument("id", help="명부 학생 ID (S0012)")
+    se.add_argument("--name")
+    se.add_argument("--class", dest="klass")
+    se.add_argument("--school")
+    se.set_defaults(func=_wrap(_cmd_edit))
+    sr = ss.add_parser("remove", help="명부에서 빼기 (시험 기록은 남는다)")
+    sr.add_argument("id", help="명부 학생 ID (S0012)")
+    sr.set_defaults(func=_wrap(_cmd_remove))

@@ -95,6 +95,27 @@ def test_roster_import_and_match(tmp_path: Path) -> None:
         roster.add("김다원", "2반")
 
 
+def test_roster_edit_and_remove(tmp_path: Path) -> None:
+    """화면에서 명부 학생 한 명을 고치고 뺀다 (엑셀을 다시 넣지 않고)."""
+    roster = Roster(create_workspace(tmp_path / "ws"))
+    a = roster.add("김다은", "2반")
+    b = roster.add("박찬현", " 3반 ", " ")
+    assert (b.class_name, b.school) == ("3반", None), "빈칸은 지운다"
+    fixed = roster.update(a.id, "김 다원", "2반", "구룡중")
+    assert (fixed.id, fixed.name, fixed.school) == (a.id, "김다원", "구룡중"), "ID는 그대로"
+    assert roster.match("김다원", "2").student == fixed
+    assert roster.update(a.id, "김다원", "2", None).class_name == "2", "자기 자신과는 겹치지 않는다"
+    with pytest.raises(ValueError, match="이미 있습니다"):
+        roster.update(b.id, "김다원", "2반", None)
+    with pytest.raises(ValueError, match="이름을 적어"):
+        roster.update(b.id, " ", "3반", None)
+    assert roster.remove(b.id).name == "박찬현"
+    assert [s.id for s in roster.all()] == [a.id]
+    with pytest.raises(KeyError):
+        roster.remove(b.id)
+    assert roster.add("최민준").id == "S0002", "뺀 뒤 새 학생은 남은 번호 다음"
+
+
 def test_cli_students(
     app_paths: AppPaths, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -107,6 +128,11 @@ def test_cli_students(
     assert main([*w, "list", "--class", "2"]) == 0
     out = capsys.readouterr().out
     assert "추가 2명" in out and "S0003" in out and "박찬현" not in out.split("추가 2명")[1]
+    assert main([*w, "edit", "S0003", "--name", "이서윤"]) == 0
+    assert main([*w, "remove", "S0002"]) == 0
+    assert main([*w, "remove", "S0002"]) == 1
+    roster = Roster(ws)
+    assert [(s.name, s.school) for s in roster.all()] == [("김다원", None), ("이서윤", "구룡중")]
 
 
 # ---------------------------------------------------------------- 판독본 HWPX · 확인 완료
@@ -399,6 +425,26 @@ def test_name_fix_rematches_roster_or_accepts_off_roster(
     assert not [n for n in exam_notices(store) if n["id"].startswith(("roster", "rename"))]
 
 
+def test_name_fix_unlinks_wrong_roster_student(app_paths: AppPaths, tmp_path: Path) -> None:
+    """표지 김다원을 명부의 다른 학생 김다은으로 읽어 잘못 이어졌을 때: 명부 확인 표시가 없어도
+    이름을 고칠 수 있고, 명부에 없는 이름으로 고치면 옛 연결(김다은)은 끊는다."""
+    svc = _services(app_paths, tmp_path)
+    roster = Roster(svc.workspace)
+    wrong = roster.add("김다은", "2반")
+    store = _exam(svc)
+    _student(store, "김다은", "김다은")
+    rec = store.student_record("김다은")
+    assert rec is not None
+    store.save_student(rec.model_copy(update={"roster_id": wrong.id}))
+
+    res = workflow.rename_student(svc, store, "김다은", name="김다원")
+    assert res.record.roster_id is None and res.record.roster_note is not None
+    right = roster.add("김다원", "2반", "구룡중")  # 이름 확인 창의 '명부에 넣고 잇기'
+    res = workflow.rename_student(svc, store, "김다원", roster_id=right.id)
+    got = (res.record.roster_id, res.record.school, res.record.roster_note)
+    assert got == (right.id, "구룡중", None)
+
+
 def test_api_confirm_files_and_identity(app_paths: AppPaths, tmp_path: Path) -> None:
     from test_server import _client, _wait  # pyright: ignore[reportPrivateUsage]
 
@@ -426,6 +472,16 @@ def test_api_confirm_files_and_identity(app_paths: AppPaths, tmp_path: Path) -> 
     assert rows[0]["record"]["roster_id"] == rid
     summary = c.get(f"/api/exams/{store.exam_id}").json()["summary"]
     assert summary["needs_rename"] == 0 and summary["pending_transcripts"] == 0
+
+    edit = {"name": "김다원", "class_name": "2반", "school": "구룡중"}
+    r = c.put(f"/api/students/{rid}", json=edit)
+    assert r.status_code == 200 and r.json()["school"] == "구룡중", r.text
+    assert c.post("/api/students", json={"name": "김 다원", "class_name": "2"}).status_code == 400
+    assert c.delete("/api/students/S9999").status_code == 404
+    assert c.delete(f"/api/students/{rid}").status_code == 200
+    who = [p for p in c.get("/api/students/history").json() if p["name"] == "김다원"]
+    assert len(who) == 1 and who[0]["roster_id"] is None, "명부에서 빼면 시험 기록은 남고 명부 밖"
+    assert len(who[0]["exams"]) == 1
 
 
 def test_blank_answer_is_not_read_again(

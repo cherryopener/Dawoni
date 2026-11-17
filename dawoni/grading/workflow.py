@@ -1015,7 +1015,8 @@ def rename_student(
             "name": new_name,
             "class_name": klass,
             "school": (linked.school if linked else None) or record.school,
-            "roster_id": linked.id if linked else (None if off_roster else record.roster_id),
+            # 명부의 다른 학생으로 잘못 이어졌던 것을 고치면 옛 연결은 끊는다
+            "roster_id": linked.id if linked else None,
             "roster_note": note,
             "needs_rename": False,
         }

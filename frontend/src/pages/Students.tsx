@@ -1,14 +1,15 @@
-import { FileText, Search, Upload } from "lucide-react";
+import { FileText, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Dialog } from "@/components/ui/dialog";
 import { Chips, ErrorNote, Input } from "@/components/ui/misc";
 import { Select } from "@/components/ui/select";
 import { api, enc, useAction, useApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { href } from "@/lib/router";
 import { pts } from "@/lib/steps";
-import type { HistoryExam, StudentHistory } from "@/lib/types";
+import type { HistoryExam, RosterStudent, StudentHistory } from "@/lib/types";
 
 const DAYS: Record<string, number> = { "1m": 31, "3m": 92, "1y": 366 };
 
@@ -40,7 +41,72 @@ function ExamRow({ e }: { e: HistoryExam }) {
   );
 }
 
-/** 학생 검색 (PLAN §5-4): 이름·반·학교·시험·기간으로 찾아 그 학생의 HWPX를 연다. 명부는 엑셀·CSV로. */
+type Draft = { id: string | null; name: string; class_name: string; school: string };
+
+/** 명부 학생 한 명 넣기·고치기·빼기. 고쳐도 지난 시험의 이름·파일은 그대로다 (시험마다 그때 이름으로 남는다).
+ * 열 때마다 새로 만든다 (`key`). */
+function RosterDialog({ draft, classes, onClose }: { draft: Draft | null; classes: string[]; onClose: (changed: boolean) => void }) {
+  const [d, setD] = useState<Draft>(draft ?? { id: null, name: "", class_name: "", school: "" });
+  const [sure, setSure] = useState(false);
+  const act = useAction();
+  const body = { name: d.name.trim(), class_name: d.class_name.trim() || null, school: d.school.trim() || null };
+  const save = () =>
+    act.run(async () => {
+      if (d.id) await api.put<RosterStudent>(`/students/${enc(d.id)}`, body);
+      else await api.post<RosterStudent>("/students", body);
+      onClose(true);
+    });
+  const remove = () =>
+    act.run(async () => {
+      if (!d.id) return;
+      await api.del(`/students/${enc(d.id)}`);
+      onClose(true);
+    });
+  const field = (k: "name" | "class_name" | "school", label: string, extra: object = {}) => (
+    <label className="flex items-center gap-3">
+      <span className="w-12 text-text-2">{label}</span>
+      <Input value={d[k]} onChange={(e) => setD({ ...d, [k]: e.target.value })} className="flex-1" {...extra} />
+    </label>
+  );
+  return (
+    <Dialog
+      open={draft !== null}
+      onOpenChange={(v) => !v && !act.busy && onClose(false)}
+      title={d.id ? "명부 학생 고치기" : "학생 추가"}
+      desc={d.id ? `${d.id} · 지난 시험의 이름과 파일은 그대로 두고, 학생 검색에서 새 이름으로 묶습니다.` : "같은 반에 같은 이름이 있으면 김다원A, 김다원B처럼 알파벳을 붙입니다."}
+      footer={
+        <>
+          {d.id && (
+            <Button variant="danger" disabled={act.busy} onClick={() => (sure ? void remove() : setSure(true))} className="mr-auto">
+              <Trash2 /> {sure ? "한 번 더 누르면 뺍니다" : "명부에서 빼기"}
+            </Button>
+          )}
+          <Button variant="ghost" disabled={act.busy} onClick={() => onClose(false)}>
+            취소
+          </Button>
+          <Button variant="primary" disabled={act.busy || !body.name} onClick={() => void save()}>
+            {d.id ? "저장" : "넣기"}
+          </Button>
+        </>
+      }
+    >
+      <div className="flex flex-col gap-3">
+        {field("name", "이름", { autoFocus: true })}
+        {field("class_name", "반", { list: "roster-dialog-classes" })}
+        <datalist id="roster-dialog-classes">
+          {classes.map((c) => (
+            <option key={c} value={c} />
+          ))}
+        </datalist>
+        {field("school", "학교")}
+        {sure && <div className="rounded-lg bg-warn-soft px-3 py-2 text-[13px]">명부에서만 뺍니다. 이 학생의 시험 기록은 남고, 학생 검색에서 '명부 밖'이 됩니다.</div>}
+        {act.error && <ErrorNote message={act.error} />}
+      </div>
+    </Dialog>
+  );
+}
+
+/** 학생 검색 (PLAN §5-4): 이름·반·학교·시험·기간으로 찾아 그 학생의 HWPX를 연다. 명부는 엑셀·CSV로 한 번에 넣거나 한 명씩 넣고 고친다. */
 export function StudentsPage() {
   const { data, error, reload } = useApi<StudentHistory[]>("/students/history");
   const [q, setQ] = useState("");
@@ -49,6 +115,7 @@ export function StudentsPage() {
   const [sel, setSel] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
   const act = useAction();
 
   const allClasses = useMemo(() => [...new Set((data ?? []).map((s) => s.class_name).filter((c): c is string => !!c))].sort(), [data]);
@@ -76,6 +143,9 @@ export function StudentsPage() {
       <div className="flex items-center gap-3">
         <h1 className="m-0 flex-1 text-[20px] font-medium">학생</h1>
         <input ref={fileRef} type="file" accept=".xlsx,.csv" className="hidden" onChange={(e) => void importRoster(e.target.files?.[0])} />
+        <Button disabled={act.busy} onClick={() => setDraft({ id: null, name: "", class_name: classes.length === 1 ? classes[0]! : "", school: "" })}>
+          <Plus /> 학생 추가
+        </Button>
         <Button variant="primary" disabled={act.busy} onClick={() => fileRef.current?.click()}>
           <Upload /> 명부 넣기
         </Button>
@@ -125,8 +195,17 @@ export function StudentsPage() {
         </Card>
         {st && (
           <Card className="p-5">
-            <div className="text-[16px] font-medium">{st.name}</div>
-            <div className="text-[13px] text-text-2">{[st.class_name, st.school, st.roster_id ?? "명부 밖"].filter(Boolean).join(" · ")}</div>
+            <div className="flex items-start gap-2">
+              <div className="flex-1">
+                <div className="text-[16px] font-medium">{st.name}</div>
+                <div className="text-[13px] text-text-2">{[st.class_name, st.school, st.roster_id ?? "명부 밖"].filter(Boolean).join(" · ")}</div>
+              </div>
+              {st.roster_id && (
+                <Button size="sm" variant="ghost" onClick={() => setDraft({ id: st.roster_id, name: st.name, class_name: st.class_name ?? "", school: st.school ?? "" })}>
+                  <Pencil /> 고치기
+                </Button>
+              )}
+            </div>
             <div className="mt-4 flex flex-col">
               {st.exams.length === 0 && <div className="py-3 text-text-3">본 시험이 없습니다.</div>}
               {st.exams.map((e) => (
@@ -136,6 +215,15 @@ export function StudentsPage() {
           </Card>
         )}
       </div>
+      <RosterDialog
+        key={draft ? (draft.id ?? "new") : "closed"}
+        draft={draft}
+        classes={allClasses}
+        onClose={(changed) => {
+          setDraft(null);
+          if (changed) reload();
+        }}
+      />
     </div>
   );
 }

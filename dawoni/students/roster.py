@@ -1,4 +1,5 @@
-"""학생 명부 (PLAN.md §7): 엑셀·CSV로 한 번에 넣고, 표지에서 읽은 이름·반과 맞춘다.
+"""학생 명부 (PLAN.md §7): 엑셀·CSV로 한 번에 넣거나 화면에서 한 명씩 넣고·고치고·빼고,
+표지에서 읽은 이름·반과 맞춘다.
 
 - 작업공간 `students/S0001.json` — 학생 1명 = 파일 1개 (함께 쓰기에서 두 강사가 한 파일을
   고치지 않게).
@@ -85,6 +86,23 @@ class CoverMatch:
         }[self.status]
 
 
+def _clean(
+    name: str, class_name: str | None, school: str | None
+) -> tuple[str, str | None, str | None]:
+    name = _SPACE.sub("", name)
+    if not name:
+        raise ValueError("이름을 적어 주세요")
+    return name, (class_name or "").strip() or None, (school or "").strip() or None
+
+
+def _refuse_twin(others: list[RosterStudent], name: str, class_name: str | None) -> None:
+    if any(same_name(s.name, name) and same_class(s.class_name, class_name) for s in others):
+        raise ValueError(
+            f"{class_name or '반 없음'}에 {name}이(가) 이미 있습니다 — 동명이인이면 "
+            f"{name}A, {name}B처럼 알파벳을 붙이세요"
+        )
+
+
 def _label(s: RosterStudent) -> str:
     return " ".join(x for x in (s.class_name, s.name, s.school and f"({s.school})") if x)
 
@@ -123,16 +141,34 @@ class Roster:
     def add(
         self, name: str, class_name: str | None = None, school: str | None = None
     ) -> RosterStudent:
-        name = _SPACE.sub("", name)
+        name, class_name, school = _clean(name, class_name, school)
         everyone = self.all()
-        if any(same_name(s.name, name) and same_class(s.class_name, class_name) for s in everyone):
-            raise ValueError(
-                f"{class_name or '반 없음'}에 {name}이(가) 이미 있습니다 — 동명이인이면 "
-                f"{name}A, {name}B처럼 알파벳을 붙이세요"
-            )
-        s = RosterStudent(id=self._next_id(everyone), name=name, class_name=class_name or None,
-                          school=school or None)  # fmt: skip
+        _refuse_twin(everyone, name, class_name)
+        s = RosterStudent(id=self._next_id(everyone), name=name, class_name=class_name,
+                          school=school)  # fmt: skip
         return self.save(s)
+
+    def update(
+        self, student_id: str, name: str, class_name: str | None, school: str | None
+    ) -> RosterStudent:
+        """명부 학생의 이름·반·학교를 고친다 (ID는 그대로). 지난 시험의 이름·파일은 바꾸지 않는다 —
+        시험마다 그때의 이름으로 남고, 학생 검색은 ID로 묶는다."""
+        old = self.get(student_id)
+        if old is None:
+            raise KeyError(f"명부에 {student_id}가 없습니다")
+        name, class_name, school = _clean(name, class_name, school)
+        _refuse_twin([s for s in self.all() if s.id != student_id], name, class_name)
+        return self.save(old.model_copy(update={"name": name, "class_name": class_name,
+                                                "school": school}))  # fmt: skip
+
+    def remove(self, student_id: str) -> RosterStudent:
+        """명부에서 뺀다. 이 학생과 이어진 시험 기록은 그대로 두고, 학생 검색에서 '명부 밖'이
+        된다."""
+        old = self.get(student_id)
+        if old is None:
+            raise KeyError(f"명부에 {student_id}가 없습니다")
+        (self.dir / f"{student_id}.json").unlink()
+        return old
 
     def classes(self) -> list[str]:
         """명부의 반 목록 (자연 정렬) — 표지를 읽을 때 이 중에서 고르게 한다."""
