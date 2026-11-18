@@ -183,7 +183,9 @@ def test_slot_note_uses_pen_memo() -> None:
 
 def test_write_marked_pdf(tmp_path: Path) -> None:
     ws = create_workspace(tmp_path / "ws")
-    ScopeStore(ws).save(ScopeProfile.model_validate(json.loads((FIX / "scope.json").read_text())))
+    ScopeStore(ws).save(
+        ScopeProfile.model_validate(json.loads((FIX / "scope.json").read_text(encoding="utf-8")))
+    )
     exam = Exam(title="월례", scope_id="scope-quadratic-minmax", questions=_questions())
     store = ExamStore.create(ws, exam)
     store.save_student(StudentRecord(student_id="가", name="가", class_name="2반", source="t"))
