@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from dawoni import sharing
 from dawoni.cli_exam import parse_answer_text
-from dawoni.export.exam_files import export_scores, write_all
+from dawoni.export.exam_files import export_scores
 from dawoni.grading import assign, workflow
 from dawoni.grading.answers import set_answers
 from dawoni.grading.pipeline import (
@@ -145,7 +145,8 @@ def exam_summary(store: ExamStore, exam: Exam) -> dict[str, Any]:
         "needs_rename": sum(r.needs_rename for r in records),
         "not_in_roster": sum(r.roster_note is not None for r in records),
     }
-    out["step"] = current_step(exam, out)
+    out["auto"] = (store.root / "autopilot.json").is_file()
+    out["step"] = "result" if out["auto"] else current_step(exam, out)
     return out
 
 
@@ -535,7 +536,7 @@ def identity(
     exam_id: str, student: str, body: IdentityBody, st: AppState = State
 ) -> dict[str, Any]:
     """학생 이름·반을 고치거나 명부와 잇는다 (표지 오독, 같은 반 동명이인 가르기). 판독문·채점을
-    새 이름으로 옮기고 판독본 HWPX를 다시 쓴다."""
+    새 이름으로 옮기고 점수표를 다시 쓴다."""
     svc, store = _store(st, exam_id)
     res = workflow.rename_student(
         svc, store, student, name=body.name, class_name=body.class_name, roster_id=body.roster_id,
@@ -602,35 +603,40 @@ def scan(
     return st.jobs.submit("scan", run, {"exam": exam_id, "student": student})
 
 
-class ExportBody(BaseModel):
-    force: bool = False
-    """강사가 한글에서 고친 파일도 덮어쓴다 (고친 내용은 사라진다)."""
-
-
-@router.post("/{exam_id}/export")
-def export(exam_id: str, body: ExportBody | None = None, st: AppState = State) -> Job:
-    """판독본·채점 HWPX를 모두 다시 쓴다 (코드만, 토큰 0). 판독·채점할 때마다 저절로 쓰므로 보통은
-    필요 없다 — 파일을 지웠거나 한글에서 열어 두어 못 쓴 경우. 강사가 고친 파일은 두고 알린다."""
-    svc, store = _store(st, exam_id)
-    force = body.force if body else False
-
-    def run(ctx: JobContext) -> dict[str, Any]:
-        ctx.progress(0, 1, "HWPX 쓰는 중")
-        res = write_all(svc.workspace, store, force=force)
-        return {
-            "files": [p.name for p in res.written],
-            "edited": [p.name for p in res.edited],
-            "file_warnings": res.warnings,
-        }
-
-    return st.jobs.submit("export", run, {"exam": exam_id})
-
-
 class ScoresBody(BaseModel):
     by_class: bool | None = None
     """반마다 시트 하나로 (시험에 저장). None이면 시험에 저장된 대로."""
     force: bool = False
     """엑셀에서 고친 점수표도 덮어쓴다."""
+
+
+class MarkedBody(BaseModel):
+    classes: list[str] | None = None
+    """이 반만. 없으면 모든 반."""
+
+
+@router.post("/{exam_id}/marked")
+def marked(exam_id: str, body: MarkedBody | None = None, st: AppState = State) -> Job:
+    """채점 답안지 PDF (반마다 한 파일): 학생 답안지 스캔 위에 빨간 글씨로 표지 총점·문항
+    점수, 소문항 점수, 감점 이유 (코드만, 토큰 0 — `export.red_pen`). 한 반 20명에 10초쯤 걸려
+    작업으로 돌린다."""
+    from dawoni.export.exam_files import marked_dir
+    from dawoni.export.red_pen import write_marked
+
+    svc, store = _store(st, exam_id)
+    classes = body.classes if body else None
+
+    def run(ctx: JobContext) -> dict[str, Any]:
+        res = write_marked(store, marked_dir(svc.workspace, store), classes=classes,
+                           progress=ctx.progress)  # fmt: skip
+        return {
+            "files": [p.name for p in res.written],
+            "file_warnings": res.warnings,
+            "students": res.students,
+            "placed": res.placed,
+        }
+
+    return st.jobs.submit("marked_pdf", run, {"exam": exam_id})
 
 
 @router.post("/{exam_id}/scores")
@@ -648,47 +654,6 @@ def scores(exam_id: str, body: ScoresBody | None = None, st: AppState = State) -
     }
 
 
-class ConfirmFilesBody(learning.LearnFields):
-    students: list[str] | None = None
-    questions: list[str] | None = None
-    by: str | None = None
-
-
-@router.post("/{exam_id}/confirm-files")
-def confirm_files(exam_id: str, body: ConfirmFilesBody, st: AppState = State) -> Job:
-    """확인 완료 (PLAN.md §5-1 6단계): 강사가 한글에서 고친 판독본 HWPX를 다시 읽어 확정 판독문으로
-    저장하고, 고친 답안은 다시 채점한다. 소문항 표식이 없어진 파일 등은 `problems`로 알린다."""
-    svc, store = _store(st, exam_id)
-
-    def run(ctx: JobContext) -> dict[str, Any]:
-        res = workflow.confirm_from_files(
-            svc, store, students=body.students, only=body.questions, by=st.who(body.by),
-            progress=ctx.progress,
-        )  # fmt: skip
-        pairs = [(c.before, c.transcript) for c in res.confirmed if c.changed and c.before]
-        if pairs:  # 고친 줄을 모아 배우기 한 번 (learn을 켰을 때만)
-            c = learning.confirmed_files_correction(pairs, store.exam().title)
-            learning.from_edit(st, body, c, st.who(body.by))
-        return {
-            "confirmed": [
-                {"student": c.transcript.student_id, "question": c.transcript.question_number,
-                 "changed": c.changed} for c in res.confirmed
-            ],
-            "waiting": [_waiting(c.transcript) for c in res.waiting],
-            "unchanged": res.unchanged,
-            "problems": [
-                {"student": p.student, "question": p.question, "reason": p.reason}
-                for p in res.problems
-            ],
-            "graded": len(res.graded),
-            "failed": [f"{f.student} {f.question}: {f.reason}" for f in res.failed],
-            "files": [p.name for p in res.export.written],
-            "file_warnings": res.export.warnings,
-        }  # fmt: skip
-
-    return st.jobs.submit("confirm_files", run, {"exam": exam_id})
-
-
 @router.get("/{exam_id}/needs-input")
 def needs_input(exam_id: str, st: AppState = State) -> list[dict[str, Any]]:
     """`[판독불가]`가 남아 강사 입력을 기다리는 답안 (알림 숫자 = 시험 요약의 `needs_input`).
@@ -697,17 +662,33 @@ def needs_input(exam_id: str, st: AppState = State) -> list[dict[str, Any]]:
     return [_waiting(t) for t in workflow.needs_input(store)]
 
 
+def page_images(store: ExamStore, t: Transcript | None, student: str | None = None) -> list[str]:
+    """화면에 보일 원본 쪽 그림 (시험 폴더 기준): 판독문이 읽은 쪽만, 모르면 학생의 모든 쪽."""
+    sid = t.student_id if t else student
+    if sid is None:
+        return []
+    images = sorted(
+        p.relative_to(store.root).as_posix() for p in store.scan_dir(sid).glob("page_*.png")
+    )
+    if t and t.pages:
+        images = [p for p in images if any(p.endswith(x) for x in t.pages)] or images
+    return images
+
+
 @router.get("/{exam_id}/students/{student}/transcripts/{number}")
 def get_transcript(exam_id: str, student: str, number: str, st: AppState = State) -> dict[str, Any]:
+    """판독문 고치기 화면: 원본 쪽 그림과 판독문 (강사가 화면에서 고쳐 확인한다, PLAN.md §5-1)."""
     _, store = _store(st, exam_id)
     t = store.transcript(student, number)
     if t is None:
         raise KeyError(f"{student} 문항 {number}: 판독문 없음")
-    scan_dir = store.scan_dir(student)
-    images = sorted(p.relative_to(store.root).as_posix() for p in scan_dir.glob("page_*.png"))
+    r = store.student_record(student)
     return {
+        "student": student,
+        "name": (r.name if r else None) or student,
+        "class_name": r.class_name if r else None,
         "transcript": t.model_dump(mode="json"),
-        "page_images": images,
+        "page_images": page_images(store, t),
         "needs_attention": t.needs_attention,
         "unreadable": t.unreadable,
         "question": store.exam().question(number).model_dump(mode="json"),
@@ -920,7 +901,7 @@ def confirm_grade(
     before = g
     g = teacher_review(g, r, body.awarded, note=body.note, by=st.who(body.by), item_notes=notes)
     store.save_grade(g)
-    workflow.export_grades(svc, store, [g])
+    workflow.refresh_scores(svc, store)
     if body.learn:
         c = learning.grade_correction(before, g, r, store.exam().title)
         learning.from_edit(st, body, c, st.who(body.by))
@@ -1022,7 +1003,7 @@ def confirm_grade_parts(
         g, r, q, body.part_scores, part_notes=notes, note=body.note, by=st.who(body.by)
     )
     store.save_grade(g)
-    workflow.export_grades(svc, store, [g])
+    workflow.refresh_scores(svc, store)
     if body.learn:
         c = learning.grade_correction(before, g, r, store.exam().title)
         learning.from_edit(st, body, c, st.who(body.by))

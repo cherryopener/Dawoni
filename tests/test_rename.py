@@ -8,10 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
-from test_export import LINES, _sheet  # pyright: ignore[reportPrivateUsage]
 
-import dawoni.export.hwpx as hx
-from dawoni.export.hwpx import build_bundle, build_student, count_heads, read_back
 from dawoni.fsio import read_json
 from dawoni.paths import APP_STAMP, LEGACY_WORKSPACE_MARKER, WORKSPACE_MARKER, settle_app_data
 from dawoni.workspace import WorkspaceError, create_workspace, open_workspace
@@ -87,16 +84,3 @@ def test_new_workspace_marks_app(tmp_path: Path) -> None:
     ws = create_workspace(tmp_path / "new")
     assert read_json(ws.marker)["app"] == "dawoni"
     open_workspace(tmp_path / "new")
-
-
-def test_dawoai_era_hwpx_still_reads_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """이름을 바꾸기 전에 만든 파일('다워이 머리' 스타일)도 확인 완료·묶음 세기가 된다."""
-    for name in ("STYLE_HEAD", "STYLE_PART", "STYLE_GRADED"):
-        monkeypatch.setattr(hx, name, hx.LEGACY_STYLES[getattr(hx, name)])
-    old_file = build_student(tmp_path / "old.hwpx", _sheet())
-    old_bundle = build_bundle(tmp_path / "(반별)_old.hwpx", [_sheet(), _sheet()])
-    monkeypatch.undo()
-    got = read_back(old_file)
-    assert got.head == "10월 시험 · TSS1 · 김다원 · 구룡중"
-    assert list(got.parts) == list(hx.expected_text(LINES))
-    assert count_heads(old_bundle) == 2

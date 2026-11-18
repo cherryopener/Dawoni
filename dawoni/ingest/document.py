@@ -495,7 +495,7 @@ class _HwpxReader:
                     para.text(" " if sub.tag in (HP + "tab", HP + "lineBreak") else "")
                     para.text(sub.tail or "")
             elif tag == HP + "equation":
-                from dawoni.export.hwpx import from_eqedit
+                from dawoni.ingest.eqedit import from_eqedit
 
                 script = c.find(HP + "script")
                 src = (script.text or "") if script is not None else ""

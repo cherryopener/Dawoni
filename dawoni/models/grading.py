@@ -628,14 +628,14 @@ class StudentRecord(DawoniModel):
     needs_rename: bool = Field(
         default=False,
         description="같은 반에 같은 이름의 시험지가 또 있음 — 강사가 김다원A·김다원B처럼 이름을 "
-        "바꾸기 전에는 HWPX를 만들지 않는다 (PLAN.md §5-1 3단계)",
+        "바꾸기 전에는 점수표에 점수를 넣지 않는다 (PLAN.md §5-1 3단계)",
     )
 
     @property
     def name_pending(self) -> bool:
         """이름 확인 전 — 같은 반 동명이인이거나, 명부가 있는데 명부와 맞추지 못함. 판독·채점은
-        계속하되 강사가 이름을 확인하기 전에는 HWPX를 쓰지 않는다 (잘못된 이름으로 파일이
-        생기지 않게, 2026-11-05 사용자 결정)."""
+        계속하되 강사가 이름을 확인하기 전에는 점수표에 점수를 넣지 않는다 (잘못된 이름으로
+        점수가 나가지 않게, 2026-11-05 사용자 결정)."""
         return self.needs_rename or self.roster_note is not None
 
     teacher_marks: dict[str, dict[str, float | None]] = Field(
@@ -661,7 +661,7 @@ UNREADABLE = "[판독불가]"
 
 GRAPH = "[그래프]"
 """학생이 좌표평면에 그린 그래프를 글로 옮긴 판독문 줄의 머리 (`GraphSketch.text`).
-판독문에서는 보통 글 줄이라 판독본 HWPX·강사 수정·채점 인용이 다른 줄과 같게 돈다 (2026-11-17)."""
+판독문에서는 보통 글 줄이라 강사 수정·채점 인용이 다른 줄과 같게 돈다 (2026-11-17)."""
 
 
 class GraphValue(DawoniModel):
@@ -862,6 +862,11 @@ class ItemJudgement(DawoniModel):
     )
     reason: str = Field(description="판정 이유")
     deduction_reason: str | None = Field(default=None, description="만점이 아니면 감점 이유")
+    pen: str | None = Field(
+        default=None,
+        description="만점이 아니면 학생 답안지에 빨간 펜으로 적을 짧은 메모 — 20자 안팎, 무엇이 "
+        "빠졌거나 틀렸는지만 (예: 같은 전하 사이 척력 필요). 식은 \\( \\)로. 만점이면 null",
+    )
     confidence: float = Field(ge=0, le=1)
 
 

@@ -6,6 +6,23 @@
 
 설계와 진행 순서는 [PLAN.md](PLAN.md)를 본다.
 
+## 쓰는 법 — 한 번에 채점 (2026-11-18)
+
+1. 첫 화면 **새 채점**에 시험지(해설·부분 점수 포함, HWP·HWPX·DOCX·PDF), 학생 답안지 PDF(반마다 한 파일,
+   표지 + 답안 쪽), 학생 명단(엑셀, 없어도 됨)을 한꺼번에 끌어다 놓는다.
+2. **채점 시작**. 시험 읽기 → 루브릭(해설지 넓히기, 자동 승인 — 해설지와 문제가 다르면 해설지대로) →
+   표지·답안 판독(학생 한 명의 쪽 수는 표지끼리 닮은 것으로 찾음) → 채점 → 점수표·채점 답안지 PDF.
+   이름을 못 읽었거나 `[판독불가]`가 남아도 멈추지 않는다.
+3. **결과** 화면: 반마다 채점 답안지 PDF(학생 답안지 위에 빨간 글씨로 총점·문항 점수·소문항 점수·감점
+   이유), 점수표, "확인할 것"(이름·판독불가·검산이 엇갈린 정답 후보)만. 점수를 누르면 원본·판독문·이유를
+   보고 고친다. 루브릭·판독·채점 검토의 자세한 단계는 위 단계 표시줄에 그대로 있다.
+
+```bash
+uv run python -m dawoni exam auto 시험지.hwpx 답안지1.pdf 답안지2.pdf [--roster 명단.xlsx] [--level "고1 물리"]
+uv run python -m dawoni exam auto --exam <시험ID> 답안지.pdf      # 있는 시험에 답안지 더 넣기
+uv run python -m dawoni exam pdf <시험ID>                          # 채점 답안지 PDF만 다시
+```
+
 ## 개발 환경
 
 ```bash
@@ -296,6 +313,10 @@ uv run python experiments/measure_agy.py rubric                  # 아래 표
 
 ## 답안지 → HWPX 실측 (M3, 2026-11-04, agy 1.4.12, flash-medium)
 
+> 2026-11-18 HWPX·`exam confirm`을 없앴다 — 판독문은 앱 화면(답안 판독 → "차례로 확인")에서 원본과 나란히 보고
+> 고친다 (PLAN.md §5-1, §16 31번). 명령줄은 `exam transcript <시험> --student … -q … --replace 고친답안.txt --confirm`.
+> 아래는 그때 기록.
+
 ```bash
 uv run python -m dawoni students import 명부.xlsx                 # 이름/성명·반·학교 (전화번호는 읽지 않음)
 uv run python -m dawoni exam scan-batch <시험> 답안지.pdf --per-student 3   # 표지 → 명부 → 판독 → 판독본 HWPX
@@ -430,6 +451,8 @@ M3 판독문(강사 확인 전)·옛 다워니 초안 루브릭(v1)·M4 채점�
   고치고 나머지는 그대로. 이미 저장한 작업공간의 그림은 그대로다(`--overwrite`로 다시 읽으면 토큰이 든다).
 
 ## 출력 실측 (M6, 2026-11-05, 토큰 0)
+
+> 2026-11-18 채점 HWPX·`exam export`를 없앴다 — 내보내기는 엑셀 점수표(`exam scores`) 하나. 아래는 그때 기록.
 
 ```bash
 uv run python -m dawoni exam export <시험>                  # 판독본·채점 HWPX + 엑셀 점수표 (보통은 저절로)

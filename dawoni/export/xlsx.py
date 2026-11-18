@@ -7,7 +7,7 @@
 
 - 정렬: 반은 자연 정렬(1반 < 2반 < 10반, TSS1 < TSS2, 반이 없으면 맨 뒤), 같은 반은 이름 가나다순 —
   한글 음절 코드 순서가 가나다순과 같다 (김 < 이, 김다원A < 김다원B).
-- 소문항 점수는 채점 HWPX와 같은 값(`hwpx.part_grades` — 강사가 소문항으로 고친 점수 포함).
+- 소문항 점수는 채점 검토 화면과 같은 값(`sheet.part_grades` — 강사가 소문항으로 고친 점수 포함).
 - 미채점(판독 전·입력 대기·채점 전) 칸과 검토 필요 칸은 **비우고** 색으로 표시한다. 판독문을 강사가
   확인하기 전에 채점한 칸은 값을 넣고 옅게 칠한다 (확정하면 다시 채점될 수 있음).
 - 총점은 수식이 아니라 값(앱이 채점에 저장한 문항 총점의 합). 한 문항이라도 비면 총점도 비운다.
@@ -35,12 +35,12 @@ State = Literal["ok", "unconfirmed", "review", "ungraded"]
 FILLS: dict[State, str | None] = {
     "ok": None,
     "unconfirmed": "DDEBF7",  # 옅은 파랑: 판독문 확인 전 채점 (값 있음)
-    "review": "FFEB9C",  # 노랑: 검토 필요 (비움)
+    "review": "FFEB9C",  # 노랑: 검토 필요 (AI 점수를 넣고 칠함 — 2026-11-18 전에는 비웠다)
     "ungraded": "D9D9D9",  # 회색: 미채점 (비움)
 }
 MEANING: dict[State, str] = {
     "unconfirmed": "판독문을 강사가 확인하기 전에 채점 — 확인 완료 때 고친 줄이 있으면 다시 채점",
-    "review": "검토 필요 — AI 채점이 엇갈리거나 확신이 낮음. 강사가 확정하면 점수가 들어감",
+    "review": "검토 필요 — AI 채점이 엇갈리거나 확신이 낮음 (AI 점수). 강사가 확정하면 노랑 없앰",
     "ungraded": "미채점 — 답안 없음·입력 대기·채점 전",
 }
 _WORST: list[State] = ["ungraded", "review", "unconfirmed", "ok"]
@@ -69,7 +69,7 @@ class Row:
             return Cell(None, "ungraded")
         seen = {c.state for c in self.totals.values()}
         state: State = next(s for s in _WORST if s in seen)
-        if state == "ungraded" or state == "review":
+        if state == "ungraded":
             return Cell(None, state)
         return Cell(sum(c.value or 0 for c in self.totals.values()), state)
 
@@ -123,8 +123,8 @@ def _write_table(sheet: Worksheet, columns: list[Column], rows: list[Row]) -> No
             cell.border = _BORDER
         scores = [row.cells.get(c.key, Cell(None, "ungraded")) for c in columns] + [row.total()]
         for ci, c in enumerate(scores, start=len(info) + 1):
-            value = None  # 미채점·검토 필요는 비운다
-            if c.value is not None and c.state not in ("ungraded", "review"):
+            value = None  # 미채점은 비운다
+            if c.value is not None and c.state != "ungraded":
                 value = _number(c.value)
             cell = sheet.cell(row=ri, column=ci, value=value)
             cell.font = _font(bold=ci == len(head))

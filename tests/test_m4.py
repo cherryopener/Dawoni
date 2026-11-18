@@ -155,21 +155,17 @@ def test_grade_exam_parallel_respects_assignment(
     assert (b.graded, b.ungraded, b.teacher) == (4, 0, "김선생")
 
 
-def test_learning_from_hwpx_confirm_collects_changed_lines() -> None:
-    """한글에서 고쳐 확인 완료한 판독본들은 고친 줄만 모아 배우기 한 번으로 (M3에서 남긴 것)."""
-    from dawoni.server.learning import confirmed_files_correction
+def test_learning_from_screen_edit_keeps_changed_lines_only() -> None:
+    """화면에서 고쳐 확인한 판독문은 고친 줄만 배우기로 넘긴다 (2026-11-18 HWPX 대신 화면)."""
+    from dawoni.server.learning import transcript_correction
 
-    def t(s: str, text: str) -> Transcript:
+    def t(text: str) -> Transcript:
         lines = [
             TranscriptLine(part="(1)", text="전류는 같다"),
             TranscriptLine(part="(1)", text=text),
         ]
-        return Transcript(student_id=s, question_number="2", lines=lines)
+        return Transcript(student_id="가", question_number="2", lines=lines)
 
-    c = confirmed_files_correction(
-        [(t("가", "저항이 적은 ㉢이 밝아"), t("가", "저항이 적은 ㉠이 밝아")),
-         (t("나", "그대로"), t("나", "그대로"))],
-        "10월 시험",
-    )  # fmt: skip
-    assert c.target == "transcribe" and "[가 문항 2]" in c.after and "나 문항" not in c.after
+    c = transcript_correction(t("저항이 적은 ㉢이 밝아"), t("저항이 적은 ㉠이 밝아"), "10월 시험")
+    assert c.target == "transcribe" and c.situation == "10월 시험"
     assert "㉠" in c.after and "㉢" in c.before and "전류는 같다" not in c.after

@@ -1,4 +1,4 @@
-"""화면용 API (M7): 알림 모음, 채점 검토 한 장, 배점 고치기, 내보낸 파일 자리.
+"""화면용 API (M7): 알림 모음, 채점 검토 한 장, 배점 고치기, 점수표 자리.
 
 다른 API를 화면이 여러 번 불러 맞추지 않게, 한 화면에 필요한 것을 코드로 모아 준다 (토큰 0).
 """
@@ -15,15 +15,15 @@ from fastapi import APIRouter, File, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from dawoni.export import exam_files
-from dawoni.export.hwpx import Sheet, grade_spots, part_grades, sheet_lines
 from dawoni.export.quotes import LineSpots, segments
+from dawoni.export.sheet import grade_spots, part_grades, sheet_lines
 from dawoni.grading import workflow
 from dawoni.grading.pipeline import PipelineError
 from dawoni.grading.store import ExamStore
 from dawoni.ingest.fix import check_rubric_lock, retire_for_edit
 from dawoni.models.grading import UNREADABLE, ExamPart, ExamQuestion, TranscriptLine
 from dawoni.models.job import Job
-from dawoni.server.api_exams import exam_summary
+from dawoni.server.api_exams import exam_summary, page_images
 from dawoni.server.api_setup import State
 from dawoni.server.jobs import JobContext
 from dawoni.server.state import AppState, NeedsSetup
@@ -40,9 +40,9 @@ JOB_TITLES = {
     "scan": "손글씨 판독",
     "scan_batch": "답안지 판독",
     "grade": "채점",
-    "confirm_files": "한글에서 고친 것 반영",
-    "export": "HWPX 쓰기",
     "read_marks": "빨간 펜 점수 읽기",
+    "marked_pdf": "채점 답안지 PDF",
+    "autopilot": "한 번에 채점",
     "suggest_rubric": "보정 제안",
     "agent_test": "AI 연결 시험",
 }
@@ -89,7 +89,7 @@ def exam_notices(store: ExamStore) -> list[dict[str, Any]]:
         n = len({s for s, _ in waiting})
         out.append({**base, "id": f"unreadable:{exam.id}", "kind": "unreadable",
                     "title": f"판독불가 {n}명", "count": len(waiting),
-                    "detail": _who(store, waiting) + " — 한글에서 채우면 그 문항만 채점합니다",
+                    "detail": _who(store, waiting) + " — 원본을 보고 채우면 그 문항만 채점합니다",
                     "link": ["exams", exam.id, "scan"]})  # fmt: skip
 
     rename = [r for r in store.student_records() if r.needs_rename]
@@ -236,7 +236,7 @@ def review_sheet(exam_id: str, student: str, number: str, st: AppState = State) 
     r = store.rubric(number)
     lines = sheet_lines(number, t.lines) if t else []
     grades = part_grades(number, g, r) if g and r else {}
-    spots = grade_spots(Sheet(head="", lines=lines, grades=grades))
+    spots = grade_spots(lines, grades)
     labels = [f"{number}-{p.label}" for p in q.parts] or [number]
     for x in lines:  # 판독문에만 있는 표시 (문항을 알 수 없는 줄 등)
         if x.part and x.part not in labels:
@@ -265,11 +265,7 @@ def review_sheet(exam_id: str, student: str, number: str, st: AppState = State) 
             }
         )
     name, klass = _name(store, student)
-    images = sorted(
-        p.relative_to(store.root).as_posix() for p in store.scan_dir(student).glob("page_*.png")
-    )
-    if t and t.pages:
-        images = [p for p in images if any(p.endswith(x) for x in t.pages)] or images
+    images = page_images(store, t, student)
     return {
         "student": student,
         "name": name,
@@ -335,26 +331,22 @@ def put_points(
 
 @router.get("/exams/{exam_id}/outputs")
 def outputs(exam_id: str, st: AppState = State) -> dict[str, Any]:
-    """내보내기 화면: 시험의 HWPX 폴더·점수표 (작업공간 기준 경로 — `/files/open`·`reveal`에)."""
+    """내보내기 화면: 시험 폴더·점수표 (작업공간 기준 경로 — `/files/open`·`reveal`에)."""
     ws = st.services().workspace
     store = ExamStore(ws, exam_id)
     exam = store.exam()
-    exam_files.settle_layout(ws, store)
     folder = exam_files.exam_dir(ws, exam)
     scores = exam_files.score_file(ws, store)
-    bundles = sorted(folder.glob("*.hwpx")) if folder.is_dir() else []  # 학생 파일은 반 폴더 안
-    students = sorted(folder.glob("*/*.hwpx")) if folder.is_dir() else []
-    hashes = store.export_hashes()
-    edited = [p.name for p in bundles + students if exam_files.is_edited(store, p, hashes)]
+    marked = exam_files.marked_dir(ws, store)
     return {
         "folder": folder.relative_to(ws.root).as_posix(),
         "folder_exists": folder.is_dir(),
         "scores": scores.relative_to(ws.root).as_posix(),
         "scores_exists": scores.is_file(),
         "scores_by_class": exam.scores_by_class,
-        "students": len(students),
-        "bundles": len(bundles),
-        "edited": edited,
+        "scores_edited": exam_files.is_edited(store, scores),
+        "marked_folder": marked.relative_to(ws.root).as_posix(),
+        "marked": sorted(p.name for p in marked.glob("*.pdf")) if marked.is_dir() else [],
         "summary": exam_summary(store, exam),
     }
 
@@ -395,24 +387,10 @@ def student_history(st: AppState = State) -> list[dict[str, Any]]:
                     "max": sum(q.points for q in exam.questions),
                     "graded": len(done),
                     "questions": len(grades),
+                    "numbers": [q.number for q in exam.questions],
                 }
             )
     return sorted(people.values(), key=lambda p: (p["class_name"] or "", p["name"]))
-
-
-@router.get("/exams/{exam_id}/student-files")
-def student_files(exam_id: str, st: AppState = State) -> dict[str, dict[str, str]]:
-    """학생 → 문항 → 판독본·채점본 HWPX (있는 것만, 작업공간 기준 경로) — "한글로 열기"."""
-    ws = st.services().workspace
-    store = ExamStore(ws, exam_id)
-    exam_files.settle_layout(ws, store)
-    out: dict[str, dict[str, str]] = {}
-    for s in store.students():
-        for q in store.exam().questions:
-            p = exam_files.student_file(ws, store, s, q.number)
-            if p.is_file():
-                out.setdefault(s, {})[q.number] = p.relative_to(ws.root).as_posix()
-    return out
 
 
 @router.post("/scanner/upload")
@@ -550,16 +528,9 @@ def coordinator_run(body: RunBody, st: AppState = State) -> dict[str, Any]:
                 eid, api_exams.QuestionsBody(questions=qs, by=st.who(body.by)), st
             )
             link = ["exams", eid, "rubric"]
-        case "confirm_files":
-            cb = api_exams.ConfirmFilesBody(by=st.who(body.by))
-            job = api_exams.confirm_files(eid, cb, st)
-            link = ["exams", eid, "scan"]
         case "read_marks":
             job = api_calibration.read_marks(eid, api_calibration.ReadMarksBody(), st)
             link = ["exams", eid, "rubric"]
-        case "export":
-            job = api_exams.export(eid, api_exams.ExportBody(), st)
-            link = ["exams", eid, "export"]
         case "scores":
             api_exams.scores(eid, api_exams.ScoresBody(by_class=plan.by_class), st)
             link = ["exams", eid, "export"]

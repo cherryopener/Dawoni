@@ -1,6 +1,6 @@
 // 서버 응답 꼴 (화면이 쓰는 필드만). 원본은 dawoni/models·dawoni/server.
 
-export type StepKey = "read" | "rubric" | "scan" | "grade" | "export";
+export type StepKey = "result" | "read" | "rubric" | "scan" | "grade" | "export";
 
 export type Job = {
   id: string;
@@ -48,6 +48,8 @@ export type Summary = {
   needs_review: number;
   needs_rename: number;
   not_in_roster: number;
+  /** 한 번에 채점으로 만든(답안지를 넣은) 시험 — 결과 화면을 먼저 연다. */
+  auto: boolean;
   step: StepKey;
 };
 
@@ -176,9 +178,32 @@ export type Outputs = {
   scores: string;
   scores_exists: boolean;
   scores_by_class: boolean;
-  students: number;
-  bundles: number;
-  edited: string[];
+  scores_edited: boolean;
+  marked_folder: string;
+  marked: string[];
+};
+
+/** 판독문 한 줄 (`dawoni/models/grading.py` TranscriptLine). */
+export type TranscriptLine = { text: string; part: string | null; math: string | null; confidence: number; uncertain: string[]; struck: boolean };
+export type Transcript = {
+  student_id: string;
+  question_number: string;
+  lines: TranscriptLine[];
+  source: "typed" | "ocr";
+  confirmed: boolean;
+  confirmed_by: string | null;
+  notes: string[];
+};
+/** 판독문 고치기 화면 (`GET …/students/{학생}/transcripts/{문항}`). */
+export type TranscriptView = {
+  student: string;
+  name: string;
+  class_name: string | null;
+  transcript: Transcript;
+  page_images: string[];
+  needs_attention: boolean;
+  unreadable: number;
+  question: ExamQuestion;
 };
 
 export type InboxPdf = { path: string; name: string; pages: number | null; size: number; modified: number };
@@ -230,7 +255,25 @@ export type RosterStudent = { id: string; name: string; class_name: string | nul
 
 export type Level = { id: string; label: string; scope_id: string };
 
-export type HistoryExam = { exam_id: string; title: string; date: string; student_id: string; total: number | null; max: number; graded: number; questions: number };
+/** 한 번에 채점 (`dawoni/autopilot.py` AutoState). */
+export type AutoAsk = { kind: "name" | "unreadable" | "candidate" | "rubric" | "pages"; text: string; student: string | null; question: string | null };
+export type AutoState = {
+  state: "running" | "done" | "failed";
+  stage: string;
+  started_at: string;
+  finished_at: string | null;
+  approved: string[];
+  decisions: string[];
+  files: string[];
+  students: number;
+  graded: number;
+  review: number;
+  asks: AutoAsk[];
+  warnings: string[];
+  error: string | null;
+};
+
+export type HistoryExam = { exam_id: string; title: string; date: string; student_id: string; total: number | null; max: number; graded: number; questions: number; numbers: string[] };
 export type StudentHistory = { key: string; name: string; class_name: string | null; school: string | null; roster_id: string | null; exams: HistoryExam[] };
 
 /** 시험지 원본 (영역 지정해서 읽기). PDF가 아니면 그림 붙여 넣기만. */

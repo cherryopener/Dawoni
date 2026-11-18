@@ -1,4 +1,4 @@
-import { ArrowRight, Check, FileImage, Minus, Plus, X } from "lucide-react";
+import { ArrowRight, Check, FileImage, Minus, PenLine, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { RichText, TeX } from "@/components/Math";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +14,7 @@ import { useTeacher } from "@/lib/session";
 import { pts } from "@/lib/steps";
 import type { BoardRow, ExamStudent, Job, Piece, ReviewSheet } from "@/lib/types";
 import { useExam } from "../Exam";
+import { type EditTarget, TranscriptEditor } from "./TranscriptEditor";
 
 type Assignments = Record<string, { teacher: string | null }>;
 type Group = "검토 필요" | "확인 전" | "입력 대기" | "채점 전" | "완료";
@@ -31,13 +32,14 @@ function groupOf(s: ExamStudent, q: string): Group | null {
 
 /** ④ 채점 검토: 왼쪽 학생(할 일 순서), 가운데 원본, 오른쪽 판독문·점수·이유 (PLAN §11-1-4·5, uiexample.png). */
 export function GradeStep() {
-  const { base, detail } = useExam();
+  const { base, detail, focus } = useExam();
   const me = useTeacher();
   const assign = useApi<Assignments>(`${base}/assign`);
   const [view, setView] = useState<"review" | "board">("review");
   const numbers = detail.exam.questions.map((q) => q.number);
   const mine = numbers.find((n) => assign.data?.[n]?.teacher === me);
-  const [picked, setPicked] = useState<string | null>(null);
+  // 학생 검색에서 `#/exams/<시험>/grade/<문항>/<학생>`으로 바로 연다
+  const [picked, setPicked] = useState<string | null>(numbers.includes(focus[0] ?? "") ? focus[0]! : null);
   const q = picked ?? mine ?? numbers[0]!;
   const label = (n: string) => {
     const t = assign.data?.[n]?.teacher;
@@ -56,7 +58,7 @@ export function GradeStep() {
         />
         {view === "review" && <Select value={q} onChange={setPicked} className="min-w-40" options={numbers.map((n) => ({ value: n, label: label(n) }))} />}
       </div>
-      <div className="min-h-0 flex-1">{view === "review" ? <Review key={q} q={q} /> : <Board assign={assign.data ?? {}} onChanged={assign.reload} />}</div>
+      <div className="min-h-0 flex-1">{view === "review" ? <Review key={q} q={q} start={q === focus[0] ? focus[1] : undefined} /> : <Board assign={assign.data ?? {}} onChanged={assign.reload} />}</div>
     </div>
   );
 }
@@ -77,7 +79,7 @@ function Pieces({ pieces, uncertain }: { pieces: Piece[]; uncertain: string[] })
   );
 }
 
-/** 불확실한 글자(노랑)·[판독불가](분홍) — HWPX 판독본과 같은 색. */
+/** 불확실한 글자(노랑)·[판독불가](분홍) — 판독문 고치기 화면과 같은 색. */
 function Marked({ text, uncertain }: { text: string; uncertain: string[] }) {
   const words = ["[판독불가]", ...uncertain.filter((u) => u.length > 0)];
   const re = new RegExp(`(${words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "g");
@@ -100,7 +102,7 @@ function Marked({ text, uncertain }: { text: string; uncertain: string[] }) {
   );
 }
 
-function Review({ q }: { q: string }) {
+function Review({ q, start }: { q: string; start?: string }) {
   const { id, base, reload } = useExam();
   const by = useTeacher();
   const students = useApi<ExamStudent[]>(`${base}/students`);
@@ -108,7 +110,8 @@ function Review({ q }: { q: string }) {
     const list = (students.data ?? []).map((s) => ({ s, g: groupOf(s, q) })).filter((x) => x.g !== null);
     return GROUPS.flatMap((g) => list.filter((x) => x.g === g));
   }, [students.data, q]);
-  const [sel, setSel] = useState<string | null>(null);
+  const [sel, setSel] = useState<string | null>(start ?? null);
+  const [fixing, setFixing] = useState<EditTarget | null>(null);
   const cur = sel ?? order[0]?.s.student ?? null;
   const sheet = useApi<ReviewSheet>(cur ? `${base}/review/${enc(cur)}/${enc(q)}` : null);
   const [editing, setEditing] = useState(false);
@@ -145,7 +148,7 @@ function Review({ q }: { q: string }) {
   useEffect(() => {
     const f = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (document.querySelector("[role=dialog]")) return;
+      if (document.querySelector("[role=dialog]")) return; // 판독문 고치기 창이 열려 있으면 그 창의 키
       if (e.key === "Enter") void confirm();
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -216,7 +219,7 @@ function Review({ q }: { q: string }) {
         <div className="flex w-[46%] min-w-[380px] flex-col gap-5">
           {!sh && <div className="text-text-3">불러오는 중…</div>}
           {sh && sh.total === null && (
-            <div className="text-text-2">{sh.unreadable ? "판독불가가 남아 있어 채점 전입니다. 한글에서 판독본을 채운 뒤 반영하세요." : "아직 채점하지 않았습니다."}</div>
+            <div className="text-text-2">{sh.unreadable ? "판독불가가 남아 있어 채점 전입니다. '판독문 고치기'에서 원본을 보고 채우세요." : "아직 채점하지 않았습니다."}</div>
           )}
           {sh?.disagreements.map((d) => (
             <div key={d} className="rounded-lg bg-warn-soft px-3 py-2 text-[13px] text-warn">
@@ -280,7 +283,12 @@ function Review({ q }: { q: string }) {
             );
           })}
           {act.error && <ErrorNote message={act.error} />}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {sh && (
+              <Button size="lg" variant="outline" onClick={() => setFixing({ student: sh.student, question: q })} title="원본과 나란히 보고 판독문을 고쳐 확인 — 고치면 다시 채점">
+                <PenLine /> 판독문 고치기
+              </Button>
+            )}
             {sh && sh.total !== null && (
               <Button size="lg" variant="outline" onClick={() => setEditing(!editing)}>
                 {editing ? "고치기 끝" : "점수 고치기"}
@@ -298,6 +306,15 @@ function Review({ q }: { q: string }) {
           <div className="text-[12px] text-text-3">Enter 확정 · ↓ 다음 학생</div>
         </div>
       </div>
+      <TranscriptEditor
+        target={fixing}
+        onClose={() => setFixing(null)}
+        onChanged={() => {
+          students.reload();
+          sheet.reload();
+          reload();
+        }}
+      />
     </div>
   );
 }

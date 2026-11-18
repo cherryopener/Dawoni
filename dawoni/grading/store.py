@@ -9,7 +9,7 @@ exams/<시험ID>/exam.json
               /students/<학생>.json         (표지에서 읽은 이름·반·학교, 강사 점수)
               /transcripts/<학생>/<문항>.json
               /grades/<학생>/<문항>.json
-              /exports.json                 (앱이 쓴 HWPX의 해시 — 강사가 고쳤는지 알아본다)
+              /exports.json                 (앱이 쓴 점수표의 해시 — 강사가 고쳤는지 알아본다)
 """
 
 from __future__ import annotations

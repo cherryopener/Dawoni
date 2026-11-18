@@ -1,6 +1,7 @@
 import type { StepKey } from "./types";
 
 export const STEPS: { key: StepKey; label: string }[] = [
+  { key: "result", label: "결과" },
   { key: "read", label: "시험 읽기" },
   { key: "rubric", label: "루브릭" },
   { key: "scan", label: "답안 판독" },

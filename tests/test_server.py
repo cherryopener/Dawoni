@@ -13,7 +13,6 @@ from fastapi.testclient import TestClient
 from test_grading import FIX, GRADE_A, RUBRIC_OK, SOL_OK
 
 from dawoni.config import AppConfig, save_config
-from dawoni.export.hwpx import count_heads, read_back
 from dawoni.fsio import read_json
 from dawoni.paths import AppPaths
 from dawoni.server import files
@@ -196,9 +195,8 @@ def test_exam_end_to_end(
         (out_dir / name).write_bytes(b"x")
     exports = c.get("/api/exports").json()
     names = sorted(e["name"] for e in exports)
-    # 채점이 쓴 학생 파일·반별 묶음(시험 폴더 안)도 함께 보인다
-    assert names == ["(점수표)_화면_채점.xlsx", "김다원_채점.hwpx", "반없음_1.hwpx",
-                     "반없음_A_1.hwpx", "점수표.xlsx"]  # fmt: skip
+    # 채점이 쓴 점수표(시험 폴더 안)와 예전에 쓴 HWPX가 함께 보인다. 앱은 HWPX를 더 쓰지 않는다
+    assert names == ["(점수표)_화면_채점.xlsx", "김다원_채점.hwpx", "점수표.xlsx"]
     assert c.post("/api/files/open", json={"path": exports[0]["path"]}).json() == {"ok": True}
     assert opened and opened[0].suffix in (".hwpx", ".xlsx")
     out = c.post("/api/files/open", json={"path": "../../etc/passwd"})
@@ -305,24 +303,13 @@ def test_one_unreadable_student_does_not_block_others(
     a = c.get(f"{base}/students/A/grades/1").json()["grade"]
     assert a["total"] == 4 and a["transcript_confirmed"] is False
 
-    # A는 채점본까지, B는 판독본만 (강사가 [판독불가]를 채울 파일). 묶음에는 둘 다
+    # 내보내기는 점수표 하나 (판독문은 화면에서 고친다 — 2026-11-18 HWPX 대신)
     out = next((tmp_path / "ws" / "exports").iterdir())
     assert out.name.endswith("_자동_채점")
-    # 맨 위에는 반별 묶음·점수표·반 폴더, 학생 파일은 반 폴더 안
-    assert sorted(p.name for p in out.iterdir()) == ["(점수표)_자동_채점.xlsx", "반없음",
-                                                     "반없음_1.hwpx"]  # fmt: skip
-    klass = out / "반없음"
-    assert sorted(p.name for p in klass.iterdir()) == ["반없음_A_1.hwpx", "반없음_B_1.hwpx"]
-    names = ["(점수표)_자동_채점.xlsx", "반없음_1.hwpx", "반없음_A_1.hwpx", "반없음_B_1.hwpx"]
-    assert job["result"]["files"] == ["반없음_A_1.hwpx", "반없음_1.hwpx",
-                                      "(점수표)_자동_채점.xlsx"]  # fmt: skip
-    assert count_heads(out / "반없음_1.hwpx") == 2
-    a_file = read_back(klass / "반없음_A_1.hwpx")
-    assert a_file.head == "자동 채점 · 반없음 · A" and list(a_file.parts) == ["1"]
-    assert any("[판독불가]" in x for x in read_back(klass / "반없음_B_1.hwpx").parts["1"])
+    assert [p.name for p in out.iterdir()] == ["(점수표)_자동_채점.xlsx"]
+    assert job["result"]["files"] == ["(점수표)_자동_채점.xlsx"]
     listed = c.get("/api/exports").json()
-    assert {e["name"] for e in listed} == set(names)
-    assert {e["folder"] for e in listed} == {out.name, f"{out.name}/반없음"}
+    assert [(e["name"], e["folder"]) for e in listed] == [("(점수표)_자동_채점.xlsx", out.name)]
 
     path = f"{base}/students/B/transcripts/1"
     got = c.get(path).json()
@@ -343,10 +330,7 @@ def test_one_unreadable_student_does_not_block_others(
     assert c.get(base).json()["summary"]["needs_input"] == 0
     b = c.get(f"{base}/students/B/grades/1").json()["grade"]
     assert b["total"] == 4 and b["transcript_confirmed"] is True
-    assert (klass / "반없음_B_1.hwpx").is_file() and done["result"]["files"] == [
-        "반없음_B_1.hwpx", "반없음_1.hwpx", "(점수표)_자동_채점.xlsx"
-    ]  # fmt: skip
-    assert read_back(out / "반없음_1.hwpx").head.endswith("· A"), "묶음은 이름순"
+    assert done["result"]["files"] == ["(점수표)_자동_채점.xlsx"]
 
     # A를 고친 것 없이 확정: AI를 부르지 않고 (가짜 응답이 다 떨어졌다) 표시만 켠다
     c.put(f"{base}/students/A/transcripts/1", json={"lines": lines, "confirm": True})

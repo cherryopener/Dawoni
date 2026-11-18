@@ -519,8 +519,10 @@ def quote_in_transcript(quote: str, transcript: Transcript) -> bool:
     haystack = normalize_for_compare(" ".join(line.joined for line in transcript.lines))
     # 판독문을 보여 줄 때 줄 앞에 소문항 표시를 붙이므로, 인용에 그 표시가 들어가도 된다.
     # (표시를 판독문 쪽에 끼워 넣으면 여러 줄에 걸친 인용이 깨진다 — 실측)
+    # 표시는 낱말로 떨어져 있을 때만 뺀다 — 소문항 표시가 A·B면 학생이 쓴 "B가 더 높아"의 B까지 지워
+    # 실제로 있는 인용을 없다고 했다 (2026-11-18 실측: 렌즈 문항, 수리 요청 세 번 끝에 채점 실패)
     for label in sorted({x.part for x in transcript.lines if x.part}, key=len, reverse=True):
-        quote = quote.replace(label, " ")
+        quote = re.sub(rf"(?:^|(?<=\s)){re.escape(label)}(?=\s|$|[:.)\]])", " ", quote)
     parts = [p for p in re.split(r"…|\.\.\.", quote) if normalize_for_compare(p)]
     if not parts:
         return False

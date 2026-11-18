@@ -1,5 +1,8 @@
 """`dawoni scope …`, `dawoni exam …` — 채점 파이프라인 명령줄 (M3, UI 전 단계).
 
+    dawoni exam auto 시험지.hwp 답안지1.pdf 답안지2.pdf [--roster 명단.xlsx] [--level "고1 물리"]
+                 # 한 번에 채점: 시험 읽기 → 루브릭 자동 승인 → 판독 → 채점 → 점수표·PDF
+    dawoni exam auto --exam <시험ID> 답안지.pdf     # 있는 시험에 답안지 더 넣기
     dawoni scope import scope.json                 # 범위 프로필 등록
     dawoni exam create --title 1학기 중간 --scope <범위ID> --questions questions.json
     dawoni exam solve <시험ID> [-q 3] [--verify]    # 범위 해설 (+ 독립 재풀이)
@@ -17,13 +20,11 @@
     dawoni exam scan-batch <시험ID> 답안지.pdf --per-student 5 -q 2   # 2번 쪽만 (강사별 분담)
     dawoni exam compare <시험ID>                   # AI 채점 ↔ 표지의 강사 점수
     dawoni exam transcript <시험ID> --student 홍길동 -q 3 [--confirm] [--replace 고친답안.txt]
-    dawoni exam confirm <시험ID> [--student 홍길동] [-q 3] --by 김선생  # 확인 완료: 한글에서 고친
-                                                   # 판독본 HWPX 다시 읽기 → 확정 판독문
     dawoni exam students <시험ID>                 # 표지에서 읽은 학생 (명부 연결·이름 확인 대기)
     dawoni exam student <시험ID> 김다원#5 --name 김다원B [--class 2반] [--roster S0012]
                                                  [--off-roster]   # 명부에 없는 학생으로 확정
-    dawoni exam export <시험ID>                 # 채점 HWPX·점수표 다시 쓰기 (보통은 채점 때 저절로)
-    dawoni exam scores <시험ID> [--by-class | --one-sheet]   # 엑셀 점수표만 (반별 시트 켜고 끄기)
+    dawoni exam scores <시험ID> [--by-class | --one-sheet]   # 엑셀 점수표 (반별 시트 켜고 끄기)
+    dawoni exam pdf <시험ID> [--class MSS1-J]     # 채점 답안지 PDF (빨간 글씨로 점수·이유)
     dawoni exam grade <시험ID> [--student 홍길동] [-q 3] [--by 김선생] [--double] [--regrade]
     dawoni exam assign <시험ID> -q 3 --by 김선생 [--take | --release]  # 문항 맡기 (§8)
     dawoni exam board <시험ID>                   # 진행판: 문항마다 맡은 강사·채점 현황
@@ -42,7 +43,7 @@ from typing import Any
 from dawoni.agents import AgentError
 from dawoni.config import AGENT_NAMES
 from dawoni.context import TaskFailed
-from dawoni.export.exam_files import ExportResult, export_scores, write_all
+from dawoni.export.exam_files import ExportResult, export_scores
 from dawoni.fsio import read_json
 from dawoni.grading import workflow
 from dawoni.grading.answers import set_answers
@@ -449,7 +450,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         _out(f"  ? 문항을 알 수 없는 줄 ({line.page}쪽): {line.joined}")
     for note in res.notes:
         _out(f"  · {note}")
-    _print_export(res.export, what="판독본")
+    _print_export(res.export)
     return _grade_ready(svc, store, [args.student] if res.saved else [])
 
 
@@ -488,15 +489,16 @@ def _cmd_scan_batch(args: argparse.Namespace) -> int:
     for f in res.failed:
         _out(f"  ✗ {f.student}: {f.reason[:300]}")
     _out(f"{len(res.students)}명 판독.")
-    _print_export(res.export, what="판독본")
+    _print_export(res.export)
     if res.needs_rename:
         names = ", ".join(r.student_id for r in res.needs_rename)
-        _out(f"\n이름 확인 대기 {len(res.needs_rename)}명 (같은 반 동명이인, HWPX 보류): {names}"
+        _out(f"\n이름 확인 대기 {len(res.needs_rename)}명 (같은 반 동명이인, 점수표 보류): {names}"
              " — `exam student <시험> <학생> --name 김다원A`")  # fmt: skip
     if res.not_in_roster:
         _out(f"명부와 맞추지 못함 {len(res.not_in_roster)}명 — `exam students`로 확인")
-    if res.export.written:
-        _out("한글에서 원본과 비교해 고친 뒤 저장하고 `exam confirm`으로 확정하세요.")
+    if res.students:
+        _out("앱 화면(답안 판독)에서 원본과 비교해 고치고 확인하세요 — 명령줄은 "
+             "`exam transcript … --replace 고친답안.txt --confirm`")  # fmt: skip
     graded = _grade_ready(svc, store, [r.student_id for r in res.students])
     return 1 if res.failed else graded
 
@@ -660,7 +662,7 @@ def _print_grade_run(run: workflow.GradeRun) -> int:
     return 0
 
 
-def _print_export(res: ExportResult, *, what: str = "HWPX") -> None:
+def _print_export(res: ExportResult, *, what: str = "점수표") -> None:
     if res.written:
         _out(f"{what} {len(res.written)}개: {res.written[0].parent}")
         for p in res.written:
@@ -669,51 +671,80 @@ def _print_export(res: ExportResult, *, what: str = "HWPX") -> None:
         _out(f"  ! {w}")
 
 
+def _cmd_auto(args: argparse.Namespace) -> int:
+    """한 번에 채점 (`dawoni.autopilot`): 화면의 [채점 시작]과 같다."""
+    from dawoni import autopilot
+    from dawoni.cli_ingest import resolve_scope
+    from dawoni.ingest.workflow import existing_exam, ingest_exam
+    from dawoni.students import Roster, read_table
+
+    svc = _svc(args)
+    files = [Path(f) for f in args.files]
+    pdfs = [f for f in files if f.suffix.lower() == ".pdf"]
+    exam_file = None
+    if args.exam is None:
+        if not files:
+            return _err("시험지 파일을 주세요")
+        exam_file, pdfs = files[0], [f for f in files[1:] if f.suffix.lower() == ".pdf"]
+    if not pdfs:
+        return _err("학생 답안지 PDF를 주세요")
+    if args.roster:
+        rows, notes = read_table(Path(args.roster))
+        res = Roster(svc.workspace).import_rows(rows)
+        _out(f"명단: {len(res.added)}명 추가, {len(res.updated)}명 고침")
+        for n in notes + res.problems:
+            _out(f"  ! {n}")
+    eid = args.exam
+    if exam_file is not None:
+        if (old := existing_exam(svc, exam_file)) is not None and old.exam_id:
+            eid = old.exam_id
+            _out(f"같은 시험지로 만든 시험을 씁니다: {eid}")
+        else:
+            scope = resolve_scope(svc, None, args.level)
+            made = ingest_exam(svc, exam_file, title=args.title or exam_file.stem, scope_id=scope,
+                               progress=_cli_progress)  # fmt: skip
+            eid = made.exam.id
+            _out(f"시험 {eid}: 문항 {len(made.exam.questions)}개, 해설 {len(made.keys)}문항")
+    if eid is None:
+        return _err("시험을 만들지 못했습니다")
+    store = ExamStore(svc.workspace, eid)
+    s = autopilot.run(svc, store, pdfs, by=args.by, progress=_cli_progress)
+    for d in s.decisions:
+        _out(f"  · {d}")
+    for w in s.warnings:
+        _out(f"  ! {w}")
+    _out(f"학생 {s.students}명, 채점 {s.graded}건 (검토 권장 {s.review}건)")
+    for f in s.files:
+        _out(f"  · {f}")
+    if s.asks:
+        _out(f"\n확인할 것 {len(s.asks)}건:")
+        for a in s.asks:
+            _out(f"  ? {a.text}")
+    return 0
+
+
+def _cmd_pdf(args: argparse.Namespace) -> int:
+    from dawoni.export.exam_files import marked_dir
+    from dawoni.export.red_pen import write_marked
+
+    svc = _svc(args)
+    store = ExamStore(svc.workspace, args.exam)
+    res = write_marked(store, marked_dir(svc.workspace, store), classes=args.klass,
+                       progress=_cli_progress)  # fmt: skip
+    for p in res.written:
+        _out(f"  · {p}")
+    for w in res.warnings:
+        _out(f"  ! {w}")
+    _out(f"학생 {res.students}명, 점수 자리 {res.placed}곳")
+    return 0 if res.written else 1
+
+
 def _cmd_scores(args: argparse.Namespace) -> int:
     svc = _svc(args)
     res = export_scores(svc.workspace, ExamStore(svc.workspace, args.exam), by_class=args.by_class,
                         force=args.force)  # fmt: skip
-    _print_export(res, what="점수표")
-    return 1 if res.warnings else 0
-
-
-def _cmd_export(args: argparse.Namespace) -> int:
-    svc = _svc(args)
-    res = write_all(svc.workspace, ExamStore(svc.workspace, args.exam), force=args.force)
     _print_export(res)
-    if not res.written:
-        _out("쓸 파일이 없습니다 (판독한 답안이 없음).")
-    if res.edited:
-        _out("강사가 고친 파일은 두었습니다 — `exam confirm`으로 읽어 들이거나, 고친 것을 버리려면"
-             " `--force`")  # fmt: skip
     return 1 if res.warnings else 0
-
-
-def _cmd_confirm(args: argparse.Namespace) -> int:
-    """확인 완료: 강사가 한글에서 고친 판독본 HWPX를 다시 읽어 확정 판독문으로."""
-    svc = _svc(args)
-    store = ExamStore(svc.workspace, args.exam)
-    run = workflow.confirm_from_files(
-        svc, store, students=[args.student] if args.student else None, only=args.q,
-        by=args.by, progress=_cli_progress,
-    )  # fmt: skip
-    for c in run.confirmed:
-        what = f"{c.changed}줄 고침" if c.changed else "고친 것 없음"
-        _out(f"✓ {c.transcript.student_id} 문항 {c.transcript.question_number}: 확정 ({what})")
-    for c in run.waiting:
-        t = c.transcript
-        _out(f"… {t.student_id} 문항 {t.question_number}: {c.changed}줄 받음, {UNREADABLE}"
-             f" {t.unreadable}곳이 남아 확정하지 않음 — 채워 저장한 뒤 다시")  # fmt: skip
-    for p in run.problems:
-        _out(f"  ✗ {p.student} 문항 {p.question}: {p.reason}")
-    if run.unchanged:
-        _out(f"이미 확정, 그 뒤 고치지 않음 {len(run.unchanged)}건")
-    for g in run.graded:
-        _out(f"채점 {g.student_id} 문항 {g.question_number}: {g.total:g}/{g.max_points:g}")
-    for f in run.failed:
-        _out(f"  ✗ 채점 실패 {f.student} 문항 {f.question}: {f.reason[:300]}")
-    _print_export(run.export)
-    return 1 if run.problems or run.failed else 0
 
 
 def _cmd_students(args: argparse.Namespace) -> int:
@@ -753,7 +784,7 @@ def _cmd_student(args: argparse.Namespace) -> int:
     _out(f"{args.student} → {r.student_id} ({r.class_name or '-'}, 명부 {r.roster_id or '-'})")
     for w in res.warnings:
         _out(f"  ! {w}")
-    _print_export(res.export, what="판독본")
+    _print_export(res.export)
     return 0
 
 
@@ -952,12 +983,23 @@ def register(sub: Any) -> None:
     r.add_argument("exam")
     r.set_defaults(func=_wrap(_cmd_report))
 
-    ex = es.add_parser("export", help="판독본·채점 HWPX 모두 다시 쓰기 (보통은 저절로 씀)")
-    ex.add_argument("exam")
-    ex.add_argument("--force", action="store_true", help="강사가 한글에서 고친 파일도 덮어쓰기")
-    ex.set_defaults(func=_wrap(_cmd_export))
+    au = es.add_parser("auto", help="한 번에 채점: 시험지 + 답안지 PDF → 점수표·채점 답안지 PDF")
+    au.add_argument(
+        "files", nargs="*", help="시험지(해설 포함) 다음에 답안지 PDF들 (--exam이면 PDF만)"
+    )
+    au.add_argument("--exam", help="있는 시험에 답안지 더 넣기")
+    au.add_argument("--roster", help="학생 명단 엑셀·CSV (명부에 더함)")
+    au.add_argument("--title", help="시험 이름 (없으면 파일 이름)")
+    au.add_argument("--level", default="물리", help="수준·과목 (예: 고1 물리)")
+    au.add_argument("--by", help="강사")
+    au.set_defaults(func=_wrap(_cmd_auto))
 
-    sc = es.add_parser("scores", help="엑셀 점수표만 다시 쓰기 (반 | 이름 | 학교 | 소문항… | 총점)")
+    pd = es.add_parser("pdf", help="채점 답안지 PDF: 답안지 위에 빨간 글씨로 점수·총점·감점 이유")
+    pd.add_argument("exam")
+    pd.add_argument("--class", dest="klass", action="append", help="이 반만 (여러 번 가능)")
+    pd.set_defaults(func=_wrap(_cmd_pdf))
+
+    sc = es.add_parser("scores", help="엑셀 점수표 다시 쓰기 (반 | 이름 | 학교 | 소문항… | 총점)")
     sc.add_argument("exam")
     way = sc.add_mutually_exclusive_group()
     way.add_argument("--by-class", dest="by_class", action="store_const", const=True,
@@ -967,12 +1009,6 @@ def register(sub: Any) -> None:
     sc.add_argument("--force", action="store_true", help="엑셀에서 고친 점수표도 덮어쓰기")
     sc.set_defaults(func=_wrap(_cmd_scores), by_class=None)
 
-    cf = es.add_parser("confirm", help="확인 완료: 한글에서 고친 판독본 HWPX → 확정 판독문")
-    cf.add_argument("exam")
-    cf.add_argument("--student")
-    cf.add_argument("-q", action="append", help="문항 번호 (여러 번 가능, 없으면 전체)")
-    cf.add_argument("--by", help="확인한 강사")
-    cf.set_defaults(func=_wrap(_cmd_confirm))
     sts = es.add_parser("students", help="이 시험의 학생 (명부 연결·이름 확인 대기)")
     sts.add_argument("exam")
     sts.set_defaults(func=_wrap(_cmd_students))

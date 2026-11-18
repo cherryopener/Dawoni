@@ -2,6 +2,9 @@
 
 판독본을 복사해 한글로 열고 그대로 저장한 뒤 `read_back` → `reconcile`. 고친 줄이 0이어야 한다.
 
+2026-11-18 앱이 HWPX를 쓰지 않게 되어(PLAN.md §16 31번) 이 스크립트는 더 돌지 않는다 — 다시 재려면
+`git worktree add ../dawoni-hwpx bc19532`로 그때 코드를 꺼내 거기서 돌린다.
+
     uv run --extra windows python experiments/m3_resave_probe.py [--limit 8]
 """
 

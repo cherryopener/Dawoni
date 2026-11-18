@@ -1,5 +1,8 @@
 """M6 실측: 채점 HWPX의 강조가 채점 근거 인용과 맞는가, 엑셀 점수표 (PLAN.md §9, §13).
 
+2026-11-18 앱이 HWPX를 쓰지 않게 되어(PLAN.md §16 31번) 이 스크립트는 더 돌지 않는다 — 다시 재려면
+`git worktree add ../dawoni-hwpx bc19532`로 그때 코드를 꺼내 거기서 돌린다.
+
     uv run python experiments/m6_output.py quotes            # 인용 → 판독문 자리 (세 채점 묶음)
     uv run python experiments/m6_output.py render 김민규 송주헌 [--hancom]   # 채점 HWPX → 한글 PDF·PNG
     uv run python experiments/m6_output.py xlsx               # 엑셀 점수표 (한 시트·반별)

@@ -215,7 +215,7 @@ function Shell({ dark, toggleTheme, teacher, email }: { dark: boolean; toggleThe
         <Keep show={top === "exams" && !route[1]}>
           <ExamsPage />
         </Keep>
-        {top === "exams" && route[1] && <ExamPage key={route[1]} examId={route[1]} step={route[2]} />}
+        {top === "exams" && route[1] && <ExamPage key={route[1]} examId={route[1]} step={route[2]} focus={route.slice(3)} />}
         <Keep show={top === "students"}>
           <StudentsPage />
         </Keep>

@@ -9,7 +9,7 @@ from typing import Any, cast
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from dawoni.export.exam_files import export_scores, score_file, score_table, write_files
+from dawoni.export.exam_files import export_scores, score_file, score_table
 from dawoni.export.xlsx import FILLS, NO_CLASS, Cell, Column, Row, build_scores
 from dawoni.grading.store import ExamStore
 from dawoni.models.grading import (
@@ -68,18 +68,20 @@ def test_sort_classes_naturally_then_names_ganada(tmp_path: Path) -> None:
     assert _table(wb["점수"])[1][3:] == [3, 1, 4, 8], "총점은 값 (수식이 아님)"
 
 
-def test_ungraded_and_review_cells_are_blank_and_colored(tmp_path: Path) -> None:
+def test_ungraded_cells_are_blank_and_review_cells_colored(tmp_path: Path) -> None:
+    """미채점은 비우고, 검토 필요는 AI 점수를 넣어 노랑 (2026-11-18 전에는 비웠다 — 한 번에 채점은
+    확신이 낮은 채점도 많아 점수표가 비지 않게)."""
     done = _full("2반", "김다원")
-    review = Row("2반", "박찬현", None, cells={"1-(1)": Cell(None, "review"),
-                                             "1-(2)": Cell(None, "review"), "2": _ok(5)},
-                 totals={"1": Cell(None, "review"), "2": _ok(5)})  # fmt: skip
+    review = Row("2반", "박찬현", None, cells={"1-(1)": Cell(1, "review"),
+                                             "1-(2)": Cell(2, "review"), "2": _ok(5)},
+                 totals={"1": Cell(3, "review"), "2": _ok(5)})  # fmt: skip
     early = Row("2반", "이서연", None, cells={"1-(1)": Cell(2, "unconfirmed"),
                                             "1-(2)": Cell(2, "unconfirmed")},
                 totals={"1": Cell(4, "unconfirmed"), "2": Cell(None, "ungraded")})  # fmt: skip
     path = build_scores(tmp_path / "s.xlsx", "t", COLS, [early, review, done])
     sheet = load_workbook(path)["점수"]
     rows = _table(sheet)
-    assert rows[2][3:] == [None, None, 5, None], "검토 필요 칸과 총점은 비움"
+    assert rows[2][3:] == [1, 2, 5, 8], "검토 필요 칸과 총점은 AI 점수"
     assert _fill(sheet, 3, 4) == _fill(sheet, 3, 7) == FILLS["review"]
     assert rows[3][3:] == [2, 2, None, None], "확인 전 채점은 값, 채점 전 문항은 비움"
     assert _fill(sheet, 4, 4) == FILLS["unconfirmed"]
@@ -169,13 +171,14 @@ def test_score_table_from_exam(tmp_path: Path) -> None:
         "2": Cell(4, "ok"),
     }
     assert by["김다원"].total() == Cell(8, "ok")
-    assert by["이도윤"].cells["1-(1)"].state == "review" and by["이도윤"].total().value is None
+    assert by["이도윤"].cells["1-(1)"].state == "review"
+    assert by["이도윤"].cells["1-(1)"].value == 2, "검토 필요도 AI 점수"
     assert by["최"].total().state == "ungraded"
 
 
-def test_scores_written_with_files_and_by_class_option(tmp_path: Path) -> None:
+def test_scores_written_and_by_class_option(tmp_path: Path) -> None:
     ws, store = _store(tmp_path)
-    res = write_files(ws, store, [("s2", "1")])
+    res = export_scores(ws, store)
     path = score_file(ws, store)
     assert path in res.written and path.name == "(점수표)_10월_시험.xlsx"
     assert [r[1] for r in _table(load_workbook(path)["점수"])[1:]] == ["최", "김다원", "이도윤"]
@@ -187,6 +190,6 @@ def test_scores_written_with_files_and_by_class_option(tmp_path: Path) -> None:
     wb = load_workbook(path)  # 강사가 엑셀에서 고쳐 저장 → 덮어쓰지 않고 알린다
     wb["2반"]["D2"] = 99
     wb.save(path)
-    again = write_files(ws, store, [("s2", "1")])
+    again = export_scores(ws, store)
     assert path in again.edited and any("점수표" in w for w in again.warnings)
     assert path in export_scores(ws, store, force=True).written

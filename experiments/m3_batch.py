@@ -3,6 +3,9 @@
 앱 모듈을 그대로 쓴다 (`workflow.scan_batch`, `confirm_from_files`). 작업공간·앱 데이터는
 `experiments/out/m3/`(git 제외 — 학생 이름·답안이 들어 있음). 모델은 agy flash-medium(§15 결정).
 
+2026-11-18 앱이 HWPX를 쓰지 않게 되어(PLAN.md §16 31번) 이 스크립트는 더 돌지 않는다 — 다시 재려면
+`git worktree add ../dawoni-hwpx bc19532`로 그때 코드를 꺼내 거기서 돌린다.
+
     uv run python experiments/m3_batch.py scan [--sets 1-24] [--parallel 3]
     uv run --extra windows python experiments/m3_batch.py hancom-edit [--student 장우혁]
     uv run python experiments/m3_batch.py report

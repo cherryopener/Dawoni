@@ -1,50 +1,31 @@
-"""시험의 판독본·채점 HWPX를 작업공간 `exports/<날짜_시험>/`에 쓴다 — 코드만, 토큰 0.
+"""시험의 엑셀 점수표를 작업공간 `exports/<날짜_시험>/`에 쓴다 — 코드만, 토큰 0.
 
     exports/2026-11-03_중간고사 물리/
-        2반_1.hwpx                  반별 묶음 (반 × 문항)
         (점수표)_중간고사 물리.xlsx
-        2반/2반_김다원_1.hwpx       학생 파일 (학생 × 문항) — 반마다 폴더
+        채점 답안지/2반_채점답안지.pdf     강사가 만들 때만 (`export.red_pen`)
 
-- 학생 파일 `반/반_이름_문항.hwpx`는 **판독이 끝나면 바로** 쓴다 (판독본, PLAN.md §5-1 5단계).
-  강사가 한글에서 원본 그림과 대조해 고치고 저장한 뒤 "확인 완료"를 누르면 앱이 다시 읽는다
-  (`grading.workflow.confirm_from_files`). 채점이 끝나면 같은 파일 새 쪽에 채점본을 잇는다.
-  `[판독불가]`가 남은 판독본은 분홍으로 칠하고 "입력 대기"를 머리에 적는다 — 강사가 채울 곳이다.
-- **강사가 고친 파일은 덮어쓰지 않는다.** 앱이 쓴 파일의 해시를 시험 폴더 `exports.json`에
-  (내보내기 폴더 기준 경로로) 두고, 파일이 그와 다르면 강사가 고친 것으로 보고 건너뛴다 (경고).
-  확인 완료로 읽어 들이면 그 해시를 받아들여 다음부터 다시 쓴다.
-- 반별 묶음 `반_문항.hwpx`는 학생 파일이 바뀔 때마다 다시 만든다. 판독문이 없는 학생은 안내
-  쪽으로 넣는다. 앱은 묶음을 다시 읽지 않는다 — 묶음을 고쳐 두었으면 다시 만들지 않고 알린다.
-- 같은 반에 같은 이름의 시험지가 둘 이상이면(`needs_rename`), 또는 명부가 있는데 명부와 맞추지
-  못했으면(`roster_note`) 강사가 이름을 확인하기 전까지 그 학생 파일을 쓰지 않는다 (§5-1 3단계).
-- 엑셀 점수표 `(점수표)_<시험>.xlsx`(`export.xlsx`, §9-2)도 파일을 쓸 때마다 전체를 다시 만든다 —
-  엑셀에서 고쳐 둔 점수표는 덮어쓰지 않고 알린다 (앱은 점수표를 읽지 않는다).
+- 점수표 `(점수표)_<시험>.xlsx`(`export.xlsx`, PLAN.md §9-2)는 판독·채점·검토가 바뀔 때마다 전체를
+  다시 만든다 (앱 데이터만 읽는다).
+- **엑셀에서 고친 점수표는 덮어쓰지 않는다.** 앱이 쓴 파일의 해시를 시험 폴더 `exports.json`에
+  두고, 파일이 그와 다르면 강사가 고친 것으로 보고 건너뛴다 (경고). 앱은 점수표를 읽지 않는다.
+- 쓰기 실패(엑셀에서 열어 둠 등)는 채점을 멈추지 않고 경고로 돌려준다.
 
-쓰기 실패(강사가 한글에서 그 파일을 열어 둠 등)는 채점을 멈추지 않고 경고로 돌려준다.
-예전 배치(모두 한 폴더, 묶음은 `(반별)_반_문항.hwpx`)로 쓴 파일은 `settle_layout`이 새 자리로
-옮긴다 — 강사가 고친 파일도 해시와 함께 옮겨 그대로 지킨다.
+2026-11-18까지는 학생 × 문항 판독본·채점 HWPX와 반별 묶음도 여기서 썼다. 판독문은 이제 앱
+화면에서 고치고 확인한다 (PLAN.md §16). 예전에 쓴 HWPX는 그 폴더에 그대로 남는다.
 """
 
 from __future__ import annotations
 
-import contextlib
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dawoni.export.hwpx import (
-    PartGrade,
-    Sheet,
-    build_bundle,
-    build_student,
-    part_grades,
-    png_scan,
-    sheet_lines,
-)
+from dawoni.export.sheet import PartGrade, part_grades
 from dawoni.export.xlsx import Cell, Column, Row, State, build_scores
 from dawoni.fsio import sha256_file
 from dawoni.grading.store import ExamStore, safe_name
-from dawoni.models.grading import UNREADABLE, Exam
+from dawoni.models.grading import Exam
 from dawoni.paths import WorkspacePaths
 
 NO_CLASS = "반없음"
@@ -57,7 +38,7 @@ class ExportResult:
     written: list[Path] = field(default_factory=lambda: list[Path]())
     warnings: list[str] = field(default_factory=lambda: list[str]())
     edited: list[Path] = field(default_factory=lambda: list[Path]())
-    """강사가 한글에서 고쳐 두어 덮어쓰지 않은 파일."""
+    """강사가 고쳐 두어 덮어쓰지 않은 파일."""
 
 
 def exam_dir(ws: WorkspacePaths, exam: Exam) -> Path:
@@ -71,26 +52,20 @@ def _class_of(store: ExamStore, student: str) -> str:
 
 
 def _name_of(store: ExamStore, student: str) -> str:
-    """파일에 쓸 이름 — 표지(또는 명부)의 이름. 다른 반 동명이인은 학생 ID만 다르고 이름은 같다."""
+    """표지(또는 명부)의 이름. 다른 반 동명이인은 학생 ID만 다르고 이름은 같다. 이름 확인 전이면
+    표시를 붙여 점수표에 넣는다 (2026-11-18: 이름 때문에 멈추지 않고 나중에 고친다)."""
     r = store.student_record(student)
-    return (r.name if r and r.name else None) or student
+    name = (r.name if r and r.name else None) or student
+    return f"{name} (이름 확인)" if r is not None and r.name_pending else name
 
 
-def student_file(ws: WorkspacePaths, store: ExamStore, student: str, q: str) -> Path:
-    """반/반_이름_문항.hwpx (동명이인은 `김다원A`처럼 이름이 이미 갈라져 있다). 파일 이름에도 반을
-    두어 폴더 밖으로 꺼내 모아도 겹치지 않는다."""
-    klass = _class_of(store, student)
-    name = f"{klass}_{_name_of(store, student)}_{q}.hwpx"
-    return exam_dir(ws, store.exam()) / safe_name(klass) / safe_name(name)
-
-
-def bundle_file(ws: WorkspacePaths, store: ExamStore, klass: str, q: str) -> Path:
-    """시험 폴더 맨 위의 `반_문항.hwpx` (학생 파일은 반 폴더 안이라 묶음만 한눈에 보인다)."""
-    return exam_dir(ws, store.exam()) / safe_name(f"{klass}_{q}.hwpx")
+def marked_dir(ws: WorkspacePaths, store: ExamStore) -> Path:
+    """채점 답안지 PDF(`export.red_pen`)를 두는 곳: 시험 폴더 안 `채점 답안지/`."""
+    return exam_dir(ws, store.exam()) / "채점 답안지"
 
 
 def score_file(ws: WorkspacePaths, store: ExamStore) -> Path:
-    """`(점수표)_<시험>.xlsx` — 반별 묶음처럼 이름순 맨 위."""
+    """`(점수표)_<시험>.xlsx`."""
     return exam_dir(ws, store.exam()) / safe_name(f"(점수표)_{store.exam().title}.xlsx")
 
 
@@ -111,7 +86,7 @@ def score_table(store: ExamStore) -> tuple[list[Column], list[Row]]:
             g = store.grade(student, q.number)
             t = store.transcript(student, q.number)
             state: State
-            if (r is not None and r.name_pending) or t is None or t.unreadable or g is None:
+            if t is None or g is None:
                 state = "ungraded"
             elif g.status == "needs_review":
                 state = "review"
@@ -119,7 +94,7 @@ def score_table(store: ExamStore) -> tuple[list[Column], list[Row]]:
                 state = "unconfirmed"
             else:
                 state = "ok"
-            if g is None or state in ("ungraded", "review"):
+            if g is None or state == "ungraded":
                 row.totals[q.number] = Cell(None, state)
                 row.cells |= {c.key: Cell(None, state) for c in cols[q.number]}
                 continue
@@ -135,238 +110,32 @@ def score_table(store: ExamStore) -> tuple[list[Column], list[Row]]:
     return [c for q in exam.questions for c in cols[q.number]], rows
 
 
-def write_scores(
-    ws: WorkspacePaths,
-    store: ExamStore,
-    res: ExportResult,
-    hashes: dict[str, str],
-    *,
-    force: bool = False,
-) -> None:
-    """점수표를 다시 쓴다 (학생 파일과 같이 — 앱 데이터만 읽으니 늘 전체를 다시 만든다)."""
-    exam = store.exam()
-    columns, rows = score_table(store)
-    _write(res, hashes, score_file(ws, store),
-           lambda p: build_scores(p, exam.title, columns, rows, by_class=exam.scores_by_class),
-           force=force, opened="엑셀에서 닫고",
-           edited="점수표를 엑셀에서 고쳐 두어 다시 쓰지 않음 — 앱은 점수표를 읽지 않으니 "
-                  "점수는 앱에서 고치고, 이 파일을 지우거나 다른 이름으로 저장하면 다시 "
-                  "만듭니다")  # fmt: skip
-
-
 def export_scores(
     ws: WorkspacePaths, store: ExamStore, *, by_class: bool | None = None, force: bool = False
 ) -> ExportResult:
-    """점수표만 다시 쓴다. by_class를 주면 시험에 저장해 다음 저절로 쓸 때도 그렇게 쓴다."""
+    """점수표를 다시 쓴다. by_class를 주면 시험에 저장해 다음 저절로 쓸 때도 그렇게 쓴다.
+    `force`: 엑셀에서 고친 점수표도 덮어쓴다."""
     res = ExportResult()
     with _lock:
         exam = store.exam()
         if by_class is not None and by_class != exam.scores_by_class:
-            store.save_exam(exam.model_copy(update={"scores_by_class": by_class}))
+            exam = exam.model_copy(update={"scores_by_class": by_class})
+            store.save_exam(exam)
         hashes = store.export_hashes()
-        write_scores(ws, store, res, hashes, force=force)
+        columns, rows = score_table(store)
+        _write(res, hashes, score_file(ws, store),
+               lambda p: build_scores(p, exam.title, columns, rows, by_class=exam.scores_by_class),
+               force=force)  # fmt: skip
         store.save_export_hashes(hashes)
     return res
-
-
-def _key(path: Path) -> str:
-    """`exports.json`의 열쇠: 시험 폴더 기준 경로 (`2반_1.hwpx`, `2반/2반_김다원_1.hwpx`).
-    파일은 시험 폴더 맨 위나 반 폴더 한 단계 아래에만 둔다."""
-    return path.name if path.parent.parent.name == "exports" else f"{path.parent.name}/{path.name}"
 
 
 def is_edited(store: ExamStore, path: Path, hashes: dict[str, str] | None = None) -> bool:
-    """앱이 쓴 뒤 강사가 (한글에서) 고친 파일인가. 앱이 쓴 기록이 없는 파일(내보내기 기록이
-    생기기 전)은 고친 것으로 보지 않는다."""
+    """앱이 쓴 뒤 강사가 (엑셀에서) 고친 파일인가. 앱이 쓴 기록이 없는 파일은 고친 것으로 보지
+    않는다."""
     hashes = store.export_hashes() if hashes is None else hashes
-    known = hashes.get(_key(path))
+    known = hashes.get(path.name)
     return known is not None and path.is_file() and sha256_file(path) != known
-
-
-def accept_file(store: ExamStore, path: Path) -> None:
-    """강사가 고친 파일을 읽어 들였다 — 이 내용을 앱이 아는 것으로 두고 다음부터 다시 쓴다."""
-    with _lock:
-        hashes = store.export_hashes()
-        hashes[_key(path)] = sha256_file(path)
-        store.save_export_hashes(hashes)
-
-
-OLD_BUNDLE_PREFIX = "(반별)_"
-
-
-def _settle(ws: WorkspacePaths, store: ExamStore, hashes: dict[str, str]) -> list[str]:
-    top = exam_dir(ws, store.exam())
-    if not top.is_dir():
-        return []
-    students = [student_file(ws, store, s, q.number)
-                for s in _roster(store) for q in store.exam().questions]  # fmt: skip
-    moves = [(top / new.name, new) for new in students]
-    moves += [(old, top / old.name.removeprefix(OLD_BUNDLE_PREFIX))
-              for old in top.glob(f"{OLD_BUNDLE_PREFIX}*.hwpx")]  # fmt: skip
-    warnings: list[str] = []
-    for old, new in moves:
-        if not old.is_file() or new.exists():
-            continue
-        try:
-            new.parent.mkdir(exist_ok=True)
-            old.replace(new)
-        except OSError as e:
-            warnings.append(
-                f"{old.name}을 새 자리({_key(new)})로 옮기지 못함 ({e.strerror or e}) — "
-                "한글에서 닫고 다시 하세요"
-            )
-            continue
-        if (h := hashes.pop(old.name, None)) is not None:
-            hashes[_key(new)] = h
-    return warnings
-
-
-def settle_layout(ws: WorkspacePaths, store: ExamStore) -> list[str]:
-    """예전 배치(한 폴더)로 쓴 학생 파일은 반 폴더로, `(반별)_` 묶음은 새 이름으로 옮긴다.
-    옮길 것이 없으면 아무것도 하지 않는다. 옮기지 못한 파일(한글에서 열어 둠)은 경고."""
-    with _lock:
-        hashes = store.export_hashes()
-        before = dict(hashes)
-        warnings = _settle(ws, store, hashes)
-        if hashes != before:
-            store.save_export_hashes(hashes)
-    return warnings
-
-
-class _Sheets:
-    """한 번 내보내는 동안 같은 스캔을 다시 줄이지 않게 그림을 기억한다."""
-
-    def __init__(self, store: ExamStore) -> None:
-        self.store = store
-        self.exam = store.exam()
-        self._png: dict[Path, bytes] = {}
-
-    def head(self, student: str) -> str:
-        r = self.store.student_record(student)
-        bits = [self.exam.title, _class_of(self.store, student), _name_of(self.store, student),
-                (r.school if r else None)]  # fmt: skip
-        return " · ".join(b for b in bits if b)
-
-    def _scan(self, path: Path) -> bytes | None:
-        if path not in self._png:
-            try:
-                self._png[path] = png_scan(path)
-            except OSError:
-                return None
-        return self._png[path]
-
-    def sheet(self, student: str, q: str) -> Sheet:
-        """판독본 (+ 채점이 끝났으면 채점본). 판독문이 없거나 이름 확인 전이면 묶음에 넣을
-        안내 쪽."""
-        head = self.head(student)
-        r = self.store.student_record(student)
-        if r is not None and r.name_pending:
-            wait = (
-                "이름 확인 대기: 같은 반에 같은 이름의 시험지가 또 있음 — "
-                "김다원A·김다원B처럼 바꾸면 만듦"
-                if r.needs_rename
-                else f"이름 확인 대기: {r.roster_note} — 화면에서 이름을 확인하면 만듦"
-            )
-            return Sheet(head=head, lines=[], waiting=wait)
-        t = self.store.transcript(student, q)
-        if t is None:
-            return Sheet(head=head, lines=[], waiting="답안 없음 (판독한 글이 없음)")
-        scans = [s for p in t.pages if (s := self._scan(self.store.root / p)) is not None]
-        reading = Sheet(head=head, lines=sheet_lines(q, t.lines), scans=scans)
-        if not t.lines:  # 빈 답안: 소문항 표식만 — 강사가 원본을 보고 그 아래에 채운다
-            parts = self.exam.question(q).parts
-            reading.empty_parts = [f"{q}-{p.label}" for p in parts] or [q]
-            reading.reading_notes.append(
-                "판독한 글이 없음 — 원본에 답이 있으면 표식 아래에 채우세요"
-            )
-        if t.unreadable:
-            reading.reading_notes.append(
-                f"입력 대기: {UNREADABLE} {t.unreadable}곳(분홍) — 원본을 보고 채워 저장한 뒤 "
-                "'확인 완료'를 누르면 채점합니다"
-            )
-            return reading
-        if not t.confirmed:
-            reading.reading_notes.append(
-                "판독문 확인 전 — 원본과 비교해 고칠 곳을 고쳐 저장한 뒤 '확인 완료'를 누르세요"
-            )
-        g = self.store.grade(student, q)
-        rubric = self.store.rubric(q)
-        if g is None or rubric is None:
-            return reading
-        notes: list[str] = []
-        if not g.transcript_confirmed:
-            notes.append("판독문 강사 확인 전 채점 — 판독문을 고쳐 확정하면 다시 채점합니다")
-        if g.status == "teacher_confirmed":
-            notes.append(f"강사 확정{f' ({g.confirmed_by})' if g.confirmed_by else ''}")
-        notes += [f"! {f}" for f in g.flags]
-        reading.grades = part_grades(q, g, rubric)
-        reading.comment = g.comment
-        reading.notes = notes
-        return reading
-
-
-def write_files(
-    ws: WorkspacePaths, store: ExamStore, keys: list[tuple[str, str]], *, force: bool = False
-) -> ExportResult:
-    """판독·채점이 바뀐 (학생, 문항)의 학생 파일을 쓰고, 그 반 × 문항 묶음을 다시 만든다.
-    `force`: 강사가 고친 파일도 덮어쓴다 (고친 내용은 사라진다)."""
-    res = ExportResult()
-    if not keys:
-        return res
-    sheets = _Sheets(store)
-    bundles: set[tuple[str, str]] = set()
-    with _lock:
-        hashes = store.export_hashes()
-        res.warnings += _settle(ws, store, hashes)
-        for student, q in dict.fromkeys(keys):
-            sheet = sheets.sheet(student, q)
-            bundles.add((_class_of(store, student), q))
-            if sheet.waiting is not None:
-                continue
-            path = student_file(ws, store, student, q)
-            _write(res, hashes, path, lambda p, s=sheet: build_student(p, s), force=force,
-                   edited="강사가 한글에서 고친 판독본 — '확인 완료'로 읽어 들이면 "
-                          "다시 씁니다")  # fmt: skip
-        for klass, q in sorted(bundles):
-            members = sorted(s for s in _roster(store) if _class_of(store, s) == klass)
-            page = [sheets.sheet(s, q) for s in members]
-            path = bundle_file(ws, store, klass, q)
-            _write(res, hashes, path, lambda p, pg=page: build_bundle(p, pg), force=force,
-                   edited="묶음을 한글에서 고쳐 두어 다시 만들지 않음 — 앱은 묶음을 읽지 않으니 "
-                          "학생 파일에서 고치고, 이 묶음을 지우면 다시 만듭니다")  # fmt: skip
-        write_scores(ws, store, res, hashes, force=force)
-        store.save_export_hashes(hashes)
-    return res
-
-
-def write_all(ws: WorkspacePaths, store: ExamStore, *, force: bool = False) -> ExportResult:
-    """시험 전체를 다시 쓴다 (내보내기 기능이 들어오기 전에 채점한 시험, 파일을 지운 경우)."""
-    keys = [(s, q.number) for s in _roster(store) for q in store.exam().questions]
-    return write_files(ws, store, keys, force=force)
-
-
-def remove_student_files(ws: WorkspacePaths, store: ExamStore, student: str) -> list[str]:
-    """학생 이름을 바꾸기 전에 그 학생의 옛 파일을 지운다 (강사가 고친 파일은 남기고 알린다)."""
-    warnings: list[str] = []
-    with _lock:
-        hashes = store.export_hashes()
-        for q in store.exam().questions:
-            path = student_file(ws, store, student, q.number)
-            if not path.is_file():
-                continue
-            if is_edited(store, path, hashes):
-                warnings.append(f"{path.name}: 강사가 고친 파일이라 지우지 않음 — 직접 지우세요")
-                continue
-            try:
-                path.unlink()
-                hashes.pop(_key(path), None)
-            except OSError as e:
-                warnings.append(f"{path.name}을 지우지 못함 ({e.strerror or e})")
-                continue
-            with contextlib.suppress(OSError):  # 아직 다른 학생 파일이 있으면 그대로
-                path.parent.rmdir()  # 반을 옮겨 빈 반 폴더
-        store.save_export_hashes(hashes)
-    return warnings
 
 
 def _roster(store: ExamStore) -> list[str]:
@@ -380,20 +149,22 @@ def _write(
     build: Callable[[Path], Path],
     *,
     force: bool,
-    edited: str,
-    opened: str = "한글에서 닫고",
 ) -> None:
-    known = hashes.get(_key(path))
+    """`exports.json`의 열쇠는 시험 폴더 안의 파일 이름."""
+    known = hashes.get(path.name)
     if not force and known is not None and path.is_file() and sha256_file(path) != known:
         res.edited.append(path)
-        res.warnings.append(f"{path.name}: {edited}")
+        res.warnings.append(
+            f"{path.name}: 점수표를 엑셀에서 고쳐 두어 다시 쓰지 않음 — 앱은 점수표를 읽지 않으니 "
+            "점수는 앱에서 고치고, 이 파일을 지우거나 다른 이름으로 저장하면 다시 만듭니다"
+        )
         return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         build(path)
         res.written.append(path)
-        hashes[_key(path)] = sha256_file(path)
+        hashes[path.name] = sha256_file(path)
     except OSError as e:
         res.warnings.append(
-            f"{path.name}을 쓰지 못함 ({e.strerror or e}) — {opened} 다시 내보내세요"
+            f"{path.name}을 쓰지 못함 ({e.strerror or e}) — 엑셀에서 닫고 다시 내보내세요"
         )

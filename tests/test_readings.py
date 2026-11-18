@@ -1,5 +1,5 @@
-"""M3 답안지 → HWPX: 학생 명부, 판독 직후 판독본 HWPX, 강사가 한글에서 고친 판독본 다시
-읽기(확인 완료), 같은 반 동명이인 이름 바꾸기 (PLAN.md §5-1, §7)."""
+"""M3 답안지: 학생 명부, 판독문을 화면에서 고쳐 확인 완료, 같은 반 동명이인 이름 바꾸기
+(PLAN.md §5-1, §7). 2026-11-18까지는 판독본 HWPX를 한글에서 고쳐 다시 읽었다."""
 
 from __future__ import annotations
 
@@ -11,15 +11,13 @@ from typing import Any
 
 import pymupdf
 import pytest
-from hwpx.document import HwpxDocument
 from openpyxl import Workbook
 from PIL import Image
 from tests_support import fake_prompts
 
 from dawoni.cli import main
 from dawoni.config import AppConfig, save_config
-from dawoni.export.exam_files import bundle_file, is_edited, student_file, write_files
-from dawoni.export.hwpx import count_heads, read_back
+from dawoni.export.exam_files import score_file
 from dawoni.fsio import read_json
 from dawoni.grading import workflow
 from dawoni.grading.store import ExamStore, ScopeStore
@@ -175,129 +173,46 @@ def _student(store: ExamStore, sid: str, name: str, klass: str = "2반") -> None
                                      source="ocr", pages=[f"scans/{sid}/page_02.png"]))  # fmt: skip
 
 
-def _edit(path: Path, change: Callable[[Any], None]) -> None:
-    """강사가 한글에서 고친 것처럼 (python-hwpx로 문단을 고쳐 저장)."""
-    doc = HwpxDocument.open(path)
-    for p in doc.paragraphs:
-        change(p)
-    doc.save_to_path(path)
+def _client_for(app_paths: AppPaths, svc: Services) -> Any:
+    from test_server import _client  # pyright: ignore[reportPrivateUsage]
+
+    cfg = AppConfig.model_validate(read_json(app_paths.config_file))
+    cfg.workspace = svc.workspace.root
+    save_config(app_paths, cfg)
+    return _client(app_paths)
 
 
-def _fill(p: Any) -> None:
-    if "[판독불가]" in (p.text or ""):
-        p.text = "저항이 작은 ㉠이 더 밝아"
-
-
-def test_reading_file_written_and_confirmed_from_hwpx(app_paths: AppPaths, tmp_path: Path) -> None:
+def test_screen_fills_unreadable_then_confirms(app_paths: AppPaths, tmp_path: Path) -> None:
+    """판독문 고치기 화면: 그 문항의 원본 쪽과 판독문을 열고, [판독불가]가 남으면 확인하지 않고,
+    채워 확인하면 확정 판독문이 된다 (2026-11-18 한글 대신 화면)."""
     svc = _services(app_paths, tmp_path)
     store = _exam(svc)
     _student(store, "김다원", "김다원")
-    res = write_files(svc.workspace, store, [("김다원", "1")])
-    path = student_file(svc.workspace, store, "김다원", "1")
-    assert path in res.written and path.name == "2반_김다원_1.hwpx", "채점 전에도 판독본을 쓴다"
-    assert bundle_file(svc.workspace, store, "2반", "1") in res.written
-    back = read_back(path)
-    assert back.head == "10월 시험 · 2반 · 김다원" and back.pictures == 1
-    assert list(back.parts) == ["1-(1)", "1-(2)"], "머리 아래 안내 문단은 판독문에 섞이지 않는다"
+    Image.new("RGB", (40, 60), "white").save(store.scan_dir("김다원") / "page_01.png")  # 표지
+    c = _client_for(app_paths, svc)
+    url = f"/api/exams/{store.exam_id}/students/김다원/transcripts/1"
 
-    # [판독불가]가 남은 채로 확인 완료 → 받지만 확정하지 않는다
-    run = workflow.confirm_from_files(svc, store, by="김선생")
-    assert not run.confirmed and len(run.waiting) == 1
-    t = store.transcript("김다원", "1")
-    assert t is not None and not t.confirmed
+    got = c.get(url).json()
+    assert got["page_images"] == ["scans/김다원/page_02.png"], "표지는 빼고 그 문항을 읽은 쪽만"
+    assert got["name"] == "김다원" and got["class_name"] == "2반" and got["unreadable"] == 1
+    assert got["question"]["number"] == "1" and got["transcript"]["lines"][1]["uncertain"]
 
-    # 강사가 한글에서 채워 저장 → 앱이 그 파일을 덮어쓰지 않는다
-    _edit(path, _fill)
-    assert is_edited(store, path)
-    again = write_files(svc.workspace, store, [("김다원", "1")])
-    assert path in again.edited and path not in again.written
-    assert "확인 완료" in again.warnings[0]
+    lines = [ln.model_dump(mode="json") for ln in LINES]
+    r = c.put(url, json={"lines": lines, "confirm": True, "by": "김선생"})
+    assert r.status_code == 400 and "[판독불가]" in r.json()["detail"], "남으면 확정 안 함"
 
-    run = workflow.confirm_from_files(svc, store, by="김선생")
-    assert [c.changed for c in run.confirmed] == [1] and not run.problems
+    lines[1] |= {"text": "저항이 작은 ㉠이 더 밝아", "uncertain": [], "confidence": 1}
+    r = c.put(url, json={"lines": lines, "confirm": False})
+    assert r.status_code == 200 and not r.json()["confirmed"], "저장만 하면 확인 전 그대로"
+    r = c.put(url, json={"lines": lines, "confirm": True, "by": "김선생"})
+    assert r.status_code == 200, r.text
     t = store.transcript("김다원", "1")
     assert t is not None and t.confirmed and t.confirmed_by == "김선생"
-    assert [x.text for x in t.lines][:2] == [LINES[0].text, "저항이 작은 ㉠이 더 밝아"]
-    assert t.lines[0] == LINES[0] and t.lines[2] == LINES[2], "고치지 않은 줄은 원래 LaTeX 그대로"
-    assert t.lines[1].part == "(1)" and not t.lines[1].uncertain
-    assert any("1줄 고침" in n for n in t.notes)
-    assert path in run.export.written, "확정 뒤 다시 써서 '확인 전' 표시를 지운다"
-    assert not is_edited(store, path)
-    assert "판독문 확인 전" not in "".join(p.text or "" for p in HwpxDocument.open(path).paragraphs)
-
-    rerun = workflow.confirm_from_files(svc, store)
-    assert rerun.unchanged == ["김다원 1"] and not rerun.confirmed, "해시가 같으면 다시 읽지 않는다"
-
-
-def test_old_flat_layout_moves_to_class_folders(app_paths: AppPaths, tmp_path: Path) -> None:
-    """예전엔 한 폴더에 `2반_김다원_1.hwpx`·`(반별)_2반_1.hwpx`로 썼다. 새 배치로 옮기고, 강사가
-    고친 파일은 해시와 함께 옮겨 계속 지킨다."""
-    svc = _services(app_paths, tmp_path)
-    store = _exam(svc)
-    _student(store, "김다원", "김다원")
-    write_files(svc.workspace, store, [("김다원", "1")])
-    path = student_file(svc.workspace, store, "김다원", "1")
-    bundle = bundle_file(svc.workspace, store, "2반", "1")
-    top = bundle.parent
-    assert path == top / "2반" / "2반_김다원_1.hwpx" and bundle == top / "2반_1.hwpx"
-    # 예전 배치로 되돌려 둔다
-    hashes = store.export_hashes()
-    path.replace(top / path.name)
-    bundle.replace(top / "(반별)_2반_1.hwpx")
-    path.parent.rmdir()
-    hashes[path.name] = hashes.pop("2반/2반_김다원_1.hwpx")
-    hashes["(반별)_2반_1.hwpx"] = hashes.pop("2반_1.hwpx")
-    store.save_export_hashes(hashes)
-    _edit(top / path.name, _fill)  # 강사가 예전 자리에서 고쳐 둠
-
-    again = write_files(svc.workspace, store, [("김다원", "1")])
-    assert sorted(p.name for p in top.iterdir()) == ["(점수표)_10월_시험.xlsx", "2반", "2반_1.hwpx"]
-    assert path.is_file() and is_edited(store, path), "고친 파일은 옮겨도 고친 것으로 안다"
-    assert path in again.edited and path not in again.written
-    assert bundle in again.written
-    run = workflow.confirm_from_files(svc, store, by="김선생")
-    assert [c.changed for c in run.confirmed] == [1]
-
-
-def test_confirm_refuses_broken_marks_and_other_heads(app_paths: AppPaths, tmp_path: Path) -> None:
-    svc = _services(app_paths, tmp_path)
-    store = _exam(svc)
-    _student(store, "김다원", "김다원")
-    _student(store, "박찬현", "박찬현")
-    write_files(svc.workspace, store, [("김다원", "1"), ("박찬현", "1")])
-    mine = student_file(svc.workspace, store, "김다원", "1")
-    other = student_file(svc.workspace, store, "박찬현", "1")
-
-    def drop_mark(p: Any) -> None:
-        if p.text == "■ 1-(2)":
-            p.text = "1-(2)"
-        _fill(p)
-
-    _edit(mine, drop_mark)
-    other.write_bytes(mine.read_bytes())  # 다른 학생 파일을 붙여 넣음
-    run = workflow.confirm_from_files(svc, store)
-    why = {p.student: p.reason for p in run.problems}
-    assert "'■ 1-(2)' 표식이 없어" in why["김다원"]
-    assert "머리" in why["박찬현"] and "박찬현" in why["박찬현"]
-    assert not run.confirmed
-    for sid in ("김다원", "박찬현"):
-        t = store.transcript(sid, "1")
-        assert t is not None and not t.confirmed and t.lines == LINES, "문제가 있으면 손대지 않는다"
-
-
-def test_cli_confirm(
-    app_paths: AppPaths, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    svc = _services(app_paths, tmp_path)
-    store = _exam(svc)
-    _student(store, "김다원", "김다원")
-    w = ["exam", "--workspace", str(svc.workspace.root)]
-    assert main([*w, "export", store.exam_id]) == 0
-    _edit(student_file(svc.workspace, store, "김다원", "1"), _fill)
-    assert main([*w, "export", store.exam_id]) == 1, "고친 파일은 두고 알린다"
-    assert "--force" in capsys.readouterr().out
-    assert main([*w, "confirm", store.exam_id, "--by", "김선생"]) == 0
-    assert "✓ 김다원 문항 1: 확정 (1줄 고침)" in capsys.readouterr().out
+    assert t.lines[1].text == "저항이 작은 ㉠이 더 밝아" and t.lines[0] == LINES[0]
+    assert t.lines[2] == LINES[2], "고치지 않은 줄은 원래 LaTeX 그대로"
+    assert score_file(svc.workspace, store).is_file(), "확인하면 점수표의 '확인 전' 표시를 맞춘다"
+    exports = score_file(svc.workspace, store).parent
+    assert not list(exports.rglob("*.hwpx")), "HWPX는 쓰지 않는다"
 
 
 # ---------------------------------------------------------------- 묶음 판독 + 명부 + 동명이인
@@ -350,23 +265,17 @@ def test_batch_links_roster_and_holds_same_class_twins(
     saved = store.student_record("박찬현")
     assert saved is not None and saved.needs_rename
 
-    names = sorted(p.name for p in res.export.written if p.suffix == ".hwpx")
-    assert any(p.suffix == ".xlsx" for p in res.export.written), "점수표도 (채점 전이라 비어 있음)"
-    assert names == ["2반_1.hwpx", "2반_김다원_1.hwpx"], (
-        "판독이 끝나면 바로 판독본을 쓰고, 같은 반 동명이인·명부에 없는 이름은 확인할 때까지 보류"
-    )
+    assert [p.suffix for p in res.export.written] == [".xlsx"], "점수표만 (채점 전이라 비어 있음)"
     assert store.transcript("최민준", "1") is not None, "명부에 없어도 판독은 한다"
     notices = {n["id"].split(":")[0]: n for n in exam_notices(store)}
     assert notices["roster"]["title"] == "명부에 없는 이름 1명"
     assert "2반 최민준" in notices["roster"]["detail"]
-    bundle = bundle_file(svc.workspace, store, "2반", "1")
-    assert count_heads(bundle) == 4, "묶음에는 보류한 학생도 안내 쪽으로"
 
-    # 강사가 이름을 바꾸면 그 학생 파일을 만들고, 짝도 풀린다
+    # 강사가 이름을 바꾸면 짝도 풀린다
     w = ["exam", "--workspace", str(svc.workspace.root)]
     capsys.readouterr()
     assert main([*w, "student", store.exam_id, "박찬현#3", "--name", "박찬현B"]) == 0
-    assert "2반_박찬현_1.hwpx" in capsys.readouterr().out, "짝(박찬현)도 이제 만든다"
+    assert "점수표" in capsys.readouterr().out
     assert store.transcript("박찬현#3", "1") is None
     moved = store.transcript("박찬현B", "1")
     assert moved is not None and moved.lines[0].text == "3번째 학생 답"
@@ -376,17 +285,17 @@ def test_batch_links_roster_and_holds_same_class_twins(
     a = store.student_record("박찬현")
     assert b is not None and not b.needs_rename and a is not None and not a.needs_rename
     assert b.roster_note is not None, "명부에는 박찬현 한 명뿐 — 박찬현B는 명부 확인"
-    assert not student_file(svc.workspace, store, "박찬현B", "1").is_file()
+    assert b.name_pending
     assert main([*w, "student", store.exam_id, "박찬현B", "--off-roster"]) == 0
-    assert student_file(svc.workspace, store, "박찬현B", "1").is_file()
+    b = store.student_record("박찬현B")
+    assert b is not None and not b.name_pending
 
     # 명부에 없던 학생을 명부에 넣고 잇는다
     new = roster.add("최민준", "2반", "용산중")
     assert main([*w, "student", store.exam_id, "최민준", "--roster", new.id]) == 0
     linked = store.student_record("최민준")
     assert linked is not None and linked.roster_id == new.id and linked.roster_note is None
-    assert linked.school == "용산중"
-    assert student_file(svc.workspace, store, "최민준", "1").is_file(), "확인하면 판독본을 쓴다"
+    assert linked.school == "용산중" and not linked.name_pending
     assert "roster" not in {n["id"].split(":")[0] for n in exam_notices(store)}
     assert main([*w, "student", store.exam_id, "최민준", "--name", "김다원"]) == 1, (
         "같은 반 같은 이름"
@@ -406,22 +315,19 @@ def test_name_fix_rematches_roster_or_accepts_off_roster(
     roster = Roster(svc.workspace)
     roster.import_rows([{"name": "이태오", "class_name": "2반", "school": "포항제철중"}])
     store = _exam(svc)
-    res = workflow.scan_batch(svc, store, _pdf(tmp_path / "a.pdf", 4), per_student=2)
-    assert [p.name for p in res.export.written if p.suffix == ".hwpx"] == ["2반_1.hwpx"]
+    workflow.scan_batch(svc, store, _pdf(tmp_path / "a.pdf", 4), per_student=2)
     pending = store.student_record("이타요")
     assert pending is not None and pending.name_pending
 
     fixed = workflow.rename_student(svc, store, "이타요", name="이태오")
     assert fixed.record.roster_id == "S0001" and fixed.record.school == "포항제철중"
-    assert not fixed.record.name_pending
-    assert student_file(svc.workspace, store, "이태오", "1").name == "2반_이태오_1.hwpx"
-    assert student_file(svc.workspace, store, "이태오", "1").is_file()
+    assert not fixed.record.name_pending and fixed.record.student_id == "이태오"
+    assert store.transcript("이태오", "1") is not None
 
     still = workflow.rename_student(svc, store, "최민준", name="최민준")
     assert still.record.roster_note is not None, "명부에 없는 이름으로 고치면 확인이 남는다"
     kept = workflow.rename_student(svc, store, "최민준", off_roster=True)
     assert kept.record.roster_note is None and kept.record.roster_id is None
-    assert student_file(svc.workspace, store, "최민준", "1").is_file()
     assert not [n for n in exam_notices(store) if n["id"].startswith(("roster", "rename"))]
 
 
@@ -445,26 +351,18 @@ def test_name_fix_unlinks_wrong_roster_student(app_paths: AppPaths, tmp_path: Pa
     assert got == (right.id, "구룡중", None)
 
 
-def test_api_confirm_files_and_identity(app_paths: AppPaths, tmp_path: Path) -> None:
-    from test_server import _client, _wait  # pyright: ignore[reportPrivateUsage]
-
+def test_api_identity_and_history(app_paths: AppPaths, tmp_path: Path) -> None:
     svc = _services(app_paths, tmp_path)
-    cfg = AppConfig.model_validate(read_json(app_paths.config_file))
-    cfg.workspace = svc.workspace.root
-    save_config(app_paths, cfg)
     store = _exam(svc)
     _student(store, "김다원", "김다원")
-    write_files(svc.workspace, store, [("김다원", "1")])
-    _edit(student_file(svc.workspace, store, "김다원", "1"), _fill)
-    c = _client(app_paths)
+    lines = [ln.model_copy(update={"text": "채움"}) if ln.uncertain else ln for ln in LINES]
+    store.save_transcript(Transcript(student_id="김다원", question_number="1", lines=lines,
+                                     source="ocr", confirmed=True))  # fmt: skip
+    c = _client_for(app_paths, svc)
     r = c.post("/api/students", json={"name": "김다원", "class_name": "2반"})
     assert r.status_code == 200, r.text
     rid = r.json()["id"]
     assert c.get("/api/students").json()["classes"] == ["2반"]
-    job = c.post(f"/api/exams/{store.exam_id}/confirm-files", json={"by": "김선생"}).json()
-    done = _wait(c, job)
-    assert done["status"] == "succeeded", done
-    assert done["result"]["confirmed"] == [{"student": "김다원", "question": "1", "changed": 1}]
     r = c.put(f"/api/exams/{store.exam_id}/students/김다원/identity", json={"roster_id": rid})
     assert r.status_code == 200, r.text
     assert r.json()["record"]["roster_id"] == rid
@@ -482,6 +380,7 @@ def test_api_confirm_files_and_identity(app_paths: AppPaths, tmp_path: Path) -> 
     who = [p for p in c.get("/api/students/history").json() if p["name"] == "김다원"]
     assert len(who) == 1 and who[0]["roster_id"] is None, "명부에서 빼면 시험 기록은 남고 명부 밖"
     assert len(who[0]["exams"]) == 1
+    assert who[0]["exams"][0]["numbers"] == ["1"], "학생 검색에서 문항마다 채점 검토로"
 
 
 def test_blank_answer_is_not_read_again(
@@ -500,7 +399,5 @@ def test_blank_answer_is_not_read_again(
     assert [r.transcribed for r in first.students] == [["1", "2"]]
     blank = store.transcript("가학생", "2")
     assert blank is not None and blank.is_blank and blank.pages, "빈 판독문 + 원본 쪽 (M4)"
-    path = student_file(svc.workspace, store, "가학생", "2")
-    assert list(read_back(path).parts) == ["2"], "판독본에 빈 표식 — 강사가 그 아래에 채운다"
     again = workflow.scan_batch(svc, store, pdf, per_student=2)
     assert again.skipped == ["가학생"] and len(fake_prompts(exe)) == 2

@@ -20,8 +20,8 @@ datas = collect_data_files("dawoni", excludes=["assets/access.json", "assets/bun
 datas += [(str(f), "dawoni/assets") for f in stage.iterdir() if f.is_file()]
 hiddenimports = collect_submodules("dawoni")  # 서버가 필요할 때 부르는 모듈까지
 binaries = []
-# 패키지 안 템플릿·자료 파일 (HWPX 빈 문서, Word 템플릿 …)과 지연 import
-for pkg in ("hwpx", "docx", "webview"):
+# 패키지 안 템플릿·자료 파일 (HWPX 빈 문서, Word 템플릿, 채점 답안지 PDF의 수식 글꼴 …)과 지연 import
+for pkg in ("hwpx", "docx", "webview", "ziamath", "ziafont", "latex2mathml"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

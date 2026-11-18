@@ -23,7 +23,7 @@
   --warn-soft: #fef3c7;
   --bad: #b91c1c;
   --bad-soft: #fee2e2;
-  /* HWPX와 같은 근거 색: 맞은 곳 연두 바탕, 틀린 곳 빨간 밑줄 */
+  /* 채점 근거 색: 맞은 곳 연두 바탕, 틀린 곳 빨간 밑줄 */
   --quote-ok: #d9f99d;
   --quote-bad: #dc2626;
 }

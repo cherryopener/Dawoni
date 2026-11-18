@@ -77,8 +77,8 @@ def test_notifications_step_and_review_sheet(
     assert any(line["unreadable"] for line in waiting["parts"][0]["lines"])
 
     out = c.get(f"{base}/outputs").json()
-    assert out["scores_exists"] and out["students"] == 2 and out["bundles"] == 1
-    assert out["folder"].startswith("exports/") and out["edited"] == []
+    assert out["scores_exists"] and not out["scores_edited"]
+    assert out["folder"].startswith("exports/") and "students" not in out, "HWPX는 없앴다"
 
 
 def test_points_fix_before_rubric(app_paths: AppPaths, tmp_path: Path) -> None:

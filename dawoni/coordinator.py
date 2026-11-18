@@ -19,7 +19,7 @@ from dawoni.grading.store import ExamStore
 from dawoni.models.base import DawoniModel
 from dawoni.services import Services
 
-Action = Literal["grade", "rubric", "confirm_files", "read_marks", "export", "scores", "open"]
+Action = Literal["grade", "rubric", "read_marks", "scores", "open"]
 Screen = Literal["read", "rubric", "scan", "grade", "export", "students", "learning", "settings"]
 EXAM_SCREENS = ("read", "rubric", "scan", "grade", "export")
 

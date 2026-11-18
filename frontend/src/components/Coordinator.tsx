@@ -29,9 +29,7 @@ type Plan = {
 const ACTION: Record<string, string> = {
   grade: "채점",
   rubric: "루브릭 만들기",
-  confirm_files: "한글에서 고친 것 반영",
   read_marks: "빨간 펜 점수 읽기",
-  export: "HWPX 다시 쓰기",
   scores: "점수표 다시 쓰기",
   open: "화면 열기",
 };

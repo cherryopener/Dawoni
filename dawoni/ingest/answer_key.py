@@ -19,6 +19,7 @@ DOCX·HWPX 해설(미주, "정답 및 해설" 구간)은 `DocKey`로 넘긴다: 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import logging
 import re
 from collections import Counter
@@ -347,6 +348,14 @@ def _numbers(p: KeyPart) -> Counter[str]:
     return Counter(_NUMBER.findall(" ".join([p.answer or "", p.solution])))
 
 
+def _digest(inp: TaskInput) -> str:
+    """해설지 읽기 입력(자료 글 + 첨부 그림)의 지문 — 읽은 결과를 다시 쓸지 정한다."""
+    h = hashlib.sha256(str(inp.material).encode("utf-8"))
+    for a in inp.attachments:
+        h.update(a.read_bytes() if a.is_file() else str(a).encode("utf-8"))
+    return h.hexdigest()[:12]
+
+
 def compare_reads(a: KeyQuestion, b: KeyQuestion) -> list[str]:
     """두 번 읽은 해설지에서 숫자가 다른 소문항."""
     other = {p.label: p for p in b.parts}
@@ -480,9 +489,11 @@ def extract_answer_key(
             attachments=images,
         )
         # 프롬프트 판을 이름에 — 해설지 읽기 프롬프트가 바뀌면 다시 읽는다 (2026-11-11:
-        # "각"·단계 표시를 더했는데 예전 판으로 읽은 결과를 그대로 써 표시가 비어 있었다)
+        # "각"·단계 표시를 더했는데 예전 판으로 읽은 결과를 그대로 써 표시가 비어 있었다).
+        # 읽을 내용(글·그림)의 지문도 — 같은 시험에 고친 해설지를 붙이면 다시 읽는다 (2026-11-18:
+        # `_revision.hwpx`를 붙였는데 예전 해설지를 읽은 결과를 그대로 써 부분 점수가 바뀌지 않았다)
         version = engine.templates.version(EXTRACT_KEY.template)
-        cached = cache_dir / f"p{group[0]}-{group[-1]}-v{version}.json"
+        cached = cache_dir / f"p{group[0]}-{group[-1]}-v{version}-{_digest(inp)}.json"
         raw: KeyExtraction | None = None
         if not cross and cached.is_file():  # 다시 할 때: 읽은 쪽은 AI 없이
             try:

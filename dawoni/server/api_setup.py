@@ -293,7 +293,7 @@ class PathBody(BaseModel):
 
 
 EXPORT_SUFFIXES = (".hwpx", ".xlsx")
-"""내보낸 파일: 채점 HWPX, 점수표 엑셀 (PLAN.md §9)."""
+"""내보낸 파일: 점수표 엑셀 (PLAN.md §9), 2026-11-18 전에 쓴 채점 HWPX."""
 
 
 @router.get("/exports")

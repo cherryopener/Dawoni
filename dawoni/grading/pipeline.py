@@ -25,13 +25,22 @@ import dataclasses
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from pydantic import ValidationError
 from rapidfuzz import fuzz
 
 from dawoni.config import AgentName
-from dawoni.context import ContextEngine, PartialRepair, Shrinkable, TaskDef, TaskInput
+from dawoni.context import (
+    ContextEngine,
+    PartialRepair,
+    Shrinkable,
+    TaskDef,
+    TaskFailed,
+    TaskInput,
+)
+from dawoni.context.extract import extract_json_object
 from dawoni.grading import checks
 from dawoni.grading.answers import (
     CODE_AGENT,
@@ -1015,6 +1024,7 @@ def _grade_once(
     model: str | None,
     examples: Shrinkable | None = None,
     notes: list[str] | None = None,
+    pages: list[Path] | None = None,
 ) -> _Graded:
     def check(o: GradeOutput) -> list[str]:
         return checks.check_grade(o, rubric, transcript, scope)
@@ -1037,19 +1047,74 @@ def _grade_once(
         material += "\n\n[코드가 이미 채점한 소문항 — 판정하지 말 것]\n" + "\n".join(
             f"- {n}" for n in notes
         )
-    res = engine.run(
-        task,
-        TaskInput(
-            variables={"level": scope.level},
-            scope=scope_layer(scope),
-            material=material,
-            examples=examples,
-            target=transcript_text(transcript),
-        ),
-        agent=agent,
-        model=model,
-    )
+    try:
+        res = engine.run(
+            task,
+            TaskInput(
+                variables={"level": scope.level},
+                scope=scope_layer(scope),
+                material=material,
+                examples=examples,
+                target=transcript_text(transcript),
+                attachments=tuple(pages or ()),
+            ),
+            agent=agent,
+            model=model,
+        )
+    except TaskFailed as e:
+        kept = accept_quote_misses(e, rubric)
+        if kept is None:
+            raise
+        used = agent or engine.client.config.default_agent
+        return _Graded(kept, used, model, e.attempts, None, 0.0)
     return _Graded(res.value, res.agent, res.model, res.attempts, res.total_tokens, res.duration_s)
+
+
+_QUOTE_MISS = re.compile(r"^(R\d+): 인용 .*학생 답안에 없다")
+
+
+def accept_quote_misses(e: TaskFailed, rubric: Rubric) -> GradeOutput | None:
+    """수리한 뒤에도 '인용이 판독문에 없다'만 남은 마지막 채점: 그 인용만 빼고 점수는 두고 확인할
+    점을 단다 (호출 결과는 '검토 필요'가 된다). 다른 오류가 있거나 항목이 빠졌으면 None.
+
+    2026-11-18 실측: 떨어진 두 조각을 '…'로 이은 인용의 한쪽이 판독문과 조금 달라 세 번 다 걸려,
+    한 번에 채점에서 그 답안만 끝내 빈칸으로 남았다."""
+    hits = [_QUOTE_MISS.match(x) for x in e.errors]
+    if not hits or not all(hits):
+        return None
+    data = extract_json_object(e.last_response)
+    try:
+        out = GradeOutput.model_validate(data)
+    except ValidationError:
+        return None
+    if sorted(j.rubric_item_id for j in out.judgements) != sorted(i.id for i in rubric.items):
+        return None
+    bad = sorted({m.group(1) for m in hits if m})
+    js = [
+        j.model_copy(update={"evidence_quote": None}) if j.rubric_item_id in bad else j
+        for j in out.judgements
+    ]
+    note = (
+        f"인용을 판독문에서 찾지 못한 항목 {', '.join(bad)} — 점수는 AI 판단 그대로, "
+        "원본과 비교해 확인"
+    )
+    return out.model_copy(update={"judgements": js, "flags": [note, *out.flags]})
+
+
+_DRAWING = re.compile(r"그림|작도|광선|그래프|도식|화살표|좌표평면|그려|그린")
+"""판독문에 학생이 그린 것이 있다는 표시 (판독 AI가 줄·불확실·메모에 남긴다)."""
+
+
+def drawing_pages(transcript: Transcript, root: Path) -> list[Path]:
+    """학생이 그린 그림·작도가 있는 답안이면 그 원본 쪽 그림 — 채점 AI에게 함께 보낸다 (2026-11-18
+    실측: 렌즈 문항의 광선 작도가 판독문에 "R광선, B광선"으로만 남아, 해설지가 "작도로 설명해도
+    인정"인데 0점을 줬다). 글만 있는 답안은 그림을 보내지 않는다 (토큰)."""
+    bits = [*transcript.notes]
+    for line in transcript.lines:
+        bits += [line.text, line.math or "", *line.uncertain]
+    if not any(_DRAWING.search(b) for b in bits if b):
+        return []
+    return [p for r in transcript.pages if (p := root / r).is_file()]
 
 
 def needs_second(first: GradeOutput, attempts: int) -> bool:
@@ -1073,8 +1138,12 @@ def grade_answer(
     model: str | None = None,
     examples: Shrinkable | None = None,
     example_students: list[str] | None = None,
+    allow_unreadable: bool = False,
+    pages: list[Path] | None = None,
 ) -> GradeResult:
-    """`examples`: 강사 보정 기준 예시 (`calibration.pick_for`).
+    """`examples`: 강사 보정 기준 예시 (`calibration.pick_for`). `allow_unreadable`: `[판독불가]`가
+    남아도 채점 (한 번에 채점 — 부른 쪽이 검토 필요로 둔다). `pages`: 원본 쪽 그림 — 학생이 그린
+    그림·작도가 있는 답안만 (`drawing_pages`), 채점 AI가 그림을 보고 판정한다.
 
     대상 학생 자신의 답안은 예시로 넣지 않는다. 빈 답안·빈 소문항·답이 분명한 단답형 소문항은
     코드가 먼저 정하고(`pre_grade`) 나머지 항목만 AI가 채점한다 — 모두 정해지면 AI를 부르지
@@ -1085,7 +1154,7 @@ def grade_answer(
         raise PipelineError("채점 대상 학생의 답안을 기준 예시로 넣을 수 없습니다.")
     if rubric.status != "approved":
         raise PipelineError(f"문항 {q.number}: 루브릭이 아직 승인되지 않았습니다.")
-    if transcript.unreadable:
+    if transcript.unreadable and not allow_unreadable:
         # 강사 확인 전 판독문도 채점한다 (2026-11-04 사용자 결정). 못 읽은 곳만 강사 입력을 기다린다
         raise PipelineError(
             f"{transcript.student_id} 문항 {q.number}: {UNREADABLE} {transcript.unreadable}곳을 "
@@ -1113,14 +1182,14 @@ def grade_answer(
     if ai_items:
         ai_rubric = rubric.model_copy(update={"items": ai_items}) if pre.judgements else rubric
         first = _grade_once(
-            engine, q, ai_rubric, transcript, scope, agent, model, examples, pre.notes
+            engine, q, ai_rubric, transcript, scope, agent, model, examples, pre.notes, pages
         )
         runs = [first]
         flags += first.out.flags
         if double is not None and (double.when == "all" or needs_second(first.out, first.attempts)):
             again = _grade_once(
                 engine, q, ai_rubric, transcript, scope, double.agent, double.model, examples,
-                pre.notes,
+                pre.notes, pages,
             )  # fmt: skip
             runs.append(again)
             second = again.out

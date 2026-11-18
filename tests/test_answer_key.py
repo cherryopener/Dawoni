@@ -680,6 +680,24 @@ def test_key_read_cache_follows_the_prompt_version(
     assert len(fake_prompts(exe)) == 2, "판이 다르면 다시 읽음"
 
 
+def test_changed_key_file_is_read_again(
+    engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path
+) -> None:
+    """같은 시험에 고친 해설지를 다시 붙이면 예전에 읽은 결과를 쓰지 않는다 (2026-11-18 실측:
+    부분 점수를 고친 `_revision.hwpx`를 붙였는데 예전 해설지 읽기를 그대로 썼다)."""
+    from dawoni.ingest.answer_key import extract_answer_key
+    from dawoni.models.grading import Exam
+
+    out = {"questions": [_kq("10", "b와 c"), _kq("12", "\\(\\rho_B=\\rho\\)", "B의 저항")]}
+    engine, exe = engine_with([out, out])
+    exam = Exam(title="t", scope_id="s", questions=[_mc(q3, "10"), _mc(q3, "12")])
+    changed = [*SUNEUNG[:3], "B의 저항 이므로 이다. (고친 해설)"]
+    for name, text in (("key.pdf", SUNEUNG), ("key2.pdf", changed)):
+        extract_answer_key(engine, _key_pdf(tmp_path / name, text), [1], exam, tmp_path / "work",
+                           cross=False, ignore_other_numbers=True)  # fmt: skip
+    assert len(fake_prompts(exe)) == 2, "내용이 다르면 다시 읽음"
+
+
 def test_odd_answer_dropped_when_fitting_one_exists(
     engine_with: EngineWith, q3: ExamQuestion, tmp_path: Path
 ) -> None:

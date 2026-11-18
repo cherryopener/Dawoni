@@ -22,6 +22,7 @@ dependencies = [
     "rapidfuzz>=3.9",
     "sympy>=1.14",
     "uvicorn>=0.54.0",
+    "ziamath>=0.13",
 ]
 
 [project.scripts]

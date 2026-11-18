@@ -196,7 +196,7 @@ def manual_grade(
         by=st.who(body.by),
     )
     store.save_grade(g)
-    workflow.export_grades(svc, store, [g])
+    workflow.refresh_scores(svc, store)
     return g
 
 

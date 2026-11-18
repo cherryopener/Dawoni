@@ -1,4 +1,4 @@
-import { AlertTriangle, FileText, FolderOpen, Pencil, Printer, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, FileText, Pencil, Printer, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -8,9 +8,9 @@ import { Help } from "@/components/ui/help";
 import { Chips, Dropzone, ErrorNote, Input, Progress } from "@/components/ui/misc";
 import { api, enc, examFileUrl, onJobsChanged, useAction, useApi, waitJob } from "@/lib/api";
 import { refreshNotices } from "@/lib/notices";
-import { useTeacher } from "@/lib/session";
-import type { ExamStudent, InboxPdf, Job, RosterStudent } from "@/lib/types";
+import type { Cell, ExamStudent, InboxPdf, Job, RosterStudent } from "@/lib/types";
 import { useExam } from "../Exam";
+import { type EditTarget, TranscriptEditor } from "./TranscriptEditor";
 
 type Status = "이름 확인 대기" | "입력 대기" | "확인 전" | "확인 완료" | "판독 전";
 const ORDER: Status[] = ["이름 확인 대기", "입력 대기", "확인 전", "판독 전", "확인 완료"];
@@ -26,7 +26,7 @@ function statusOf(s: ExamStudent): { status: Status; unreadable: number } {
   return { status: ts.every((t) => t.confirmed) ? "확인 완료" : "확인 전", unreadable };
 }
 
-/** 이름 확인 전: 같은 반 동명이인, 또는 명부와 맞추지 못함 — 판독·채점은 하지만 판독본 HWPX는 확인 뒤에. */
+/** 이름 확인 전: 같은 반 동명이인, 또는 명부와 맞추지 못함 — 판독·채점은 하지만 점수표에는 확인 뒤에. */
 function namePending(s: ExamStudent): boolean {
   return Boolean(s.record?.needs_rename || s.record?.roster_note);
 }
@@ -38,7 +38,7 @@ function useScanJobs(examId: string): Job[] {
     const load = () =>
       api
         .get<Job[]>("/jobs")
-        .then((js) => setJobs(js.filter((j) => j.params.exam === examId && ["scan_batch", "scan", "confirm_files"].includes(j.kind) && ["queued", "running"].includes(j.status))))
+        .then((js) => setJobs(js.filter((j) => j.params.exam === examId && ["scan_batch", "scan"].includes(j.kind) && ["queued", "running"].includes(j.status))))
         .catch(() => undefined);
     load();
     const t = setInterval(load, 2000);
@@ -128,7 +128,7 @@ function stateLine(s: ExamStudent, rosterEmpty: boolean): { text: string; cls: s
 
 /** 이름 확인·고치기: 확인이 필요한 시험지 전부, 또는 표에서 누른 학생 한 명. 반·이름을 명부에서 고르거나
  * 고쳐 쓰고, 명부에 없으면 명부에 넣어 잇거나 명부 밖 학생으로 둔다. 고치면 판독문·채점이 새 이름으로
- * 옮겨지고 판독본 HWPX를 다시 쓴다. */
+ * 옮겨지고 점수표를 다시 쓴다. */
 function RenameDialog({ students, onClose }: { students: ExamStudent[] | null; onClose: () => void }) {
   const { id, base } = useExam();
   const open = students !== null;
@@ -174,7 +174,7 @@ function RenameDialog({ students, onClose }: { students: ExamStudent[] | null; o
             취소
           </Button>
           <Button variant="primary" disabled={act.busy} onClick={() => void save()}>
-            {act.busy ? "판독본 다시 쓰는 중…" : "확인"}
+            {act.busy ? "저장하는 중…" : "확인"}
           </Button>
         </>
       }
@@ -260,17 +260,23 @@ function RenameDialog({ students, onClose }: { students: ExamStudent[] | null; o
   );
 }
 
-/** ③ 답안 판독: 스캔 넣기 → 표지·손글씨 판독 → 판독본 HWPX → 강사가 한글에서 고치고 "반영". */
+/** 판독문 버튼 하나의 모양: 확인 완료 ✓, [판독불가] 빨강, 확인 전 노랑. */
+function cellTone(c: Cell | undefined): string {
+  const t = c?.transcript;
+  if (!t) return "";
+  if (t.unreadable) return "text-bad";
+  return t.confirmed ? "text-ok" : "text-warn";
+}
+
+/** ③ 답안 판독: 스캔 넣기 → 표지·손글씨 판독 → 강사가 화면에서 원본과 나란히 보고 고쳐 확인 (2026-11-18 HWPX 대신). */
 export function ScanStep() {
-  const { id, base, detail, reload } = useExam();
-  const by = useTeacher();
+  const { id, base, detail, reload, focus } = useExam();
   const students = useApi<ExamStudent[]>(`${base}/students`);
   const inbox = useApi<InboxPdf[]>("/scanner/inbox");
-  const fileMap = useApi<Record<string, Record<string, string>>>(`${base}/student-files`);
   const jobs = useScanJobs(id);
   const [pdf, setPdf] = useState<InboxPdf | null>(null);
   const [renameFor, setRenameFor] = useState<string[] | null>(null); // 이름 확인 창에 보일 학생
-  const [result, setResult] = useState<string | null>(null);
+  const [edit, setEdit] = useState<EditTarget | null>(focus.length >= 2 ? { student: focus[0]!, question: focus[1]! } : null);
   const act = useAction();
 
   const rows = (students.data ?? []).map((s) => ({ s, ...statusOf(s) })).sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
@@ -278,6 +284,15 @@ export function ScanStep() {
   const dup = rows.filter((r) => r.status === "이름 확인 대기").length;
   const twins = rows.filter((r) => r.s.record?.needs_rename).length;
   const offRoster = dup - twins;
+  /** "차례로 확인": 표 순서대로 아직 확인하지 않은 답안. */
+  const queue: EditTarget[] = rows.flatMap(({ s }) =>
+    detail.exam.questions.filter((q) => s.cells[q.number]?.transcript && !s.cells[q.number]!.transcript!.confirmed).map((q) => ({ student: s.student, question: q.number })),
+  );
+  const [openQueue, setOpenQueue] = useState<EditTarget[]>([]);
+  const open = (t: EditTarget, withQueue: boolean) => {
+    setOpenQueue(withQueue ? queue : []);
+    setEdit(t);
+  };
 
   const upload = (files: File[]) =>
     act.run(async () => {
@@ -291,19 +306,6 @@ export function ScanStep() {
       setPdf(list.find((p) => p.path === up.path) ?? { path: up.path, name: up.name, pages: null, size: f.size, modified: 0 });
     });
   const openScanner = () => act.run(() => api.post("/scanner/open"));
-  const openFile = (path: string) => act.run(() => api.post("/files/open", { path }));
-  const reveal = () => act.run(async () => api.post("/files/reveal", { path: (await api.get<{ folder: string }>(`${base}/outputs`)).folder }));
-  const confirm = () =>
-    act.run(async () => {
-      const j = await waitJob(await api.post<Job>(`${base}/confirm-files`, { by, learn: true }));
-      const r = j.result as { confirmed: { changed: boolean }[]; problems: { student: string; question: string; reason: string }[]; graded: number };
-      const changed = r.confirmed.filter((c) => c.changed).length;
-      setResult(
-        `확정 ${r.confirmed.length}건 (고친 것 ${changed}) · 다시 채점 ${r.graded}건` +
-          (r.problems.length ? ` · 읽지 못함: ${r.problems.map((p) => `${p.student} ${p.question}번 ${p.reason}`).join("; ")}` : ""),
-      );
-      reload();
-    });
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-4 px-6 py-6">
@@ -374,22 +376,18 @@ export function ScanStep() {
         </div>
       )}
       {act.error && <ErrorNote message={act.error} />}
-      {result && <div className="rounded-lg bg-muted px-4 py-2.5 text-[13px]">{result}</div>}
 
       <Card className="overflow-hidden">
         <div className="flex items-center gap-3 border-b border-line px-5 py-3">
           <span className="font-medium">학생 {rows.length}명</span>
           {waiting > 0 && <Badge tone="bad">입력 대기 {waiting}</Badge>}
           <Help>
-            [판독불가]가 남은 답안은 "입력 대기"입니다. 한글에서 판독본을 열어 채우고 저장한 뒤 "한글에서 고친 것 반영"을 누르면 그 학생·문항만
-            채점합니다. 나머지는 확인 전에도 채점까지 갑니다. 표지 이름을 잘못 읽었으면 이름을 눌러 고칩니다.
+            문항 번호를 누르면 원본과 판독문을 나란히 보고 고칩니다. [판독불가]가 남은 답안은 "입력 대기" — 채우고 확인하면 그 학생·문항만 채점합니다.
+            나머지는 확인 전에도 채점까지 가고, 고쳐 확인하면 다시 채점합니다. 표지 이름을 잘못 읽었으면 이름을 눌러 고칩니다.
           </Help>
           <div className="flex-1" />
-          <Button size="sm" variant="ghost" onClick={() => void reveal()}>
-            <FolderOpen /> 판독본 폴더
-          </Button>
-          <Button variant="primary" size="sm" disabled={act.busy || rows.length === 0} onClick={() => void confirm()}>
-            {act.busy ? "읽는 중…" : "한글에서 고친 것 반영"}
+          <Button variant="primary" size="sm" disabled={queue.length === 0} onClick={() => open(queue[0]!, true)}>
+            {queue.length ? `차례로 확인 (${queue.length})` : "모두 확인함"}
           </Button>
         </div>
         {rows.length === 0 && <div className="px-5 py-8 text-center text-text-3">아직 판독한 답안이 없습니다. 스캔 PDF를 넣어 시작하세요.</div>}
@@ -401,7 +399,7 @@ export function ScanStep() {
                 <th className="px-2 py-2 font-normal">이름</th>
                 <th className="px-2 py-2 font-normal">학교</th>
                 <th className="px-2 py-2 font-normal">상태</th>
-                <th className="px-5 py-2 text-right font-normal">한글로 열기</th>
+                <th className="px-5 py-2 text-right font-normal">판독문</th>
               </tr>
             </thead>
             <tbody>
@@ -428,12 +426,23 @@ export function ScanStep() {
                   </td>
                   <td className="px-5 py-2 text-right">
                     {detail.exam.questions.map((q) => {
-                      const p = fileMap.data?.[s.student]?.[q.number];
-                      return p ? (
-                        <Button key={q.number} size="sm" variant="ghost" onClick={() => void openFile(p)}>
+                      const c = s.cells[q.number];
+                      const t = c?.transcript;
+                      if (!t) return null;
+                      const state = t.unreadable ? `[판독불가] ${t.unreadable}곳` : t.confirmed ? "확인 완료" : "확인 전";
+                      return (
+                        <Button
+                          key={q.number}
+                          size="sm"
+                          variant="ghost"
+                          title={`${q.number}번 판독문 — ${state}`}
+                          className={cellTone(c)}
+                          onClick={() => open({ student: s.student, question: q.number }, false)}
+                        >
+                          {t.confirmed && !t.unreadable && <Check />}
                           {q.number}번
                         </Button>
-                      ) : null;
+                      );
                     })}
                   </td>
                 </tr>
@@ -444,13 +453,22 @@ export function ScanStep() {
       </Card>
 
       <BatchDialog pdf={pdf} onClose={() => setPdf(null)} />
+      <TranscriptEditor
+        target={edit}
+        queue={openQueue}
+        onClose={() => setEdit(null)}
+        onChanged={() => {
+          students.reload();
+          reload();
+          refreshNotices(); // 단계 표시의 '입력 대기' 수
+        }}
+      />
       <RenameDialog
         key={renameFor?.join("|") ?? ""}
         students={renameFor && (students.data ?? []).filter((s) => renameFor.includes(s.student))}
         onClose={() => {
           setRenameFor(null);
           students.reload();
-          fileMap.reload(); // 이름이 바뀌면 HWPX 파일 이름도 바뀐다
           reload();
           refreshNotices(); // 단계 표시의 '이름 확인' 수
         }}

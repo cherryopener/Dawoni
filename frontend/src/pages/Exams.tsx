@@ -11,6 +11,7 @@ import { go, href } from "@/lib/router";
 import { useSession } from "@/lib/session";
 import { STEPS, stepIndex } from "@/lib/steps";
 import type { ExamListItem, Job, Level } from "@/lib/types";
+import { QuickStart } from "./QuickStart";
 
 const ACCEPTED = /\.(pdf|docx|hwpx|hwp)$/i;
 
@@ -143,7 +144,7 @@ function DeleteExam({ exam, onClose, onDeleted }: { exam: ExamListItem | null; o
       open={exam !== null}
       onOpenChange={(v) => !v && !act.busy && onClose()}
       title={exam ? `'${exam.title}' 시험을 지울까요?` : ""}
-      desc="해설·루브릭·판독·채점이 모두 지워지고 되돌릴 수 없습니다. 원본 시험지와 내보낸 HWPX·점수표는 남습니다."
+      desc="해설·루브릭·판독·채점이 모두 지워지고 되돌릴 수 없습니다. 원본 시험지와 내보낸 점수표는 남습니다."
       footer={
         <>
           <Button variant="ghost" disabled={act.busy} onClick={onClose}>
@@ -171,10 +172,11 @@ export function ExamsPage() {
   const { data, error, loading, reload } = useApi<ExamListItem[]>("/exams");
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
-      <div className="flex items-center">
-        <h1 className="m-0 flex-1 text-[20px] font-medium">시험</h1>
-        <Button variant="primary" onClick={() => setOpen(true)}>
-          <Plus /> 새 시험
+      <QuickStart />
+      <div className="mt-8 flex items-center">
+        <h1 className="m-0 flex-1 text-[18px] font-medium">시험</h1>
+        <Button variant="ghost" onClick={() => setOpen(true)} title="답안지 없이 시험지·해설만 읽고 루브릭을 단계별로 확인할 때">
+          <Plus /> 시험지만 읽기
         </Button>
       </div>
       {error && (
@@ -183,14 +185,16 @@ export function ExamsPage() {
         </div>
       )}
       {data && data.length === 0 && (
-        <Card className="mt-6 px-6 py-12 text-center text-text-2">아직 시험이 없습니다. "새 시험"에 시험지를 넣어 시작하세요.</Card>
+        <Card className="mt-6 px-6 py-12 text-center text-text-2">아직 시험이 없습니다. 위 "새 채점"에 파일을 놓아 시작하세요.</Card>
       )}
       {loading && !data && <div className="mt-6 text-text-3">불러오는 중…</div>}
       <div className="mt-6 flex flex-col gap-3">
         {(data ?? []).map((e) => {
           const s = e.summary;
           const idx = stepIndex(s.step);
-          const done = s.step === "export";
+          const cells = s.students * s.questions;
+          const done = s.step === "export" || (s.step === "result" && cells > 0 && s.graded >= cells);
+          const ratio = s.step === "result" ? (cells ? s.graded / cells : 0.1) : (idx + (done ? 1 : 0.5)) / STEPS.length;
           return (
             <Card key={e.id} className="flex items-center gap-2 pr-3 hover:bg-muted">
               <a href={href("exams", e.id, s.step)} className="flex min-w-0 flex-1 items-center gap-5 py-4 pl-5 text-text no-underline">
@@ -203,11 +207,11 @@ export function ExamsPage() {
                   </div>
                   <div className="mt-3 flex items-center gap-3">
                     <div className="w-48">
-                      <Progress value={((idx + (done ? 1 : 0.5)) / STEPS.length) * 100} tone={done ? "ok" : "accent"} />
+                      <Progress value={ratio * 100} tone={done ? "ok" : "accent"} />
                     </div>
                     <span className="text-[13px] text-text-2">
-                      {done ? "끝남" : STEPS[idx]?.label}
-                      {s.step === "grade" && ` ${s.graded}/${s.students * s.questions}`}
+                      {done ? "끝남" : s.step === "result" ? "채점" : STEPS[idx]?.label}
+                      {(s.step === "grade" || s.step === "result") && ` ${s.graded}/${cells}`}
                     </span>
                   </div>
                 </div>

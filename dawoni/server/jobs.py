@@ -49,6 +49,12 @@ class JobContext:
             p = self.job.progress
             self.job.progress = JobProgress(done=p.done, total=p.total, message=message)
 
+    def tag(self, key: str, value: JsonValue) -> None:
+        """작업이 도중에 알게 된 것을 매개변수에 (예: 한 번에 채점이 만든 시험 ID — 화면이
+        따라간다)."""
+        with self._lock:
+            self.job.params[key] = value
+
     def check_cancelled(self) -> None:
         if self.cancel.is_set():
             raise JobCancelled

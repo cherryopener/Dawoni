@@ -19,10 +19,10 @@ from dawoni.agents import AgentClient
 from dawoni.cli import main
 from dawoni.config import AppConfig, save_config
 from dawoni.context import ContextEngine
-from dawoni.export.hwpx import from_eqedit
 from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.ingest.answer_key import DocKey, extract_answer_key
 from dawoni.ingest.document import analyze_document, read_document
+from dawoni.ingest.eqedit import from_eqedit
 from dawoni.ingest.exam import extract_exam
 from dawoni.levels import Level, ensure_preset, parse_level, preset_scope
 from dawoni.mathx.latex import latex_error
@@ -87,6 +87,10 @@ def test_omml_to_latex(body: str, want: str) -> None:
         ("0 DEG  SIM 90 DEG", r"0 ^{\circ} \sim 90 ^{\circ}"),
         ("C=800 rm W/ CENTIGRADE", r"C = 800 \mathrm{W} / {}^{\circ}\mathrm{C}"),
         ('"OVER" x', r"\text{OVER} x"),  # 따옴표 안은 명령이 아님
+        # `of` 없는 root는 제곱근 (2026-11-18 월례평가 _revision.hwpx 정답 식)
+        ("T_a = root6 over6 W", r"T_a = \frac{\sqrt{6}}{6} W"),
+        ("{5root33} over33 W", r"\frac{5 \sqrt{33}}{33} W"),
+        ("root 3 of x", r"\sqrt[3]{x}"),
     ],
 )
 def test_hangul_equation_glued_commands(script: str, want: str) -> None:
@@ -610,10 +614,11 @@ _REAL_DOCX = sorted(REAL.glob("*.docx")) if REAL.is_dir() else []
 @pytest.mark.skipif(not _REAL_HWPX, reason="real_data/docs 없음")
 @pytest.mark.parametrize("path", _REAL_HWPX, ids=lambda p: p.stem)
 def test_real_hwpx_every_question_has_endnote_key(path: Path, tmp_path: Path) -> None:
-    """실측 학원 시험지 (HWP → 한글로 HWPX): 문항 7~8개, 모든 문항에 미주 답·해설."""
+    """실측 학원 시험지 (HWP → 한글로 HWPX): 문항 7~8개(월례평가는 3개 — 2026-11-18
+    `_revision.hwpx`), 모든 문항에 미주 답·해설."""
     doc = analyze_document(path, tmp_path)
     labels = [r.label for r in doc.layout.regions]
-    assert labels == [str(n) for n in range(1, len(labels) + 1)] and len(labels) >= 7
+    assert labels == [str(n) for n in range(1, len(labels) + 1)] and len(labels) >= 3
     assert set(doc.keys) == set(labels)
     assert all("답안지" not in r.text for r in doc.layout.regions)
     _assert_math_ok([r.text for r in doc.layout.regions] + [k.text for k in doc.keys.values()])

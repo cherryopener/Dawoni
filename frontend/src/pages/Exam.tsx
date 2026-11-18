@@ -11,10 +11,12 @@ import type { ExamDetail, StepKey } from "@/lib/types";
 import { ExportStep } from "./exam/ExportStep";
 import { GradeStep } from "./exam/GradeStep";
 import { ReadStep } from "./exam/ReadStep";
+import { ResultStep } from "./exam/ResultStep";
 import { RubricStep } from "./exam/RubricStep";
 import { ScanStep } from "./exam/ScanStep";
 
-type ExamCtx = { id: string; base: string; detail: ExamDetail; reload: () => void };
+/** `focus`: 단계 뒤의 주소 (`#/exams/<시험>/grade/<문항>/<학생>`, `…/scan/<학생>/<문항>`) — 학생 검색·알림에서 바로 연다. */
+type ExamCtx = { id: string; base: string; detail: ExamDetail; reload: () => void; focus: string[] };
 const Ctx = createContext<ExamCtx | null>(null);
 
 export function useExam(): ExamCtx {
@@ -24,7 +26,7 @@ export function useExam(): ExamCtx {
 }
 
 /** 시험 화면: 위에 단계 표시줄, 아래에 지금 단계 하나 (PLAN §11-1-1). */
-export function ExamPage({ examId, step }: { examId: string; step?: string }) {
+export function ExamPage({ examId, step, focus = [] }: { examId: string; step?: string; focus?: string[] }) {
   const base = `/exams/${enc(examId)}`;
   const { data, error, reload } = useApi<ExamDetail>(base);
   const { notices } = useNotices();
@@ -42,7 +44,7 @@ export function ExamPage({ examId, step }: { examId: string; step?: string }) {
   const counts = stepCounts(notices, examId);
   const cells = s.students * s.questions;
   return (
-    <Ctx value={{ id: examId, base, detail: data, reload }}>
+    <Ctx value={{ id: examId, base, detail: data, reload, focus }}>
       <div className="flex h-full flex-col">
         <div className="shrink-0 border-b border-line bg-card px-6 pt-4">
           <div className="flex items-baseline gap-3">
@@ -53,7 +55,7 @@ export function ExamPage({ examId, step }: { examId: string; step?: string }) {
           </div>
           <nav className="flex gap-2 py-3">
             {STEPS.map((x, i) => {
-              const done = i < progressIdx || (s.step === "export" && i < STEPS.length - 1);
+              const done = x.key !== "result" && (i < progressIdx || (s.step === "export" && i < STEPS.length - 1));
               const here = x.key === current;
               const label = x.key === "grade" && cells > 0 && s.graded > 0 ? `${x.label} ${s.graded}/${cells}` : x.label;
               return (
@@ -78,6 +80,7 @@ export function ExamPage({ examId, step }: { examId: string; step?: string }) {
           </nav>
         </div>
         <div className="min-h-0 flex-1 overflow-auto">
+          {current === "result" && <ResultStep />}
           {current === "read" && <ReadStep />}
           {current === "rubric" && <RubricStep />}
           {current === "scan" && <ScanStep />}

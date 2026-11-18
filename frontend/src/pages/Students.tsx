@@ -1,5 +1,5 @@
 import { FileText, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
@@ -13,16 +13,8 @@ import type { HistoryExam, RosterStudent, StudentHistory } from "@/lib/types";
 
 const DAYS: Record<string, number> = { "1m": 31, "3m": 92, "1y": 366 };
 
-/** 한 학생의 한 시험: 문항별 채점본 HWPX를 한글로 연다. */
+/** 한 학생의 한 시험: 문항을 누르면 그 학생의 채점 검토(원본·판독문·점수·이유)를 연다. */
 function ExamRow({ e }: { e: HistoryExam }) {
-  const [files, setFiles] = useState<Record<string, string> | null>(null);
-  const act = useAction();
-  useEffect(() => {
-    api
-      .get<Record<string, Record<string, string>>>(`/exams/${enc(e.exam_id)}/student-files`)
-      .then((m) => setFiles(m[e.student_id] ?? {}))
-      .catch(() => setFiles({}));
-  }, [e.exam_id, e.student_id]);
   return (
     <div className="flex items-center gap-3 border-t border-line py-3">
       <a href={href("exams", e.exam_id)} className="flex-1 text-text no-underline hover:underline">
@@ -31,9 +23,11 @@ function ExamRow({ e }: { e: HistoryExam }) {
       </a>
       <span className="w-24 text-right font-medium">{e.total === null ? `채점 ${e.graded}/${e.questions}` : `${pts(e.total)} / ${pts(e.max)}`}</span>
       <div className="flex">
-        {Object.entries(files ?? {}).map(([q, path]) => (
-          <Button key={q} size="sm" variant="ghost" onClick={() => void act.run(() => api.post("/files/open", { path }))}>
-            <FileText /> {q}번
+        {(e.numbers ?? []).map((q) => (
+          <Button key={q} size="sm" variant="ghost" asChild>
+            <a href={href("exams", e.exam_id, "grade", q, e.student_id)} className="no-underline">
+              <FileText /> {q}번
+            </a>
           </Button>
         ))}
       </div>
@@ -106,7 +100,7 @@ function RosterDialog({ draft, classes, onClose }: { draft: Draft | null; classe
   );
 }
 
-/** 학생 검색 (PLAN §5-4): 이름·반·학교·시험·기간으로 찾아 그 학생의 HWPX를 연다. 명부는 엑셀·CSV로 한 번에 넣거나 한 명씩 넣고 고친다. */
+/** 학생 검색 (PLAN §5-4): 이름·반·학교·시험·기간으로 찾아 그 학생의 채점 검토를 연다. 명부는 엑셀·CSV로 한 번에 넣거나 한 명씩 넣고 고친다. */
 export function StudentsPage() {
   const { data, error, reload } = useApi<StudentHistory[]>("/students/history");
   const [q, setQ] = useState("");
