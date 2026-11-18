@@ -31,8 +31,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      # Node 20 지원 종료 경고: node24로 도는 버전으로 (setup-uv@v6·upload/download-artifact@v4는
-      # node20). setup-uv는 v8부터 @v10 같은 메이저 태그가 없음 → 전체 버전으로 고정
+      # Node 20 지원 종료 경고: node24로 도는 버전으로 (setup-uv@v6·upload/download-artifact@v4·
+      # pnpm/action-setup@v4는 node20). setup-uv는 v8부터 @v10 같은 메이저 태그가 없음 → 전체 버전으로 고정
       - uses: astral-sh/setup-uv@v10.3.3
 
       - name: 태그와 pyproject 버전이 같은지
@@ -47,7 +47,7 @@ jobs:
       - name: 시험
         run: uv run pytest -q -x
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 12.21.0
 
@@ -129,7 +129,7 @@ jobs:
       - name: 시험
         run: uv run pytest -q -x
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 12.21.0
 
