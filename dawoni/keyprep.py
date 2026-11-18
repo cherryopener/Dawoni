@@ -107,6 +107,12 @@ class PrepStore:
     def source(self) -> Path:
         return self.root / "source.hwpx"
 
+    @property
+    def fill_fixed(self) -> Path:
+        """있으면 `source.hwpx`의 채우기 그림 밝기·명암이 바로잡혀 있다
+        (`convert.fix_fill_images`)."""
+        return self.root / "source.fill-fixed"
+
     def exists(self) -> bool:
         return self.file.is_file()
 
@@ -168,9 +174,10 @@ def create(svc: Services, src: Path, *, level: str, title: str | None = None) ->
     shutil.copyfile(src, original)
     try:
         if suffix == ".hwp":
-            hwp_to_hwpx(original, store.source)
+            hwp_to_hwpx(original, store.source)  # python-hwpx면 밝기·명암을 바로잡은 뒤
         else:
             shutil.copyfile(original, store.source)
+        store.fill_fixed.touch()
         analysis = analyze_document(store.source, store.root)
     except ConvertUnavailable as e:
         shutil.rmtree(store.root, ignore_errors=True)
@@ -654,6 +661,19 @@ class Exported:
     """답하지 않아 넣지 않은 질문 수."""
 
 
+def _fix_old_source(store: PrepStore, prep: KeyPrep) -> None:
+    """2026-11-18 고치기 전에 HWP를 바꿔 둔 초안: 워터마크(채우기 그림)의 밝기·명암이 뒤바뀌어
+    있다 — 한 번만 바로잡는다 (표시 파일 `source.fill-fixed`)."""
+    from dawoni.fsio import write_bytes_atomic
+    from dawoni.ingest.convert import fill_images_swapped, fix_fill_images
+
+    if store.fill_fixed.exists():
+        return
+    if prep.source_name.lower().endswith(".hwp") and fill_images_swapped():
+        write_bytes_atomic(store.source, fix_fill_images(store.source.read_bytes()))
+    store.fill_fixed.touch()
+
+
 def export(svc: Services, store: PrepStore) -> Exported:
     """다듬은 HWPX를 `exports/해설 다듬기/`에 쓴다. 다듬지 못한 문항은 원래 해설 그대로."""
     from dawoni.export.key_hwpx import KeyBlock, write_key_hwpx
@@ -665,6 +685,7 @@ def export(svc: Services, store: PrepStore) -> Exported:
             f"강사가 적을 곳이 남았습니다 ({', '.join(blanks)}번) — 빈칸({BLANK})을 채우거나 "
             "그 줄을 빼 주세요. AI가 그림에서도 풀이로도 정할 수 없던 값입니다"
         )
+    _fix_old_source(store, prep)
     doc = read_hwpx(store.source)
     analysis = analyze_document(store.source, store.root / "check", doc=doc, images=False)
     blocks: list[KeyBlock] = []

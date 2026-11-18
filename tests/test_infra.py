@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from dawoni.cli import main
-from dawoni.config import AppConfig, load_config, save_config
+from dawoni.config import AgentName, AppConfig, TierName, load_config, save_config
 from dawoni.fsio import read_json, sha256_file, write_json_atomic
 from dawoni.models import JobProgress
 from dawoni.paths import AppPaths, WorkspacePaths
@@ -37,7 +37,49 @@ def test_config_defaults_when_missing(app_paths: AppPaths) -> None:
     cfg = load_config(app_paths)
     assert cfg.agent("agy").model
     assert AppConfig.model_fields["default_agent"].default == "claude", "앱 기본 AI (2026-11-05)"
-    assert cfg.tier_model("claude", "standard").model == "claude-sonnet-5-5"
+    assert cfg.tier_model("claude", "standard").model == "claude-opus-5-5"
+
+
+def test_old_default_tiers_move_up_but_teacher_choices_stay(app_paths: AppPaths) -> None:
+    """설정 파일은 등급별 모델을 모두 적어 둔다 → 2026-11-19 새 기본은 예전 기본 그대로인 칸에만."""
+    old = {
+        "schema_version": 1,
+        "default_agent": "claude",
+        "tiers": {
+            "claude": {
+                "fast": {"model": "claude-haiku-5-5", "effort": None},
+                "standard": {"model": "claude-sonnet-5-5", "effort": "medium"},
+                "strong": {"model": "claude-fable-5-2", "effort": "high"},  # 강사가 고침
+            },
+            "agy": {
+                "fast": {"model": "gemini-3.8-flash-medium", "effort": None},
+                "standard": {"model": "gemini-3.8-flash-medium", "effort": None},
+                "strong": {"model": "gemini-4-argon-low", "effort": None},
+            },
+            "codex": {"fast": {"model": None, "effort": "low"}},
+        },
+    }
+    app_paths.config_file.write_text(json.dumps(old), encoding="utf-8")
+    cfg = load_config(app_paths)
+
+    def model(agent: AgentName, tier: TierName) -> tuple[str | None, str | None]:
+        return cfg.tiers[agent][tier].model, cfg.tiers[agent][tier].effort
+
+    assert model("claude", "fast") == ("claude-sonnet-5-5", "high")
+    assert model("claude", "standard") == ("claude-opus-5-5", "medium")
+    assert model("claude", "strong") == ("claude-fable-5-2", "high"), "강사가 고친 칸은 그대로"
+    assert model("agy", "fast") == ("gemini-3.8-flash-high", None)
+    assert model("agy", "standard") == ("gemini-4-hydrogen-medium", None)
+    assert model("agy", "strong") == ("gemini-4-hydrogen-high", None)
+    assert model("codex", "fast") == (None, "low")
+    assert cfg.schema_version == 2
+    save_config(app_paths, cfg)
+    cfg.tiers["claude"]["fast"] = cfg.tiers["claude"]["fast"].model_copy(
+        update={"model": "claude-haiku-5-5", "effort": None}
+    )
+    save_config(app_paths, cfg)
+    again = load_config(app_paths)
+    assert again.tiers["claude"]["fast"].model == "claude-haiku-5-5", "새 판에서 고른 것은 그대로"
 
 
 def test_config_roundtrip(app_paths: AppPaths, tmp_path: Path) -> None:

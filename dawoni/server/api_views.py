@@ -360,7 +360,7 @@ def outputs(exam_id: str, st: AppState = State) -> dict[str, Any]:
         "folder_exists": folder.is_dir(),
         "scores": scores.relative_to(ws.root).as_posix(),
         "scores_exists": scores.is_file(),
-        "scores_by_class": exam.scores_by_class,
+        "scores_by_class": exam.sheets_per_class,
         "scores_edited": exam_files.is_edited(store, scores),
         "marked_folder": marked.relative_to(ws.root).as_posix(),
         "marked": sorted(p.name for p in marked.glob("*.pdf")) if marked.is_dir() else [],

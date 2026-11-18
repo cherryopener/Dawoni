@@ -25,6 +25,7 @@ from dawoni.models.grading import Exam
 from dawoni.ocr import batch
 from dawoni.ocr.pages import PageError
 from dawoni.paths import AppPaths, WorkspacePaths
+from dawoni.students import Roster
 from dawoni.workspace import create_workspace
 
 FIX = Path(__file__).parent / "fixtures" / "grading"
@@ -177,6 +178,41 @@ def test_cli_scan_batch(
     assert main(["exam", *w, "scan-batch", eid, str(pdf), "--per-student", "2"]) == 0
     assert "이미 판독함" in capsys.readouterr().out
     assert len(fake_prompts(exe)) == 4, "다시 하면 끝난 학생은 건너뛴다"
+
+
+def test_teacher_picked_class_narrows_the_roster(
+    app_paths: AppPaths, make_fake: MakeFake, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """강사가 PDF의 반을 고르면 (반 하나) 그 반 명단에서만 이름을 고르고, 반은 표지와 상관없이
+    그 반.
+    실측(2026-11-18): 그 반 명단만 주면 18명 중 17~18명, 7반 명단이면 86%."""
+    ws = create_workspace(tmp_path / "ws")
+    roster = Roster(WorkspacePaths(ws.root))
+    roster.add("가학생", "MSS1-J")
+    roster.add("나학생", "MSS1-J")
+    roster.add("다학생", "MSS2-K")
+    cover = {**_cover("가학생"), "class_name": "TSS1"}  # 표지의 반을 다르게 읽어도
+    exe = make_fake("script", script=[{"response": json.dumps(cover, ensure_ascii=False)}])
+    cfg = AppConfig()
+    cfg.agents["agy"].executable = str(exe)
+    save_config(app_paths, cfg)
+    w = ["--workspace", str(ws.root)]
+    assert main(["scope", *w, "import", str(FIX / "scope.json")]) == 0
+    one_q = tmp_path / "q1.json"
+    one_q.write_text(json.dumps(read_json(FIX / "questions.json")[:1]), encoding="utf-8")
+    assert main(["exam", *w, "create", "--title", "t", "--scope", "scope-quadratic-minmax",
+                 "--questions", str(one_q)]) == 0  # fmt: skip
+    eid = ExamStore.list_ids(WorkspacePaths(ws.root))[0]
+    pdf = _pdf(tmp_path / "m1j.pdf", 2)
+    assert main(["exam", *w, "scan-batch", eid, str(pdf), "--per-student", "2",
+                 "--classes", "mss1j", "--covers-only"]) == 0  # fmt: skip
+    capsys.readouterr()
+    prompts = fake_prompts(exe)
+    assert len(prompts) == 1, "표지의 반이 달라도 다시 묻지 않는다"
+    assert "강사가 정한 **MSS1-J** 반" in prompts[0], "명부의 반 이름으로"
+    assert "가학생, 나학생" in prompts[0] and "다학생" not in prompts[0], "그 반 명단만"
+    rec = ExamStore(WorkspacePaths(ws.root), eid).student_record("가학생")
+    assert rec is not None and rec.class_name == "MSS1-J" and rec.roster_id is not None
 
 
 # ---------------------------------------------------------------- 강사별 문항 분담

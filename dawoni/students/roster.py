@@ -48,6 +48,10 @@ def _norm_class(s: str | None) -> str:
     return c[:-1] if c.endswith("반") and len(c) > 1 else c
 
 
+def _loose_class(s: str | None) -> str:
+    return re.sub(r"[^0-9a-z가-힣]", "", _norm_class(s))
+
+
 def same_name(a: str | None, b: str | None) -> bool:
     return bool(_norm_name(a)) and _norm_name(a) == _norm_name(b)
 
@@ -174,6 +178,12 @@ class Roster:
         """명부의 반 목록 (자연 정렬) — 표지를 읽을 때 이 중에서 고르게 한다."""
         names = {s.class_name for s in self.all() if s.class_name}
         return sorted(names, key=natural_key)
+
+    def find_class(self, typed: str) -> str | None:
+        """강사가 적은 반 → 명부의 반 이름. 띄어쓰기·하이픈·대소문자·끝의 '반'은 보지 않는다
+        (`mss1j` → `MSS1-J`). 명부에 없으면 None."""
+        key = _loose_class(typed)
+        return next((c for c in self.classes() if key and _loose_class(c) == key), None)
 
     def names_by_class(self, classes: list[str] | None = None) -> dict[str, list[str]]:
         """반 → 이름 (가나다순). `classes`를 주면 그 반만 — 표지 이름을 이 안에서 고르게 한다

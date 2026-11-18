@@ -257,7 +257,7 @@ def test_all_unavailable(client: Callable[[str, str], client_mod.AgentClient]) -
 
 def test_tier_model_falls_back_to_agent_model() -> None:
     cfg = AppConfig()
-    assert cfg.tier_model("agy", "fast").model == "gemini-3.8-flash-medium"
+    assert cfg.tier_model("agy", "fast").model == "gemini-3.8-flash-high"
     assert cfg.tier_model("claude", "strong").effort == "high"
     # 등급 칸이 없으면 AI 설정의 모델 (모델 이름을 짐작하지 않는다)
     cfg.tiers["agy"].pop("strong")
@@ -270,7 +270,7 @@ def test_tier_model_falls_back_to_agent_model() -> None:
 
 def test_old_config_gets_default_tiers() -> None:
     cfg = AppConfig.model_validate({"default_agent": "claude", "agents": {}})
-    assert cfg.tiers["claude"]["standard"].model == "claude-sonnet-5-5"
+    assert cfg.tiers["claude"]["standard"].model == "claude-opus-5-5"
     assert cfg.auto_fallback is False
 
 

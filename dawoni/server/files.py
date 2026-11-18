@@ -73,19 +73,33 @@ def _powershell(script: str) -> Path | None:
 
 
 def _ask_save_path(default_name: str) -> Path | None:
-    """운영체제 저장 대화상자. 취소하면 None."""
+    """운영체제 저장 대화상자. 취소하면 None.
+
+    Windows: 폴더 고르기와 같은 탐색기 모양 창(IFileSaveDialog)을 지금 맨 앞 창(다워니 창)을 부모로
+    띄운다. 2026-11-18 학원 PC: 예전 WinForms 창은 보이지 않는 주인 창 탓에 다워니 창 뒤에 떠서 안
+    보였다. 맥: 대화상자를 맨 앞으로 (`activate`)."""
     if sys.platform == "darwin":
         name = default_name.replace('"', "")
         script = f'POSIX path of (choose file name with prompt "저장할 위치" default name "{name}")'
-        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, check=False)
+        r = subprocess.run(
+            ["osascript", "-e", "activate", "-e", script], capture_output=True, text=True,
+            check=False,
+        )  # fmt: skip
         return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
     if sys.platform == "win32":
+        name = default_name.replace("'", "''")
         ps = (
+            "$ErrorActionPreference='Stop';"
+            "try{"
+            f"Add-Type -TypeDefinition @'\n{_PICKER_CS}\n'@;"
+            f"$p=[DawoniPicker]::Save('다른 이름으로 저장','{name}');if($p){{Write-Output $p}}"
+            "}catch{"
             "Add-Type -AssemblyName System.Windows.Forms;"
             "$d=New-Object System.Windows.Forms.SaveFileDialog;"
-            f"$d.FileName='{default_name.replace(chr(39), '')}';"
+            f"$d.FileName='{name}';"
             "$d.Filter='모든 파일 (*.*)|*.*';"
             f"if($d.ShowDialog({_OWNER}) -eq 'OK'){{Write-Output $d.FileName}}"
+            "}"
         )
         return _powershell(ps)
     return None
@@ -128,7 +142,19 @@ public static class DawoniPicker {
     void GetParent(out IShellItem si);
     void GetDisplayName(uint sigdn, [MarshalAs(UnmanagedType.LPWStr)] out string name);
   }
+  [ComImport, Guid("C0B4E2F3-BA21-4773-8DBA-335EC946EB8B")] class FileSaveDialog {}
   [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  public static string Save(string title, string name) {
+    IFileDialog d = (IFileDialog)new FileSaveDialog();
+    uint fos; d.GetOptions(out fos);
+    d.SetOptions(fos | 0x2 | 0x40);  // FOS_OVERWRITEPROMPT | FOS_FORCEFILESYSTEM
+    d.SetTitle(title);
+    d.SetFileName(name);
+    if (d.Show(GetForegroundWindow()) != 0) return null;  // 취소
+    IShellItem si; d.GetResult(out si);
+    string path; si.GetDisplayName(0x80058000, out path);  // SIGDN_FILESYSPATH
+    return path;
+  }
   public static string Pick(string title) {
     IFileDialog d = (IFileDialog)new FileOpenDialog();
     uint fos; d.GetOptions(out fos);
@@ -151,7 +177,10 @@ def choose_folder() -> Path | None:
     """운영체제 폴더 선택 대화상자 (작업공간 고르기). 취소하면 None. 관리자 권한 필요 없음."""
     if sys.platform == "darwin":
         script = 'POSIX path of (choose folder with prompt "다워니 작업공간 폴더")'
-        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, check=False)
+        r = subprocess.run(
+            ["osascript", "-e", "activate", "-e", script], capture_output=True, text=True,
+            check=False,
+        )  # fmt: skip
         return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
     if sys.platform == "win32":
         ps = (

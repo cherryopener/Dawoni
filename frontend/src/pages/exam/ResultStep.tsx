@@ -1,11 +1,13 @@
-import { AlertTriangle, ChevronDown, FileSpreadsheet, FileText, FolderOpen, Upload } from "lucide-react";
+import { AlertTriangle, ChevronDown, FileSpreadsheet, FileText, FolderOpen, Play, Upload, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { ClassField } from "@/components/ClassField";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dropzone, ErrorNote, Progress } from "@/components/ui/misc";
 import { api, onJobsChanged, useAction, useApi, waitJob } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { guessClass } from "@/lib/roles";
 import { href } from "@/lib/router";
 import { useTeacher } from "@/lib/session";
 import { pts } from "@/lib/steps";
@@ -52,6 +54,8 @@ export function ResultStep() {
   const job = useAutoJob(id);
   const [fix, setFix] = useState<EditTarget | null>(null);
   const [more, setMore] = useState(false);
+  const [staged, setStaged] = useState<{ file: File; klass: string }[]>([]); // 더 넣을 답안지와 그 반
+  const roster = useApi<{ classes: string[] }>(more ? "/students" : null, { refreshOnJobs: false });
   const [showAuto, setShowAuto] = useState(false);
   const act = useAction();
   const s = auto.data;
@@ -59,15 +63,22 @@ export function ResultStep() {
   const full = qs.reduce((a, q) => a + q.points, 0);
 
   const openFile = (path: string) => act.run(() => api.post("/files/open", { path }));
-  const addAnswers = (files: File[]) =>
+  const stage = (files: File[]) => {
+    const pdfs = files.filter((f) => /\.pdf$/i.test(f.name) && !staged.some((p) => p.file.name === f.name && p.file.size === f.size));
+    setStaged([...staged, ...pdfs.map((f) => ({ file: f, klass: guessClass(f.name, roster.data?.classes ?? []) }))]);
+  };
+  const addAnswers = () =>
     act.run(async () => {
-      const pdfs = files.filter((f) => /\.pdf$/i.test(f.name));
-      if (pdfs.length === 0) throw new Error("답안지 PDF를 넣어 주세요.");
+      if (staged.length === 0) throw new Error("답안지 PDF를 넣어 주세요.");
       const form = new FormData();
-      for (const f of pdfs) form.append("answers", f);
+      for (const f of staged) {
+        form.append("answers", f.file);
+        form.append("answer_classes", f.klass.trim()); // 파일과 같은 차례 (빈 칸 = 고르지 않음)
+      }
       form.append("exam_id", id);
       if (by) form.append("by", by);
       setMore(false);
+      setStaged([]);
       await waitJob(await api.upload<Job>("/quick", form));
       auto.reload();
       students.reload();
@@ -129,7 +140,33 @@ export function ResultStep() {
           <Upload /> 답안지 더 넣기
         </Button>
       </Card>
-      {more && <Dropzone title="학생 답안지 PDF를 끌어다 놓기" hint="여러 반이어도 됩니다 — 이미 읽은 학생은 건너뜁니다" accept=".pdf" multiple onFiles={(f) => void addAnswers(f)} />}
+      {more && (
+        <Card className="flex flex-col gap-2 p-4">
+          <Dropzone title="학생 답안지 PDF를 끌어다 놓기" hint="PDF마다 반을 고르면 그 반 명단에서 이름을 고릅니다 — 이미 읽은 학생은 건너뜁니다" accept=".pdf" multiple onFiles={stage} />
+          {staged.map((f, i) => (
+            <div key={`${f.file.name}-${i}`} className="flex items-center gap-2 rounded-lg border border-line px-3 py-1.5">
+              <FileText className="size-4 text-text-3" />
+              <span className="flex-1 truncate">{f.file.name}</span>
+              <ClassField
+                value={f.klass}
+                onChange={(v) => setStaged(staged.map((p, k) => (k === i ? { ...p, klass: v } : p)))}
+                classes={roster.data?.classes ?? []}
+                title="이 답안지 묶음의 반 — 고르면 그 반 명단에서 이름을 고릅니다"
+              />
+              <Button size="icon" variant="ghost" aria-label="빼기" onClick={() => setStaged(staged.filter((_, k) => k !== i))}>
+                <X />
+              </Button>
+            </div>
+          ))}
+          {staged.length > 0 && (
+            <div className="flex justify-end">
+              <Button variant="primary" disabled={act.busy} onClick={() => void addAnswers()}>
+                <Play /> 읽고 채점
+              </Button>
+            </div>
+          )}
+        </Card>
+      )}
       {act.error && <ErrorNote message={act.error} />}
 
       {(s?.asks.length ?? 0) > 0 && (

@@ -11,9 +11,37 @@ import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { api, useAction, useApi } from "@/lib/api";
 import { useSession } from "@/lib/session";
-import type { AuthStatus, Config, Role, Sharing, Tier } from "@/lib/types";
+import type { AuthStatus, Config, Role, Sharing, Tier, TierModel } from "@/lib/types";
 
 const AGENT_LABEL: Record<string, string> = { agy: "agy (Gemini)", claude: "Claude Code", codex: "Codex", local: "로컬 LLM" };
+const TIER_LABEL: Record<Tier, string> = { fast: "빠름", standard: "보통", strong: "강함" };
+/** 등급에 고를 수 있는 모델 (낮은 것부터). 지금 설정에 다른 이름이 있으면 그것도 보인다. */
+const MODELS: Record<string, { value: string; label: string }[]> = {
+  claude: [
+    { value: "claude-haiku-5-5", label: "Haiku 5.5" },
+    { value: "claude-sonnet-5-5", label: "Sonnet 5.5" },
+    { value: "claude-opus-5-5", label: "Opus 5.5" },
+    { value: "claude-fable-5-2", label: "Fable 5.2" },
+  ],
+  agy: [
+    { value: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (medium)" },
+    { value: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (high)" },
+    { value: "gemini-4-argon-low", label: "Gemini 4 Argon (low)" },
+    { value: "gemini-4-argon-medium", label: "Gemini 4 Argon (medium)" },
+    { value: "gemini-4-hydrogen-low", label: "Gemini 4 Hydrogen (low)" },
+    { value: "gemini-4-hydrogen-medium", label: "Gemini 4 Hydrogen (medium)" },
+    { value: "gemini-4-hydrogen-high", label: "Gemini 4 Hydrogen (high)" },
+  ],
+};
+/** 생각 깊이 (claude `--effort`, codex). "auto"는 CLI 기본 — 설정에는 null로 둔다. */
+const EFFORTS = [
+  { value: "auto", label: "기본" },
+  { value: "low", label: "낮음" },
+  { value: "medium", label: "보통" },
+  { value: "high", label: "높음" },
+  { value: "xhigh", label: "아주 높음" },
+  { value: "max", label: "최대" },
+];
 type Usage = { days: number; roles: Record<string, { calls: number; tokens: number; repairs: number }> };
 
 /** 설정은 카드 몇 장: AI 연결 / 저장소 / 스캐너 / 판독 / 계정 (PLAN §11-1-2). 바꿀 일이 드문 것은 "고급" 안. */
@@ -105,7 +133,8 @@ export function SettingsPage() {
           )}
           <div className="mt-4">
             <Advanced label="역할별 모델 · 토큰 사용량">
-              <table className="w-full border-collapse text-left text-[13px]">
+              {c && <TierTable agent={c.default_agent} config={c} roles={roles.data ?? []} onPatch={(body) => void patch(body)} />}
+              <table className="mt-4 w-full border-collapse text-left text-[13px]">
                 <thead className="text-[12px] text-text-3">
                   <tr>
                     <th className="py-1.5 font-normal">역할</th>
@@ -251,6 +280,66 @@ export function SettingsPage() {
           )}
         </CardBody>
       </Card>
+    </div>
+  );
+}
+
+/** 등급별 모델: 이 AI에서 빠름·보통·강함이 어느 모델·생각 깊이인지. 역할은 등급만 고르므로, 같은 등급의
+ * 역할(예: 손글씨 판독과 해설지 판독의 '보통')은 모두 같은 모델을 쓴다 — 표의 '쓰는 역할'에 보인다. */
+function TierTable({ agent, config, roles, onPatch }: { agent: string; config: Config; roles: Role[]; onPatch: (body: unknown) => void }) {
+  const table = config.tiers[agent] ?? {};
+  const models = MODELS[agent];
+  const effort = agent === "claude" || agent === "codex"; // agy는 모델 이름에 깊이가 들어 있다
+  const set = (tier: Tier, change: Partial<TierModel>) => {
+    const now = table[tier] ?? { model: null, effort: null };
+    onPatch({ tiers: { [agent]: { [tier]: { ...now, ...change } } } });
+  };
+  return (
+    <div>
+      <div className="mb-1.5 text-[13px] text-text-2">
+        등급별 모델 — {AGENT_LABEL[agent] ?? agent}
+        <Help>역할마다 등급(빠름·보통·강함)을 고르고, 등급마다 모델은 AI별로 하나입니다. 같은 등급의 역할은 모두 같은 모델을 씁니다.</Help>
+      </div>
+      <table className="w-full border-collapse text-left text-[13px]">
+        <thead className="text-[12px] text-text-3">
+          <tr>
+            <th className="py-1.5 font-normal">등급</th>
+            <th className="py-1.5 font-normal">모델</th>
+            {effort && <th className="py-1.5 font-normal">생각 깊이</th>}
+            <th className="py-1.5 font-normal">쓰는 역할</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(["fast", "standard", "strong"] as Tier[]).map((tier) => {
+            const t = table[tier] ?? { model: null, effort: null };
+            const options = models ? [...models] : [];
+            if (t.model && !options.some((o) => o.value === t.model)) options.push({ value: t.model, label: t.model });
+            return (
+              <tr key={tier} className="border-t border-line align-middle">
+                <td className="w-14 py-1.5">{TIER_LABEL[tier]}</td>
+                <td className="py-1.5">
+                  {options.length > 0 ? (
+                    <Select value={t.model ?? ""} placeholder="AI 기본 모델" onChange={(v) => set(tier, { model: v })} options={options} className="w-52 min-w-0" />
+                  ) : (
+                    <span className="text-text-3">{t.model ?? "AI 기본 모델"}</span>
+                  )}
+                </td>
+                {effort && (
+                  <td className="py-1.5">
+                    <Select value={t.effort ?? "auto"} onChange={(v) => set(tier, { effort: v === "auto" ? null : v })} options={EFFORTS} className="w-28 min-w-0" />
+                  </td>
+                )}
+                <td className="py-1.5 text-[12px] text-text-2">
+                  {roles
+                    .filter((r) => r.tier === tier)
+                    .map((r) => r.title)
+                    .join(" · ") || "—"}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

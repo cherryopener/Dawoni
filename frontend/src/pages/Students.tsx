@@ -136,7 +136,7 @@ export function StudentsPage() {
     <div className="mx-auto max-w-5xl px-6 py-8">
       <div className="flex items-center gap-3">
         <h1 className="m-0 flex-1 text-[20px] font-medium">학생</h1>
-        <input ref={fileRef} type="file" accept=".xlsx,.csv" className="hidden" onChange={(e) => void importRoster(e.target.files?.[0])} />
+        <input ref={fileRef} type="file" accept=".xlsx,.csv,.jpg,.jpeg,.png" className="hidden" onChange={(e) => void importRoster(e.target.files?.[0])} />
         <Button disabled={act.busy} onClick={() => setDraft({ id: null, name: "", class_name: classes.length === 1 ? classes[0]! : "", school: "" })}>
           <Plus /> 학생 추가
         </Button>

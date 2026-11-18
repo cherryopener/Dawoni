@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -61,23 +61,23 @@ class TierModel(_Settings):
 
 
 def _default_tiers() -> dict[AgentName, dict[TierName, TierModel]]:
-    """등급별 기본 모델 — AI마다 비슷한 수준으로 맞춘다.
-
-    agy: 2026-11-04 실측(README "역할별 모델 실측")에서 flash-medium과 argon-low가 정확도가 같았다.
-    argon은 flash와 구독 한도가 따로라, 대부분의 호출은 flash-medium에 두고 strong(검증·보정)만
-    argon-low로 보내 두 한도를 나눠 쓴다 (사용자 결정, 2026-11-04). flash-low는 표지 회전·시험지
-    읽기에서 틀려 쓰지 않는다. 강사가 설정에서 바꿀 수 있다.
+    """등급별 기본 모델 — 2026-11-19 사용자 결정으로 한 단계씩 올림 (PLAN §16 41번):
+    claude 빠름 sonnet high · 보통 opus medium · 강함 opus high, agy 빠름 flash-high · 보통
+    hydrogen-medium · 강함 hydrogen-high. 표지 이름 실측(README "표지 이름 실측")에서 hydrogen이
+    가장 잘 읽었다. 예전 기본(`_V1_TIERS`)을 그대로 둔 설치는 처음 읽을 때 이것으로 바꾼다
+    (`_migrate`). flash-low는 표지 회전·시험지 읽기에서 틀려 쓰지 않는다. 강사가 설정 → 등급별
+    모델에서 바꿀 수 있다.
     codex는 모델 이름을 모르므로 깊이만 정하고 모델은 codex 설정을 따른다."""
     return {
         "agy": {
-            "fast": TierModel(model="gemini-3.8-flash-medium"),
-            "standard": TierModel(model="gemini-3.8-flash-medium"),
-            "strong": TierModel(model="gemini-4-argon-low"),
+            "fast": TierModel(model="gemini-3.8-flash-high"),
+            "standard": TierModel(model="gemini-4-hydrogen-medium"),
+            "strong": TierModel(model="gemini-4-hydrogen-high"),
         },
         "claude": {
-            "fast": TierModel(model="claude-haiku-5-5"),
-            "standard": TierModel(model="claude-sonnet-5-5", effort="medium"),
-            "strong": TierModel(model="claude-sonnet-5-5", effort="high"),
+            "fast": TierModel(model="claude-sonnet-5-5", effort="high"),
+            "standard": TierModel(model="claude-opus-5-5", effort="medium"),
+            "strong": TierModel(model="claude-opus-5-5", effort="high"),
         },
         "codex": {
             "fast": TierModel(effort="low"),
@@ -141,13 +141,52 @@ class ScannerSettings(_Settings):
         return v.rstrip("/")
 
 
+_V1_TIERS: dict[str, dict[str, dict[str, str | None]]] = {
+    # schema_version 1의 기본 등급 (2026-11-04~11-18): 강사가 바꾸지 않은 칸만 새 기본으로 옮긴다
+    "agy": {
+        "fast": {"model": "gemini-3.8-flash-medium", "effort": None},
+        "standard": {"model": "gemini-3.8-flash-medium", "effort": None},
+        "strong": {"model": "gemini-4-argon-low", "effort": None},
+    },
+    "claude": {
+        "fast": {"model": "claude-haiku-5-5", "effort": None},
+        "standard": {"model": "claude-sonnet-5-5", "effort": "medium"},
+        "strong": {"model": "claude-sonnet-5-5", "effort": "high"},
+    },
+}
+SCHEMA_VERSION = 2
+
+
+def _migrate(raw: dict[str, Any]) -> dict[str, Any]:
+    """예전 설정 파일 → 지금. 설정 파일은 등급별 모델을 모두 적어 두므로 코드의 기본만 바꾸면
+    예전 설치에 닿지 않는다 — 1 → 2: 예전 기본 그대로인 등급 칸만 새 기본으로 (강사가 고친 칸은
+    그대로)."""
+    if int(raw.get("schema_version") or 1) < 2 and isinstance(raw.get("tiers"), dict):
+        new = {a: {t: m.model_dump() for t, m in ts.items()} for a, ts in _default_tiers().items()}
+        tiers = cast(dict[str, Any], dict(raw["tiers"]))
+        for agent, old in _V1_TIERS.items():
+            if not isinstance(tiers.get(agent), dict):
+                continue
+            table = cast(dict[str, Any], dict(tiers[agent]))
+            for tier, was in old.items():
+                now = table.get(tier)
+                same = isinstance(now, dict) and all(
+                    cast(dict[str, Any], now).get(k) == v for k, v in was.items()
+                )
+                if same:
+                    table[tier] = new[agent][tier]
+            tiers[agent] = table
+        raw = {**raw, "tiers": tiers}
+    return {**raw, "schema_version": SCHEMA_VERSION}
+
+
 class AppConfig(_Settings):
-    schema_version: int = 1
+    schema_version: int = SCHEMA_VERSION
     workspace: Path | None = None
     default_agent: AgentName = "claude"
-    """기본 AI. 2026-11-05 사용자 결정: claude(sonnet) — 강사들이 주로 claude를 쓰고, 채점 실측에서
+    """기본 AI. 2026-11-05 사용자 결정: claude — 강사들이 주로 claude를 쓰고, 채점 실측에서
     sonnet이 강사 빨간 펜과 95%로 가장 잘 맞았다 (README "flash-medium ↔ claude 견주기").
-    예전 기본은 agy."""
+    예전 기본은 agy. 등급별 모델은 `_default_tiers` (2026-11-19부터 보통 = opus medium)."""
     teacher: str | None = None
     """이 PC를 쓰는 강사 이름 — 문항 맡기·확정·승인 기록에 남는다 (처음 실행 마법사에서 묻는다)."""
     coordinator_agent: AgentName | None = None
@@ -202,7 +241,7 @@ def load_config(paths: AppPaths) -> AppConfig:
     if not path.exists():
         return AppConfig()
     try:
-        return AppConfig.model_validate(read_json(path))
+        return AppConfig.model_validate(_migrate(read_json(path)))
     except (ValueError, ValidationError) as e:
         backup = path.with_name(path.name + ".broken")
         path.replace(backup)

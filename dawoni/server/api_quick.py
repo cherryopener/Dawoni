@@ -1,6 +1,7 @@
 """한 번에 채점 API (2026-11-18): 파일을 올리고 버튼 하나 — `dawoni.autopilot`.
 
-POST /api/quick                    시험지(해설 포함) + 답안지 PDF들 (+ 명단) → 작업 "autopilot"
+POST /api/quick                    시험지(해설 포함) + 답안지 PDF들 (+ 반)
+                                   (+ 명단: 엑셀·CSV·사진) → 작업 "autopilot"
 POST /api/quick (exam_id=…)        이미 있는 시험에 답안지 더 넣기
 GET  /api/exams/{id}/autopilot     진행·결과·물을 것 (결과 화면)
 """
@@ -37,11 +38,19 @@ def _keep(src: Path, inbox: Path) -> Path:
     return dest
 
 
+def _nth(values: list[str] | None, i: int) -> str | None:
+    """파일과 같은 차례의 반 (없거나 비었으면 None)."""
+    v = (values or [])[i].strip() if values and i < len(values) else ""
+    return v or None
+
+
 @router.post("/quick")
 def quick(
     answers: Annotated[list[UploadFile], File()],
     exam: Annotated[UploadFile | None, File()] = None,
-    roster: Annotated[UploadFile | None, File()] = None,
+    roster: Annotated[list[UploadFile] | None, File()] = None,
+    answer_classes: Annotated[list[str] | None, Form()] = None,
+    roster_classes: Annotated[list[str] | None, Form()] = None,
     exam_id: Annotated[str | None, Form()] = None,
     title: Annotated[str | None, Form()] = None,
     level: Annotated[str | None, Form()] = None,
@@ -49,22 +58,30 @@ def quick(
     st: AppState = State,
 ) -> Job:
     """시험지(해설 포함)와 학생 답안지 PDF → 시험 읽기 → 루브릭 자동 승인 → 판독 → 채점 →
-    점수표·채점 답안지 PDF. `exam_id`를 주면 그 시험에 답안지를 더 넣는다. 명단(엑셀·CSV)은 학생
-    명부에 더한다. 시험 ID는 작업 매개변수 `exam`으로 알린다 (시험을 만들면 바로)."""
+    점수표·채점 답안지 PDF. `exam_id`를 주면 그 시험에 답안지를 더 넣는다. 명단(엑셀·CSV·사진)은
+    학생 명부에 더한다. `answer_classes`·`roster_classes`: 파일마다 강사가 고른 반
+    (`answers`·`roster`와 같은 차례, 빈 문자열 = 고르지 않음) — 답안지는 그 반 명단 안에서만 표지
+    이름을 고르고, 명단은 반이 없는 줄을 그 반으로. 시험 ID는 작업 매개변수 `exam`으로 알린다
+    (시험을 만들면 바로)."""
     from dawoni.cli_ingest import resolve_scope
     from dawoni.ingest.workflow import existing_exam, ingest_exam
-    from dawoni.students import Roster, read_table
+    from dawoni.students import Roster
+    from dawoni.students.sheet import read_roster_file
 
     svc = st.services()
     if exam_id is None and exam is None:
         raise PipelineError("시험지 파일을 넣어 주세요.")
-    pdfs = [a for a in answers if (a.filename or "").lower().endswith(".pdf")]
-    if not pdfs:
+    picked = [
+        (a, _nth(answer_classes, i))
+        for i, a in enumerate(answers)
+        if (a.filename or "").lower().endswith(".pdf")
+    ]
+    if not picked:
         raise PipelineError("학생 답안지 PDF를 넣어 주세요.")
     tmp = upload_dir(st)
-    answer_paths = [_keep(save_upload(a, tmp), svc.workspace.scan_inbox) for a in pdfs]
+    answer_paths = [_keep(save_upload(a, tmp), svc.workspace.scan_inbox) for a, _ in picked]
     exam_path = save_upload(exam, tmp) if exam is not None else None
-    roster_path = save_upload(roster, tmp) if roster is not None else None
+    rosters = [(save_upload(r, tmp), _nth(roster_classes, i)) for i, r in enumerate(roster or [])]
     scope_id = resolve_scope(svc, None, level or "물리") if exam_path is not None else None
     who = st.who(by)
     if exam_id is not None:
@@ -73,9 +90,9 @@ def quick(
     def run(ctx: JobContext) -> dict[str, Any]:
         eid = exam_id
         notes: list[str] = []
-        if roster_path is not None:
-            ctx.progress(0, 1, "학생 명단 넣는 중")
-            rows, read_notes = read_table(roster_path)
+        for path, klass in rosters:
+            ctx.progress(0, 1, f"학생 명단 넣는 중: {path.name}")
+            rows, read_notes = read_roster_file(svc.engine, path, klass)
             res = Roster(svc.workspace).import_rows(rows)
             notes += read_notes + res.problems
         if eid is None:
@@ -93,7 +110,8 @@ def quick(
                 notes += made.warnings
         ctx.tag("exam", eid)
         store = ExamStore(svc.workspace, eid)
-        s = autopilot.run(svc, store, answer_paths, by=who, progress=ctx.progress)
+        s = autopilot.run(svc, store, answer_paths, classes=[k for _, k in picked], by=who,
+                          progress=ctx.progress)  # fmt: skip
         if notes:
             s.warnings = notes + s.warnings
             autopilot.save_state(store, s)

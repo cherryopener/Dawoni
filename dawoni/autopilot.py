@@ -24,7 +24,7 @@ import itertools
 import logging
 import re
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -48,6 +48,7 @@ from dawoni.models.base import utcnow
 from dawoni.models.grading import KeyChoice
 from dawoni.parallel import stops_all
 from dawoni.services import Services
+from dawoni.students import Roster
 
 log = logging.getLogger(__name__)
 Progress = Callable[[int, int, str], None]
@@ -248,11 +249,13 @@ def run(
     store: ExamStore,
     pdfs: list[Path],
     *,
+    classes: Sequence[str | None] = (),
     by: str | None = None,
     progress: Progress = _noop,
 ) -> AutoState:
     """루브릭 → 답안지 → 채점 → 점수표·채점 답안지 PDF. 학생 한 명·문항 하나가 실패해도 나머지는
-    끝까지 간다 (실패는 `warnings`)."""
+    끝까지 간다 (실패는 `warnings`). `classes`: 답안지 PDF마다 강사가 고른 반 (`pdfs`와 같은 차례,
+    없으면 None) — 그 반 명단 안에서만 표지 이름을 고르고, 반은 표지와 상관없이 그 반."""
     from dawoni.export.exam_files import export_scores, marked_dir
     from dawoni.export.red_pen import write_marked
     from dawoni.grading import workflow
@@ -274,8 +277,18 @@ def run(
             per, note = pages_per_student(pdf, fallback)
             if note:
                 s.warnings.append(note)
-            res = workflow.scan_batch(svc, store, pdf, per_student=per, progress=progress)
-            if moved := unify_classes(store, pdf.name):
+            klass = (classes[k - 1] or "").strip() if k <= len(classes) else ""
+            if klass and Roster(svc.workspace).find_class(klass) is None:
+                s.warnings.append(
+                    f"{pdf.name}: 학생 명부에 {klass} 반 학생이 없어 표지 이름을 명단 없이 읽음 "
+                    "— 반 명단을 함께 넣으면 더 잘 읽습니다"
+                )
+            res = workflow.scan_batch(svc, store, pdf, per_student=per,
+                                      classes=[klass] if klass else None,
+                                      progress=progress)  # fmt: skip
+            if klass:
+                s.decisions.append(f"{pdf.name}: 강사가 고른 반 {klass} — 그 반 명단에서 이름")
+            elif moved := unify_classes(store, pdf.name):
                 s.decisions.append(f"{pdf.name}: 반 이름을 한 반으로 맞춤 — {', '.join(moved)}")
             s.warnings += res.warnings
             s.warnings += [f"{f.student}: {f.reason}" for f in res.failed]

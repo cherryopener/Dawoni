@@ -1003,9 +1003,9 @@ def register(sub: Any) -> None:
     sc.add_argument("exam")
     way = sc.add_mutually_exclusive_group()
     way.add_argument("--by-class", dest="by_class", action="store_const", const=True,
-                     help="반마다 시트 하나 (시험에 저장 — 다음부터 저절로 쓸 때도)")  # fmt: skip
+                     help="반마다 시트 + 전체 요약 (기본, 시험에 저장)")  # fmt: skip
     way.add_argument("--one-sheet", dest="by_class", action="store_const", const=False,
-                     help="한 시트에 모두 (기본)")  # fmt: skip
+                     help="한 시트에 모든 반 (시험에 저장 — 다음부터 저절로 쓸 때도)")  # fmt: skip
     sc.add_argument("--force", action="store_true", help="엑셀에서 고친 점수표도 덮어쓰기")
     sc.set_defaults(func=_wrap(_cmd_scores), by_class=None)
 

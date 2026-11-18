@@ -412,7 +412,9 @@ def scan_batch(
     """학생 여러 명의 답안지 PDF (학생마다 `per_student`쪽, 첫 쪽은 표지) → 학생별 판독문(미확인).
 
     1. 표지에서 이름·반·학교·강사 점수와 돌려 세울 각도를 읽는다 (한 번만 — 다음부터는 저장한 것을
-       쓴다). 반 목록을 주지 않으면 학생 명부의 반 중에서 고르게 한다.
+       쓴다). 반 목록을 주지 않으면 학생 명부의 반 중에서 고르게 한다. 반을 **하나만** 주면 강사가
+       정한 이 PDF의 반이다 — 그 반 명단 안에서만 이름을 고르고, 반은 표지와 상관없이 그 반으로
+       (2026-11-18 실측: 그 반 명단만 주면 18명 중 17~18명, 7반 명단이면 86%).
     2. 명부와 맞춘다 (PLAN.md §7). 명부에 없거나 후보가 여럿이면 알린다. 같은 반에 같은 이름이 또
        있으면 강사가 이름을 바꿀 때까지 점수표에 점수를 넣지 않는다.
     3. 답안 쪽을 판독한다. `only_questions`: 그 문항의 쪽(`ExamQuestion.answer_pages`)만 그
@@ -437,6 +439,10 @@ def scan_batch(
             raise PipelineError(f"문항 {', '.join(too_far)}의 답안 쪽이 한 명의 쪽 수를 넘습니다")
     part_exam = exam.model_copy(update={"questions": qs})
     roster = Roster(svc.workspace)
+    fixed = None
+    if classes and len(classes) == 1:  # 강사가 정한 이 PDF의 반 — 명부의 반 이름으로
+        fixed = roster.find_class(classes[0]) or classes[0]
+        classes = [fixed]
     names = roster.names_by_class(classes) or None  # 표지 이름을 명부 안에서 고르게
     classes = classes or roster.classes() or None
     sets = batch.plan_sets(batch.page_count(pdf), per_student, only_sets)
@@ -484,7 +490,10 @@ def scan_batch(
     def read_cover(job: _SetJob) -> None:
         def run() -> None:
             job.cover_image = batch.render_set(pdf, [job.plan.pages[0]], job.work)[0]
-            job.cover = batch.read_cover(svc.engine, exam, job.cover_image, classes, names)
+            cover = batch.read_cover(svc.engine, exam, job.cover_image, classes, names)
+            if fixed is not None and cover.class_name != fixed:
+                cover = cover.model_copy(update={"class_name": fixed})
+            job.cover = cover
 
         guarded(job, run)
 

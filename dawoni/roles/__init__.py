@@ -73,8 +73,10 @@ ROLES: dict[RoleName, Role] = {
              ("refine_key",), image_max_px=1568),
         Role("handwriting_reader", "손글씨 판독", "standard", 2, 900, 20_000,
              ("transcribe_answer",)),
-        Role("cover_reader", "표지 판독", "fast", 1, 300, 8_000,
-             ("read_cover", "read_marks"), image_max_px=1568),
+        # 표지 손글씨 이름: haiku가 너무 자주 틀려 보통으로 올림 (2026-11-18 사용자 요청, README
+        # "표지 이름 실측" — 학생당 한 호출이라 비용이 작다)
+        Role("cover_reader", "표지 판독", "standard", 1, 300, 8_000,
+             ("read_cover", "read_marks", "read_roster"), image_max_px=1568),
         Role("rubric_builder", "루브릭", "standard", 2, 600, 30_000,
              ("expand_key_rubric", "derive_rubric", "audit_rubric")),
         Role("grader", "채점", "standard", 2, 600, 24_000,

@@ -79,7 +79,13 @@ class Exam(DawoniModel):
     created_at: datetime = Field(default_factory=utcnow)
     scores_by_class: bool = Field(
         default=False,
-        description="엑셀 점수표를 반마다 시트로 나눌까 (기본: 한 시트, PLAN.md §9-2)",
+        description="2026-11-18 전의 설정 (쓰지 않음 — 예전 시험 파일을 읽으려고 둔다)",
+    )
+    sheets_per_class: bool = Field(
+        default=True,
+        description="엑셀 점수표를 반마다 시트로 (+ 전체 요약). 끄면 한 시트에 모든 반 "
+        "(PLAN §9-2). 2026-11-18 강사 성적표 모양에 맞춰 기본을 반별로 — 예전 "
+        "`scores_by_class`는 기본값이 저장돼 있어 새 이름으로 바꿨다",
     )
 
     @model_validator(mode="after")

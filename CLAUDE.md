@@ -85,6 +85,8 @@ uv run python -m ruff format --check dawoni tests
 - 루브릭은 **먼저 모두 승인**: AI가 넓힌 표현 인정, 해설지와 문제가 다르다고 본 곳은 **강사의 해설지를
   따름**(강사가 부분 점수 규칙을 고친 해설지를 쓴다), 검산이 맞은 정답 후보만 인정. 강사에게는 정말 애매한
   것만 묻는다 — 이름, 판독불가, 검산이 엇갈린 정답 후보, 승인할 수 없는 루브릭.
+- 답안지 PDF마다 강사가 **반**을 고른다 (2026-11-18 사용자 결정, PLAN §16 40번) → 그 반 명단만 표지 프롬프트에
+  (7반 명단 86% → 그 반 명단 17~18/18). 명단은 엑셀·CSV·사진(jpg·png, AI가 읽음).
 - 이름 문제(못 읽음·같은 반 같은 이름·명부에 없음)와 `[판독불가]`는 멈추지 않는다 — 채점하고 "검토 필요",
   점수표·PDF에도 넣고("(이름 확인)"), 나중에 고치면 그 학생·문항만 다시 채점.
 - 점수표의 "검토 필요" 칸은 비우지 않고 AI 점수를 노랑으로.
@@ -93,10 +95,22 @@ uv run python -m ruff format --check dawoni tests
 
 ## AI 모델 (사용자 결정)
 
-- 앱 기본 AI는 claude(sonnet) — `config.default_agent` (2026-11-05). sonnet은 채점이 가장 좋았지만
-  표지의 한글 손글씨 이름을 자주 틀린다 (flash 5/6, opus 3/6, sonnet 1/6).
-- agy(gemini)를 쓸 때: fast·standard = `gemini-3.8-flash-medium`, strong = `gemini-4-argon-low`(따로인
-  한도). flash-low는 쓰지 않는다 (표지 회전·시험 읽기 실패).
+- **기본 등급별 모델** (2026-11-19 사용자 결정, PLAN §16 41번 — `config._default_tiers`):
+
+  | | 빠름 | 보통 | 강함 |
+  |---|---|---|---|
+  | claude | sonnet-5-5 high | opus-5-5 medium | opus-5-5 high |
+  | agy | gemini-3.8-flash-high | gemini-4-hydrogen-medium | gemini-4-hydrogen-high |
+
+  설정 파일은 등급을 모두 적어 두므로, 예전 기본 그대로인 칸만 처음 읽을 때 옮긴다 (`config._migrate`,
+  `schema_version` 2). 강사가 고친 칸은 그대로.
+- 앱 기본 AI는 claude — `config.default_agent` (2026-11-05). sonnet은 채점이 가장 좋았지만
+  표지의 한글 손글씨 이름은 gemini보다 못 읽는다 (2026-11-18 명단 없이 18장: hydrogen-medium 14, flash-medium 12,
+  opus 9, sonnet 8, haiku 3 — 7반 명단이면 sonnet 86%, haiku 75%, 그 반 명단만이면 opus 18/18, sonnet 17~18/18).
+  그래서 표지 판독(`cover_reader`)은 standard 등급.
+- 등급(빠름·보통·강함) → 모델은 AI마다 하나이고 모든 역할이 함께 쓴다 — 설정 → 역할별 모델의 '등급별 모델' 표.
+- agy: flash-low는 쓰지 않는다 (표지 회전·시험 읽기 실패). 2026-11-18까지는 fast·standard = flash-medium,
+  strong = argon-low(flash와 따로인 한도)였다.
 - 개발 중 실측(시험 읽기·표지·판독·채점…)은 flash-medium과 `claude-sonnet-5-5`에 한 번씩 보내 나란히
   비교한다. `claude-opus-*`는 사용자에게 먼저 묻는다.
 
@@ -104,3 +118,6 @@ uv run python -m ruff format --check dawoni tests
 
 `exports/<날짜_시험>/(점수표)_시험.xlsx` 하나 (`export/exam_files.py`). 2026-11-18 전에 쓴 HWPX(`반_문항.hwpx`,
 `반/반_이름_문항.hwpx`)는 그 폴더에 남아 있고 앱은 건드리지 않는다.
+점수표는 강사가 보낸 성적표 모양 (2026-11-18 사용자 요청, PLAN §9-2): 전체 요약 · 반마다 시트(소문항·문항 계·총점·
+석차·비고, 배점·평균·최고·최저 — 계·총점은 엑셀 수식) · 채점 근거. 비고에 애매한 곳(원본 확인, 검토 이유, 강사 이유).
+- HWP → HWPX(python-hwpx)는 쪽 배경 그림(워터마크)의 밝기·명암을 맞바꿔 읽는다 → `convert.fix_fill_images`로 바로잡음.

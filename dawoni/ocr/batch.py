@@ -86,7 +86,8 @@ def check_cover(c: CoverRead, exam: Exam, classes: list[str] | None) -> list[str
     bad = sorted({s.question for s in c.teacher_scores} - numbers)
     if bad:
         problems.append(f"teacher_scores의 문항 {bad}는 이 시험에 없다. {sorted(numbers)} 중에서")
-    if classes and c.class_name is not None and c.class_name not in classes:
+    # 반이 하나면 강사가 정한 반 — 표지에 다르게 적혀 있어도 그 반으로 하므로 다시 묻지 않는다
+    if classes and len(classes) > 1 and c.class_name is not None and c.class_name not in classes:
         problems.append(
             f"class_name '{c.class_name}'는 반 목록 {classes}에 없다. 손글씨가 다르게 보여도 "
             "목록 중 가장 가까운 것을 고르고 uncertain에 적은 그대로를 남길 것 (해당 없으면 null)"

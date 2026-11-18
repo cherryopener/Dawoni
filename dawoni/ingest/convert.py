@@ -21,11 +21,15 @@
 from __future__ import annotations
 
 import contextlib
+import functools
 import importlib
+import io
 import logging
+import struct
 import sys
 import threading
 import time
+import zipfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -120,11 +124,66 @@ def hwp_to_hwpx(src: Path, dest: Path) -> Path:
 
 
 def python_hwpx(src: Path) -> tuple[bytes, Counter[str]]:
-    """한글 없이 HWPX 바이트로 + 옮기지 못한 것 (종류 → 개수)."""
+    """한글 없이 HWPX 바이트로 + 옮기지 못한 것 (종류 → 개수). 채우기 그림의 밝기·명암을 바로잡는다
+    (`fix_fill_images`)."""
     from hwpx.hwp5.package import convert, to_hwpx_bytes
 
     converted = convert(src.read_bytes())
-    return to_hwpx_bytes(converted.files), converted.report.unconverted
+    data = to_hwpx_bytes(converted.files)
+    if fill_images_swapped():
+        data = fix_fill_images(data)
+    return data, converted.report.unconverted
+
+
+@functools.cache
+def fill_images_swapped() -> bool:
+    """python-hwpx가 HWP의 채우기 그림(쪽 배경·워터마크·칸 배경)의 밝기·명암을 맞바꿔 읽는가.
+
+    한글은 그 두 바이트를 명암·밝기 순서로 쓴다 — python-hwpx도 그림 개체(`Picture`)는 그렇게 읽지만
+    채우기(`Fill`)는 밝기부터 읽는다 (6.11). 실측 2026-11-18 11월 월례평가: 한글이 저장한 워터마크는
+    밝기 70·명암 −50(워터마크 효과)인데 python-hwpx로 바꾸면 밝기 −50·명암 70 → 다듬은 해설지에서
+    워터마크가 진하게 앞으로 튀어나와 글을 가렸다. 고친 판이 나오면 저절로 그만두게 직접
+    시험한다."""
+    try:
+        from hwpx.hwp5.binary import Cursor
+        from hwpx.hwp5.docinfo import FILL_IMAGE, Fill
+
+        payload = struct.pack("<IBbbBH", FILL_IMAGE, 0, -50, 70, 0, 1)  # 한글: 명암, 밝기 순
+        return Fill.read(Cursor(payload, "BORDER_FILL")).image_bright == -50
+    except Exception:  # python-hwpx 내부가 바뀌었으면 손대지 않는다
+        log.warning("python-hwpx 채우기 그림 읽기를 시험하지 못함 — 밝기·명암을 그대로 둠")
+        return False
+
+
+_HC = "{http://www.hancom.co.kr/hwpml/2011/core}"
+
+
+def fix_fill_images(data: bytes) -> bytes:
+    """HWPX 바이트의 `Contents/header.xml`에서 채우기 그림(`hc:imgBrush/hc:img`)의 bright·contrast를
+    맞바꾼다. 다른 파일은 바이트 그대로."""
+    from lxml import etree
+
+    src = zipfile.ZipFile(io.BytesIO(data))
+    try:
+        root = etree.fromstring(src.read("Contents/header.xml"))
+    except KeyError:
+        return data
+    imgs = [i for b in root.iter(_HC + "imgBrush") for i in b if i.tag == _HC + "img"]
+    if not imgs:
+        return data
+    for img in imgs:
+        bright, contrast = img.get("bright", "0"), img.get("contrast", "0")
+        img.set("bright", contrast)
+        img.set("contrast", bright)
+    head = b'<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as dst:
+        for info in src.infolist():
+            body = src.read(info.filename)
+            if info.filename == "Contents/header.xml":
+                body = head + etree.tostring(root, encoding="UTF-8")
+            dst.writestr(info, body, compress_type=info.compress_type)
+    return out.getvalue()
 
 
 def _hangul_save_as(src: Path, dest: Path, fmt: str) -> Path:

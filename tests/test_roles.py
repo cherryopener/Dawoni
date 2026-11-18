@@ -55,9 +55,8 @@ def test_role_files_are_english_with_versions() -> None:
 
 def test_role_tiers_follow_the_plan() -> None:
     tiers = {n: r.tier for n, r in ROLES.items()}
-    assert {n for n, t in tiers.items() if t == "fast"} == {
-        "cover_reader", "light_helper", "coordinator",
-    }  # fmt: skip
+    assert {n for n, t in tiers.items() if t == "fast"} == {"light_helper", "coordinator"}
+    assert tiers["cover_reader"] == "standard"  # 표지 이름은 haiku가 자주 틀린다 (2026-11-18)
     assert {n for n, t in tiers.items() if t == "strong"} == {
         "solver_verifier", "calibrator", "key_refiner",
     }  # fmt: skip
@@ -104,7 +103,7 @@ def test_role_layer_and_tier_model_reach_the_cli(
     assert "## [역할]\nRole: cover reader." in prompt
     assert prompt.index("## [역할]") < prompt.index("## [과업]")
     assert res.template_versions["cover_reader.md"] == version("cover_reader")
-    assert _model(fake_args(exe)[0]) == "gemini-3.8-flash-medium"  # fast 등급
+    assert _model(fake_args(exe)[0]) == "gemini-4-hydrogen-medium"  # standard 등급
 
 
 def test_teacher_can_raise_a_role_tier(
@@ -114,7 +113,7 @@ def test_teacher_can_raise_a_role_tier(
     cfg.role_tiers["cover_reader"] = "strong"
     engine, exe = engine_for([{"response": json.dumps({"ok": True})}], cfg)
     engine.run(COVER_LIKE, VARS)
-    assert _model(fake_args(exe)[0]) == "gemini-4-argon-low"
+    assert _model(fake_args(exe)[0]) == "gemini-4-hydrogen-high"
 
 
 def test_explicit_model_wins_over_tier(

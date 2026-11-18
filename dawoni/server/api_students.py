@@ -5,13 +5,13 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile
 from pydantic import BaseModel, Field
 
 from dawoni.server.api_content import save_upload, upload_dir
 from dawoni.server.api_setup import State
 from dawoni.server.state import AppState
-from dawoni.students import Roster, RosterStudent, read_table
+from dawoni.students import Roster, RosterStudent
 
 router = APIRouter(prefix="/api/students")
 
@@ -50,10 +50,17 @@ def remove_student(student_id: str, st: AppState = State) -> RosterStudent:
 
 
 @router.post("/import")
-def import_students(file: Annotated[UploadFile, File()], st: AppState = State) -> dict[str, Any]:
-    """엑셀(xlsx)·CSV (머리 줄: 이름/성명, 반, 학교). 이름·반이 같은 학생은 학교만 고친다."""
+def import_students(
+    file: Annotated[UploadFile, File()],
+    class_name: Annotated[str | None, Form()] = None,
+    st: AppState = State,
+) -> dict[str, Any]:
+    """엑셀(xlsx)·CSV (머리 줄: 이름/성명, 반, 학교) 또는 명단 사진(jpg·png — AI가 읽음, 20초쯤).
+    이름·반이 같은 학생은 학교만 고친다. `class_name`: 반이 없는 줄을 그 반으로."""
+    from dawoni.students.sheet import read_roster_file
+
     path = save_upload(file, upload_dir(st))
-    rows, notes = read_table(path)
+    rows, notes = read_roster_file(st.services().engine, path, class_name)
     res = _roster(st).import_rows(rows)
     return {
         "added": res.added,

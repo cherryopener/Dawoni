@@ -235,11 +235,14 @@ export type DetectedAgent = {
 export type Role = { name: string; title: string; default_tier: Tier; tier: Tier };
 export type Tier = "fast" | "standard" | "strong";
 
+export type TierModel = { model: string | null; effort: string | null };
 export type Config = {
   default_agent: string;
   teacher: string | null;
   coordinator_agent: string | null;
   role_tiers: Record<string, Tier>;
+  /** AI마다 등급 → 모델·생각 깊이 (`AppConfig.tiers`). 모든 역할이 등급으로 이 표를 함께 쓴다. */
+  tiers: Record<string, Partial<Record<Tier, TierModel>>>;
   ocr: { cross_check: boolean; clova_enabled: boolean; mathpix_enabled: boolean; clova_invoke_url: string | null; clova_secret: string | null; mathpix_app_id: string | null; mathpix_app_key: string | null };
   scanner: { smb_url: string | null; username: string | null };
 };

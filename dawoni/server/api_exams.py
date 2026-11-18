@@ -650,7 +650,7 @@ def scores(exam_id: str, body: ScoresBody | None = None, st: AppState = State) -
         "files": [p.name for p in res.written],
         "edited": [p.name for p in res.edited],
         "file_warnings": res.warnings,
-        "by_class": store.exam().scores_by_class,
+        "by_class": store.exam().sheets_per_class,
     }
 
 

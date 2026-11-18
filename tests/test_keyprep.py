@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import zipfile
 from pathlib import Path
@@ -446,3 +447,36 @@ def test_unmarked_points_follow_stage_one(app_paths: AppPaths, tmp_path: Path) -
     assert problems == [
         "배점 표시가 없는 문항 — 소문항 배점은 (1) 16점, (2) 17점 (1단계와 같은 규칙)"
     ]
+
+
+def test_old_draft_watermark_is_fixed_once(prep: Any, tmp_path: Path) -> None:
+    """2026-11-18 고치기 전에 HWP를 바꿔 둔 초안은 HWPX로 받을 때 한 번만 바로잡는다."""
+    from test_convert import _hwpx_with_page_background  # pyright: ignore[reportPrivateUsage]
+
+    svc, store = prep
+    _refined(store)
+
+    def rename(p: Any) -> None:
+        p.source_name = "월례.hwp"
+
+    store.update(rename)
+    base = store.source.read_bytes()
+    with_bg = _hwpx_with_page_background(tmp_path / "bg.hwpx", bright=-50, contrast=70)
+    with zipfile.ZipFile(store.source.with_suffix(".tmp"), "w") as out, zipfile.ZipFile(
+        io.BytesIO(base)) as old, zipfile.ZipFile(with_bg) as bg:  # fmt: skip
+        for info in old.infolist():
+            data = (
+                bg.read("Contents/header.xml")
+                if info.filename == "Contents/header.xml"
+                else old.read(info)
+            )
+            out.writestr(info, data)
+    store.source.with_suffix(".tmp").replace(store.source)
+    store.fill_fixed.unlink()
+    res = keyprep.export(svc, store)
+    with zipfile.ZipFile(res.path) as z:
+        assert 'bright="70" contrast="-50"' in z.read("Contents/header.xml").decode()
+    assert store.fill_fixed.exists()
+    keyprep.export(svc, store)  # 두 번째에는 다시 맞바꾸지 않는다
+    with zipfile.ZipFile(res.path) as z:
+        assert 'bright="70" contrast="-50"' in z.read("Contents/header.xml").decode()

@@ -97,7 +97,7 @@ function BatchDialog({ pdf, onClose }: { pdf: InboxPdf | null; onClose: () => vo
         {(roster.data?.classes.length ?? 0) > 0 && (
           <div>
             <div className="mb-1.5 text-[13px] text-text-2">
-              반 <Help>고르면 표지의 반을 이 안에서만 읽습니다. 비우면 명부의 반 전체.</Help>
+              반 <Help>이 PDF의 반을 하나 고르면 그 반 명단에서만 표지 이름을 고르고 반은 그 반으로 합니다 (늦게 본 학생 한 명도). 여럿 고르면 그 안에서, 비우면 명부의 반 전체.</Help>
             </div>
             <Chips options={roster.data!.classes} value={classes} onChange={setClasses} />
           </div>

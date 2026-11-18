@@ -13,6 +13,8 @@ import pytest
 
 from dawoni.ingest import convert
 
+REAL = Path(__file__).parents[1] / "real_data" / "docs" / "11월 월례평가 문제-물리 (1).hwp"
+
 
 class FakeComError(Exception):
     pass
@@ -132,3 +134,51 @@ def test_python_hwpx_first_hangul_only_for_missing_content(
     monkeypatch.setattr(convert.sys, "platform", "darwin")
     out = convert.hwp_to_hwpx(src, tmp_path / "o" / "4.hwpx")
     assert out.read_bytes() == b"PYHWPX" and calls == ["HWPX"], "맥은 한글을 부르지 않음"
+
+
+# ---------------------------------------------------------------- 워터마크 (채우기 그림) 밝기·명암
+
+
+def _hwpx_with_page_background(path: Path, bright: int, contrast: int) -> Path:
+    import zipfile
+
+    header = (
+        '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" '
+        'xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core"><hh:refList><hh:borderFills>'
+        '<hh:borderFill id="6"><hc:fillBrush><hc:imgBrush mode="ZOOM">'
+        f'<hc:img binaryItemIDRef="image6" bright="{bright}" contrast="{contrast}" '
+        'effect="REAL_PIC" alpha="0"/></hc:imgBrush></hc:fillBrush></hh:borderFill>'
+        "</hh:borderFills></hh:refList></hh:head>"
+    )
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/hwp+zip")
+        z.writestr("Contents/header.xml", header)
+        z.writestr("Contents/section0.xml", "<hs:sec/>")
+    return path
+
+
+def test_watermark_brightness_and_contrast_are_put_back(tmp_path: Path) -> None:
+    """2026-11-18 11월 월례평가: 한글이 저장한 워터마크(쪽 배경 그림)는 밝기 70·명암 −50인데
+    python-hwpx로 바꾸면 밝기 −50·명암 70 — 다듬은 해설지에서 워터마크가 진하게 앞으로 나와 글을
+    가렸다."""
+    import io
+    import zipfile
+
+    assert convert.fill_images_swapped(), "python-hwpx를 고치면 이 바로잡기는 저절로 꺼진다"
+    src = _hwpx_with_page_background(tmp_path / "a.hwpx", bright=-50, contrast=70)
+    fixed = convert.fix_fill_images(src.read_bytes())
+    with zipfile.ZipFile(src) as a, zipfile.ZipFile(io.BytesIO(fixed)) as b:
+        header = b.read("Contents/header.xml").decode()
+        assert 'bright="70" contrast="-50"' in header
+        assert b.read("Contents/section0.xml") == a.read("Contents/section0.xml")
+        assert b.namelist() == a.namelist()
+
+
+@pytest.mark.skipif(not REAL.is_file(), reason="real_data 없음")
+def test_real_hwp_watermark_matches_hangul() -> None:
+    import io
+    import zipfile
+
+    data, _ = convert.python_hwpx(REAL)
+    header = zipfile.ZipFile(io.BytesIO(data)).read("Contents/header.xml").decode()
+    assert 'bright="70" contrast="-50"' in header, "한글이 저장한 _revision.hwpx와 같게"

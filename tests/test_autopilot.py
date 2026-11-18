@@ -193,13 +193,17 @@ def test_quick_api_adds_answers_to_an_exam(
     bad = c.post("/api/quick", data={"exam_id": store.exam_id},
                  files={"answers": ("a.txt", b"x", "text/plain")})  # fmt: skip
     assert bad.status_code == 400 and "PDF" in bad.json()["detail"]
-    upload = {"answers": ("2반.pdf", pdf.read_bytes(), "application/pdf")}
-    job = c.post("/api/quick", data={"exam_id": store.exam_id}, files=upload).json()
+    upload = [("answers", ("메모.txt", b"x", "text/plain")),
+              ("answers", ("2반.pdf", pdf.read_bytes(), "application/pdf"))]  # fmt: skip
+    form = {"exam_id": store.exam_id, "answer_classes": ["", "2반"]}  # 파일과 같은 차례
+    job = c.post("/api/quick", data=form, files=upload).json()
     done = _wait(c, job)
     assert done["status"] == "succeeded", done
     assert done["result"]["graded"] == 1 and done["params"]["exam"] == store.exam_id
     state = c.get(f"/api/exams/{store.exam_id}/autopilot").json()
     assert state["state"] == "done" and state["students"] == 1 and state["graded"] == 1
+    assert "2반.pdf: 강사가 고른 반 2반 — 그 반 명단에서 이름" in state["decisions"]
+    assert any("명부에 2반 반 학생이 없어" in x for x in state["warnings"]), "명단이 없으면 알린다"
     assert (svc.workspace.scan_inbox / "2반.pdf").is_file(), "올린 답안지 원본은 스캔본 폴더에"
     summary = c.get(f"/api/exams/{store.exam_id}").json()["summary"]
     assert summary["auto"] and summary["step"] == "result"
