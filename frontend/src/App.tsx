@@ -14,6 +14,7 @@ import { SessionContext } from "@/lib/session";
 import type { AuthStatus, Status } from "@/lib/types";
 import { ExamPage } from "@/pages/Exam";
 import { ExamsPage } from "@/pages/Exams";
+import { KeyPrepPage } from "@/pages/KeyPrep";
 import { LearningPage } from "@/pages/Learning";
 import { LoginPage } from "@/pages/Login";
 import { SettingsPage } from "@/pages/Settings";
@@ -176,7 +177,7 @@ function Shell({ dark, toggleTheme, teacher, email }: { dark: boolean; toggleThe
             href={href(n.key)}
             className={cn(
               "flex h-9 items-center gap-1.5 rounded-lg px-3 text-text-2 no-underline hover:bg-muted hover:text-text [&_svg]:size-4",
-              top === n.key && "bg-muted text-text",
+              (top === n.key || (n.key === "exams" && top === "prep")) && "bg-muted text-text",
             )}
           >
             {n.icon}
@@ -216,6 +217,7 @@ function Shell({ dark, toggleTheme, teacher, email }: { dark: boolean; toggleThe
           <ExamsPage />
         </Keep>
         {top === "exams" && route[1] && <ExamPage key={route[1]} examId={route[1]} step={route[2]} focus={route.slice(3)} />}
+        {top === "prep" && route[1] && <KeyPrepPage key={route[1]} prepId={route[1]} />}
         <Keep show={top === "students"}>
           <StudentsPage />
         </Keep>

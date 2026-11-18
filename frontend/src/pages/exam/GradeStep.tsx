@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Help } from "@/components/ui/help";
-import { ErrorNote, Progress } from "@/components/ui/misc";
+import { ErrorNote, Input, Progress } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { api, enc, examFileUrl, useAction, useApi, waitJob } from "@/lib/api";
@@ -116,6 +116,7 @@ function Review({ q, start }: { q: string; start?: string }) {
   const sheet = useApi<ReviewSheet>(cur ? `${base}/review/${enc(cur)}/${enc(q)}` : null);
   const [editing, setEditing] = useState(false);
   const [scores, setScores] = useState<Record<string, number>>({});
+  const [notes, setNotes] = useState<Record<string, string>>({});
   const act = useAction();
   const sh = sheet.data?.student === cur ? sheet.data : undefined;
   const parts = (sh?.parts ?? []).filter((p) => p.awarded !== null);
@@ -126,14 +127,17 @@ function Review({ q, start }: { q: string; start?: string }) {
     if (n) setSel(n.s.student);
     setEditing(false);
     setScores({});
+    setNotes({});
   };
   const confirm = () =>
     act.run(async () => {
       if (!sh || sh.total === null) return next();
-      const part_scores = Object.fromEntries(
-        parts.map((p) => [p.label.startsWith(`${q}-`) ? p.label.slice(q.length + 1) : "", scores[p.label] ?? p.awarded!]),
-      );
-      await api.put(`${base}/students/${enc(sh.student)}/grades/${enc(q)}/parts`, { part_scores, by, learn: Object.keys(scores).length > 0 });
+      const key = (label: string) => (label.startsWith(`${q}-`) ? label.slice(q.length + 1) : "");
+      const part_scores = Object.fromEntries(parts.map((p) => [key(p.label), scores[p.label] ?? p.awarded!]));
+      // 바꾼 소문항이 있으면 채점 사례집에 남는다 (이유는 선택)
+      const changed = parts.filter((p) => scores[p.label] !== undefined && scores[p.label] !== p.awarded);
+      const part_notes = Object.fromEntries(changed.map((p) => [key(p.label), (notes[p.label] ?? "").trim()]).filter(([, v]) => v));
+      await api.put(`${base}/students/${enc(sh.student)}/grades/${enc(q)}/parts`, { part_scores, part_notes, by, learn: changed.length > 0 });
       students.reload();
       reload();
       next();
@@ -183,6 +187,7 @@ function Review({ q, start }: { q: string; start?: string }) {
                       setSel(s.student);
                       setEditing(false);
                       setScores({});
+                      setNotes({});
                     }}
                     className={cn("flex w-full cursor-pointer items-center rounded-lg px-3 py-2.5 text-left hover:bg-muted", cur === s.student && "bg-muted")}
                   >
@@ -257,6 +262,17 @@ function Review({ q, start }: { q: string; start?: string }) {
                     </span>
                   )}
                 </div>
+                {editing && score !== null && score !== p.awarded && (
+                  <div className="mt-2">
+                    <Input
+                      value={notes[p.label] ?? ""}
+                      onChange={(e) => setNotes({ ...notes, [p.label]: e.target.value })}
+                      placeholder="왜 바꿨나요? (선택 — 예: '더 많이 꺾인다'도 굴절률이 크다는 뜻으로 인정)"
+                      className="w-full"
+                    />
+                    <div className="mt-1 text-[12px] text-text-3">확정하면 채점 사례집(배우기)에 남아 다음 시험의 해설 다듬기·루브릭에 쓰입니다.</div>
+                  </div>
+                )}
                 <div className="mt-3 text-[15px] leading-[2]">
                   {p.lines.length === 0 && <span className="text-text-3">(빈 답안)</span>}
                   {p.lines.map((line, i) => (

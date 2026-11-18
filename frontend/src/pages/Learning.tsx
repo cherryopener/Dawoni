@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { api, jobsChanged, useAction, useApi, waitJob } from "@/lib/api";
 import { useTeacher } from "@/lib/session";
 import type { GlobalRule, Job, MemoryNote, Scope, Skill } from "@/lib/types";
+import { CasebookCard } from "./Casebook";
 
 const TARGET: Record<string, string> = {
   all: "전체",
@@ -107,6 +108,8 @@ export function LearningPage() {
           {proposals.length === 0 && <div className="text-text-3">기다리는 제안이 없습니다.</div>}
         </CardBody>
       </Card>
+
+      <CasebookCard />
 
       <Card>
         <CardHeader

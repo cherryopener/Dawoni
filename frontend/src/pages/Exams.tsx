@@ -11,6 +11,7 @@ import { go, href } from "@/lib/router";
 import { useSession } from "@/lib/session";
 import { STEPS, stepIndex } from "@/lib/steps";
 import type { ExamListItem, Job, Level } from "@/lib/types";
+import { KeyPrepStart } from "./KeyPrepStart";
 import { QuickStart } from "./QuickStart";
 
 const ACCEPTED = /\.(pdf|docx|hwpx|hwp)$/i;
@@ -172,7 +173,10 @@ export function ExamsPage() {
   const { data, error, loading, reload } = useApi<ExamListItem[]>("/exams");
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
-      <QuickStart />
+      <KeyPrepStart />
+      <div className="mt-4">
+        <QuickStart />
+      </div>
       <div className="mt-8 flex items-center">
         <h1 className="m-0 flex-1 text-[18px] font-medium">시험</h1>
         <Button variant="ghost" onClick={() => setOpen(true)} title="답안지 없이 시험지·해설만 읽고 루브릭을 단계별로 확인할 때">
@@ -185,7 +189,7 @@ export function ExamsPage() {
         </div>
       )}
       {data && data.length === 0 && (
-        <Card className="mt-6 px-6 py-12 text-center text-text-2">아직 시험이 없습니다. 위 "새 채점"에 파일을 놓아 시작하세요.</Card>
+        <Card className="mt-6 px-6 py-12 text-center text-text-2">아직 시험이 없습니다. 위 1단계(새 채점)에 파일을 놓아 시작하세요.</Card>
       )}
       {loading && !data && <div className="mt-6 text-text-3">불러오는 중…</div>}
       <div className="mt-6 flex flex-col gap-3">

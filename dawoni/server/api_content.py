@@ -197,6 +197,45 @@ def learn_from(body: LearnBody, st: AppState = State) -> Job:
     return learning.submit(st, c, st.who(body.by))
 
 
+# ---------------------------------------------------------------- 채점 사례집
+
+
+@router.get("/casebook")
+def list_cases(st: AppState = State) -> dict[str, Any]:
+    """채점 사례집 (`dawoni.casebook`): 새 것부터 + 폴더 (작업공간 기준)."""
+    from dawoni.casebook import CaseStore
+
+    ws = st.services().workspace
+    return {"cases": CaseStore(ws).all(), "folder": ws.casebook.relative_to(ws.root).as_posix()}
+
+
+class CaseEdit(BaseModel):
+    title: str | None = None
+    body: str | None = None
+    keywords: list[str] | None = None
+    reusable: bool | None = None
+    enabled: bool | None = None
+
+
+@router.patch("/casebook/{case_id}")
+def edit_case(case_id: str, body: CaseEdit, st: AppState = State) -> Any:
+    from dawoni.casebook import Case, CaseStore
+
+    store = CaseStore(st.services().workspace)
+    c = store.get(case_id)
+    change = body.model_dump(exclude_none=True)
+    if "keywords" in change:
+        change["keywords"] = [k.strip() for k in change["keywords"] if k.strip()]
+    return store.save(Case.model_validate({**c.model_dump(), **change}))
+
+
+@router.delete("/casebook/{case_id}")
+def delete_case(case_id: str, st: AppState = State) -> dict[str, bool]:
+    from dawoni.casebook import CaseStore
+
+    return {"deleted": CaseStore(st.services().workspace).delete(case_id)}
+
+
 # ---------------------------------------------------------------- 범위 프로필
 
 

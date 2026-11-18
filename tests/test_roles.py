@@ -58,7 +58,9 @@ def test_role_tiers_follow_the_plan() -> None:
     assert {n for n, t in tiers.items() if t == "fast"} == {
         "cover_reader", "light_helper", "coordinator",
     }  # fmt: skip
-    assert {n for n, t in tiers.items() if t == "strong"} == {"solver_verifier", "calibrator"}
+    assert {n for n, t in tiers.items() if t == "strong"} == {
+        "solver_verifier", "calibrator", "key_refiner",
+    }  # fmt: skip
 
 
 class _Out(DawoniModel):

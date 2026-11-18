@@ -17,6 +17,7 @@ from pathlib import Path
 
 from dawoni import sharing
 from dawoni.agents import AgentError, AgentErrorCode
+from dawoni.casebook import CaseStore
 from dawoni.context import TaskFailed, situation
 from dawoni.export.exam_files import ExportResult, export_scores
 from dawoni.grading import assign, calibration
@@ -38,6 +39,7 @@ from dawoni.grading.pipeline import (
     solve_question,
     suggest_rubric,
 )
+from dawoni.grading.render import exam_question_text, key_text
 from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.base import utcnow
 from dawoni.models.calibration import CalibrationEval, EvalCase, RubricSuggestion
@@ -159,7 +161,11 @@ def rubric_questions(
                 return r
             if q.number in keyed:
                 assert key is not None
-                r = expand_key_rubric(svc.engine, q, key, scope, previous=previous)
+                # 채점 사례집: 이 문항 글·해설과 열쇠말이 겹치는 지난 사례만
+                cases = CaseStore(svc.workspace).relevant(
+                    "\n".join([exam_question_text(q), key_text(key, q)])
+                )
+                r = expand_key_rubric(svc.engine, q, key, scope, previous=previous, cases=cases)
                 r = r.model_copy(update={"created_by": by, "created_at": utcnow()})
                 if not q.needs_rubric():  # 단답형인데 코드로는 채점할 수 없어 AI 루브릭
                     why: list[str] = []

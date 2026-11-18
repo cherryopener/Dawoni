@@ -31,6 +31,8 @@ from typing import Literal
 from pydantic import ValidationError
 from rapidfuzz import fuzz
 
+from dawoni.casebook import Case
+from dawoni.casebook import prompt_text as case_prompt
 from dawoni.config import AgentName
 from dawoni.context import (
     ContextEngine,
@@ -267,10 +269,12 @@ def expand_key_rubric(
     agent: AgentName | None = None,
     model: str | None = None,
     previous: Rubric | None = None,
+    cases: list[Case] | None = None,
 ) -> Rubric:
     """강사 해설지를 넓혀 루브릭을 만든다 — AI 호출 한 번 (풀이·검토·검산 없음).
 
-    보내는 것: 이 문항과 이 문항의 해설지만, 범위는 짧은 판본(이름만)."""
+    보내는 것: 이 문항과 이 문항의 해설지만, 범위는 짧은 판본(이름만).
+    `cases`: 이 문항과 맞는 지난 채점 사례 (`dawoni.casebook`, [기준 예시] 자리)."""
 
     def check(d: KeyRubricDraft) -> list[str]:
         draft = d.to_rubric_draft()
@@ -284,6 +288,7 @@ def expand_key_rubric(
         "parts": bool(q.parts),
         "never_deduct": DEFAULT_NEVER_DEDUCT,
         "concepts": bool(key.concepts),
+        "cases": bool(cases),
     }
     res = engine.run(
         dataclasses.replace(EXPAND_KEY, validator=check),
@@ -291,6 +296,7 @@ def expand_key_rubric(
             variables=variables,
             scope=scope_layer(scope).variants[-1],
             material="\n\n".join([exam_question_text(q), key_text(key, q)]),
+            examples=case_prompt(cases or []),
         ),
         agent=agent,
         model=model,
@@ -307,6 +313,8 @@ def expand_key_rubric(
         notes.append(
             f"AI가 넓힌 표현 {len(draft.accepted_alternatives)}개 — 인정한 것만 채점에 씁니다"
         )
+    if cases:
+        notes.append(f"지난 채점 사례 {len(cases)}건 참고: " + " / ".join(c.title for c in cases))
     notes.append("해설지를 넓혀 만든 루브릭 (AI 풀이 없음) — 해설지 오타가 걱정되면 'AI 풀기'")
     data = draft.model_dump()
     data["never_deduct"] = checks.merge_never_deduct(draft, DEFAULT_NEVER_DEDUCT)

@@ -176,6 +176,11 @@ class WorkspacePaths:
         return self.root / "exports"
 
     @property
+    def casebook(self) -> Path:
+        """채점 사례집 (`dawoni.casebook`) — 강사가 바꾼 점수에서 정리한 md."""
+        return self.root / "casebook"
+
+    @property
     def scan_inbox(self) -> Path:
         """복합기에서 받은 답안지 스캔본 (PDF)을 강사가 옮겨 두는 곳."""
         return self.root / "스캔본"

@@ -902,9 +902,11 @@ def confirm_grade(
     g = teacher_review(g, r, body.awarded, note=body.note, by=st.who(body.by), item_notes=notes)
     store.save_grade(g)
     workflow.refresh_scores(svc, store)
-    if body.learn:
-        c = learning.grade_correction(before, g, r, store.exam().title)
-        learning.from_edit(st, body, c, st.who(body.by))
+    if body.learn:  # 바꾼 점수 → 채점 사례집 (소문항 하나에 이유 하나로 모음)
+        why = "\n".join([*(x for x in notes.values()), *([body.note] if body.note else [])])
+        parts = {p.label: why for p in store.exam().question(number).parts} or {"": why}
+        learning.cases_from_review(st, store, number, student, before, g, r, parts,
+                                   st.who(body.by))  # fmt: skip
     return g
 
 
@@ -1004,9 +1006,9 @@ def confirm_grade_parts(
     )
     store.save_grade(g)
     workflow.refresh_scores(svc, store)
-    if body.learn:
-        c = learning.grade_correction(before, g, r, store.exam().title)
-        learning.from_edit(st, body, c, st.who(body.by))
+    if body.learn:  # 바꾼 소문항 점수 → 채점 사례집
+        learning.cases_from_review(st, store, number, student, before, g, r, notes,
+                                   st.who(body.by))  # fmt: skip
     return g
 
 

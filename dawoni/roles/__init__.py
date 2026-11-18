@@ -25,6 +25,7 @@ _VERSION = re.compile(r"<!--\s*version:\s*([\w.\-]+)\s*-->")
 RoleName = Literal[
     "exam_reader",
     "key_reader",
+    "key_refiner",
     "handwriting_reader",
     "cover_reader",
     "rubric_builder",
@@ -66,6 +67,10 @@ ROLES: dict[RoleName, Role] = {
              ("extract_questions",), image_max_px=1568),
         Role("key_reader", "해설지 판독", "standard", 2, 900, 40_000,
              ("extract_answer_key",), image_max_px=1568),
+        # 0단계 해설 다듬기: 해설지를 따라 풀고 부분 점수를 촘촘하게 (2026-11-18 사용자 요청 —
+        # "높은 모델"로). 문항 하나에 한 번, 그림 포함
+        Role("key_refiner", "해설 다듬기", "strong", 2, 900, 30_000,
+             ("refine_key",), image_max_px=1568),
         Role("handwriting_reader", "손글씨 판독", "standard", 2, 900, 20_000,
              ("transcribe_answer",)),
         Role("cover_reader", "표지 판독", "fast", 1, 300, 8_000,
@@ -79,7 +84,8 @@ ROLES: dict[RoleName, Role] = {
         Role("calibrator", "보정", "strong", 2, 600, 30_000,
              ("suggest_rubric",)),
         Role("light_helper", "가벼운 도우미", "fast", 1, 600, 24_000,
-             ("match_candidates", "check_short_answers", "refine_rule", "learn_lesson")),
+             ("match_candidates", "check_short_answers", "refine_rule", "learn_lesson",
+              "write_case")),
         # 총괄 AI: 부탁 → 작업 하나 (원문을 보지 않으므로 프롬프트가 짧다, PLAN.md §2-2)
         Role("coordinator", "총괄 AI", "fast", 1, 180, 8_000, ("coordinate",)),
     )

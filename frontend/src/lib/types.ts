@@ -251,6 +251,25 @@ export type MemoryNote = { id: string; text: string; applies_to: Scope[]; enable
 export type Skill = { id: string; name: string; description: string; applies_to: Scope[]; enabled: boolean; proposed: boolean; request: string | null; body: string };
 export type GlobalRule = { id: string; title: string; text: string; enabled: boolean; applies_to: Scope[] };
 
+/** 채점 사례집 (`dawoni/casebook.py`): 강사가 채점 검토에서 바꾼 점수 한 건. */
+export type Case = {
+  id: string;
+  title: string;
+  verdict: "인정" | "불인정";
+  keywords: string[];
+  reusable: boolean;
+  enabled: boolean;
+  exam: string;
+  question: string;
+  part: string;
+  ai_points: number | null;
+  teacher_points: number | null;
+  max_points: number | null;
+  created_by: string | null;
+  created_at: string;
+  body: string;
+};
+
 export type RosterStudent = { id: string; name: string; class_name: string | null; school: string | null };
 
 export type Level = { id: string; label: string; scope_id: string };
@@ -278,3 +297,82 @@ export type StudentHistory = { key: string; name: string; class_name: string | n
 
 /** 시험지 원본 (영역 지정해서 읽기). PDF가 아니면 그림 붙여 넣기만. */
 export type ExamSource = { name: string | null; pdf: boolean; pages: { width: number; height: number }[]; key_pages: number[] };
+
+// ---------------------------------------------------------------- 0단계 해설 다듬기 (dawoni/keyprep.py)
+
+export type LineKind = "item" | "level" | "accept" | "deduct" | "note";
+export type LineSource = "key" | "ai" | "ask" | "fill" | "teacher";
+
+export type PrepLine = {
+  id: string;
+  kind: LineKind;
+  text: string;
+  points: number | null;
+  source: LineSource;
+  why: string | null;
+  question: string | null;
+  /** 강사가 정한 것. null이면 질문은 아직 안 정함(넣지 않음), 나머지는 넣음. */
+  decision: "in" | "out" | null;
+};
+
+export type PrepPart = { label: string; points: number; answer: string | null; no_partial: boolean; lines: PrepLine[] };
+
+export type SolveCheck = { label: string; answer: string; agrees: "same" | "different" | "unsure"; note: string | null };
+
+export type PrepQuestion = {
+  number: string;
+  points: number | null;
+  /** 시험지에 배점 표시가 없어 ⌊100 ÷ 문항 수⌋로 정함 (1단계와 같은 규칙). */
+  points_guessed: boolean;
+  text: string;
+  figures: string[];
+  key_paragraphs: string[];
+  key_figures: string[];
+  status: "waiting" | "done" | "failed";
+  error: string | null;
+  checks: SolveCheck[];
+  explanation: string | null;
+  explanation_in: boolean;
+  replace: number[];
+  parts: PrepPart[];
+  agent: string | null;
+  model: string | null;
+  edited_by: string | null;
+  /** AI에게 참고로 준 지난 채점 사례 (제목). */
+  cases: string[];
+  problems: string[];
+  pending: number;
+  /** 강사가 채울 빈칸(□)이 남은 줄 — 채우거나 빼야 HWPX를 받는다. */
+  blanks: number;
+  has_key: boolean;
+};
+
+export type KeyPrep = {
+  id: string;
+  title: string;
+  source_name: string;
+  level: string;
+  created_at: string;
+  state: "running" | "done" | "failed";
+  error: string | null;
+  questions: PrepQuestion[];
+  warnings: string[];
+  exported: string | null;
+  exported_at: string | null;
+};
+
+export type KeyPrepSummary = {
+  id: string;
+  title: string;
+  source_name: string;
+  created_at: string;
+  state: "running" | "done" | "failed";
+  questions: number;
+  done: number;
+  failed: number;
+  pending: number;
+  blanks: number;
+  exported: string | null;
+};
+
+export type PrepExport = { path: string; name: string; warnings: string[]; skipped: string[]; pending: number };

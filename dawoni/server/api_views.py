@@ -43,6 +43,8 @@ JOB_TITLES = {
     "read_marks": "빨간 펜 점수 읽기",
     "marked_pdf": "채점 답안지 PDF",
     "autopilot": "한 번에 채점",
+    "keyprep": "해설 다듬기",
+    "casebook": "채점 사례 정리",
     "suggest_rubric": "보정 제안",
     "agent_test": "AI 연결 시험",
 }
@@ -151,6 +153,8 @@ def _job_notice(j: Job) -> dict[str, Any]:
     title = JOB_TITLES.get(j.kind, j.kind)
     exam = j.params.get("exam")
     link = ["exams", str(exam)] if exam else ["exams"]
+    if j.kind == "keyprep" and (prep := j.params.get("prep")):
+        link = ["prep", str(prep)]
     if j.status == "failed":
         return {"id": j.id, "kind": "job_failed", "title": f"{title} 멈춤",
                 "detail": j.error.message if j.error else "", "count": 0,
@@ -158,6 +162,19 @@ def _job_notice(j: Job) -> dict[str, Any]:
     res = j.result or {}
     files = res.get("files")
     bits = [f"채점 {res['graded']}건"] if res.get("graded") else []
+    if j.kind == "casebook":
+        cases = res.get("cases")
+        made = (
+            sum(1 for c in cases if isinstance(c, dict) and c.get("case"))
+            if isinstance(cases, list)
+            else 0
+        )  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        bits = [f"사례 {made}건" if made else "정리할 것 없음"]
+        link = ["learning"]
+    if j.kind == "keyprep":
+        bits = [f"문항 {res.get('done', 0)}/{res.get('questions', 0)}"]
+        if res.get("pending"):
+            bits.append(f"질문 {res['pending']}개")
     if isinstance(files, list) and files:
         bits.append(f"파일 {len(files)}개")
     return {"id": j.id, "kind": "job_done", "title": f"{title} 끝남", "detail": " · ".join(bits),

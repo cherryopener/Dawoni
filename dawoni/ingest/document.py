@@ -84,6 +84,11 @@ class ParsedDocument:
     paragraphs: list[DocParagraph]
     images: dict[str, bytes]
     """그림 ID(문서 안 경로) → 파일 바이트."""
+    elements: list[_El] = field(default_factory=lambda: list[_El]())
+    """HWPX만: `paragraphs`와 같은 순서의 문단 XML(`hp:p`) — 해설을 고쳐 쓸 때
+    (`export.key_hwpx`)."""
+    roots: dict[str, _El] = field(default_factory=lambda: dict[str, _El]())
+    """HWPX만: 구역 파일 이름 → 읽은 XML 뿌리 (`elements`가 이 안에 있다)."""
 
 
 IMAGE_MARK = "[그림]"
@@ -445,6 +450,8 @@ class _HwpxReader:
                     self.bin[item.get("id") or ""] = item.get("href") or ""
         self.images: dict[str, bytes] = {}
         self.out: list[DocParagraph] = []
+        self.elements: list[_El] = []
+        self.roots: dict[str, _El] = {}
 
     def sections(self) -> list[str]:
         names = [n for n in self.z.namelist() if re.fullmatch(r"Contents/section\d+\.xml", n)]
@@ -454,6 +461,7 @@ class _HwpxReader:
         for name in self.sections():
             root = _xml(self.z, name)
             if root is not None:
+                self.roots[name] = root
                 self.numbering.section(root)
                 self.block(root, note=False)
         return self.out
@@ -478,6 +486,7 @@ class _HwpxReader:
         self.inline(p, para, after)
         if (done := para.done()) is not None:
             self.out.append(done)
+            self.elements.append(p)
         for sub, is_note in after:
             if is_note:
                 self.note(sub)
@@ -533,7 +542,7 @@ def read_hwpx(path: Path) -> ParsedDocument:
     with zipfile.ZipFile(path) as z:
         r = _HwpxReader(z)
         paragraphs = r.read()
-        return ParsedDocument(path, paragraphs, r.images)
+        return ParsedDocument(path, paragraphs, r.images, r.elements, r.roots)
 
 
 def read_document(path: Path) -> ParsedDocument:
@@ -564,6 +573,9 @@ class DocAnalysis:
     """문항 번호 → 해설 조각 (미주·각주, "정답 및 해설" 뒤에서 그 번호로 시작하는 부분)."""
     key_rest: str = ""
     """해설 구간 중 어느 문항에도 붙이지 못한 글."""
+    key_index: dict[str, list[int]] = field(default_factory=lambda: dict[str, list[int]]())
+    """문항 번호 → 그 해설 조각의 문단 번호 (`ParsedDocument.paragraphs`의 자리, 문서 순서)."""
+    doc: ParsedDocument | None = None
 
 
 def _png(data: bytes, out: Path) -> Path | None:
@@ -585,13 +597,32 @@ def _anchor(text: str) -> str | None:
     return _anchor_label(text) if _ANCHOR.match(text) else None
 
 
-def analyze_document(path: Path, work_dir: Path) -> DocAnalysis:
-    """`work_dir`: 꺼낸 그림 PNG를 둘 곳."""
-    doc = read_document(path)
+def key_section_start(paragraphs: list[DocParagraph]) -> int:
+    """해설 구간("정답 및 해설", "[모범 답안]" …)을 여는 본문 문단의 자리. 없으면 문단 수."""
+    return next(
+        (i for i, p in enumerate(paragraphs) if not p.note and _KEY_HEAD.match(p.text)),
+        len(paragraphs),
+    )
+
+
+def is_question_anchor(text: str) -> bool:
+    """문항 번호 줄로 읽힐 글인가 ("3.", "[서술형 2]") — 해설 구간에서는 그 문항 해설로
+    넘어간다."""
+    return _anchor(text) is not None
+
+
+def analyze_document(
+    path: Path, work_dir: Path, *, doc: ParsedDocument | None = None, images: bool = True
+) -> DocAnalysis:
+    """`work_dir`: 꺼낸 그림 PNG를 둘 곳. `doc`: 이미 읽은 문서 (해설을 고쳐 쓸 때 XML과 함께).
+    `images`: False면 그림을 꺼내지 않는다 (문단 자리만 필요할 때)."""
+    doc = doc or read_document(path)
     layout = DocumentLayout(path=path, pages=[], regions=[], scanned=False)
     files: dict[str, Path | None] = {}
 
     def image_file(ref: str) -> Path | None:
+        if not images:
+            return None
         if ref not in files:
             name = re.sub(r"[^\w.-]", "_", ref)
             files[ref] = _png(doc.images[ref], work_dir / "doc_images" / f"{name}.png")
@@ -602,10 +633,7 @@ def analyze_document(path: Path, work_dir: Path) -> DocAnalysis:
         return files[ref]
 
     # 해설 구간이 시작되는 곳 (그 뒤는 문항이 아니다)
-    key_start = next(
-        (i for i, p in enumerate(doc.paragraphs) if not p.note and _KEY_HEAD.match(p.text)),
-        len(doc.paragraphs),
-    )
+    key_start = key_section_start(doc.paragraphs)
     body = [(i, p) for i, p in enumerate(doc.paragraphs[:key_start]) if not p.note]
     cands = [(i, a) for i, p in body if (a := _anchor(p.text)) is not None]
     keep = number_chain([(k, int(a)) for k, (_, a) in enumerate(cands) if a.isdigit()])
@@ -615,6 +643,7 @@ def analyze_document(path: Path, work_dir: Path) -> DocAnalysis:
 
     regions: list[Region] = []
     notes: dict[str, list[DocParagraph]] = {}
+    index: dict[str, list[int]] = {}
     current: Region | None = None
     last_note: str | None = None  # 바로 앞 미주가 달린 문항
     for i, p in enumerate(doc.paragraphs[:key_start]):
@@ -625,6 +654,7 @@ def analyze_document(path: Path, work_dir: Path) -> DocAnalysis:
                 owner = last_note = current.label
             if owner is not None:
                 notes.setdefault(owner, []).append(p)
+                index.setdefault(owner, []).append(i)
             continue
         if i in starts:
             current = Region(label=starts[i])
@@ -642,7 +672,7 @@ def analyze_document(path: Path, work_dir: Path) -> DocAnalysis:
     rest: list[str] = []
     labels = {r.label for r in regions}
     owner: str | None = None
-    for p in doc.paragraphs[key_start:]:
+    for i, p in enumerate(doc.paragraphs[key_start:], start=key_start):
         a = _anchor(p.text)
         if a is not None and a in labels:
             owner = a
@@ -650,6 +680,7 @@ def analyze_document(path: Path, work_dir: Path) -> DocAnalysis:
             rest.append(p.text)
         else:
             notes.setdefault(owner, []).append(p)
+            index.setdefault(owner, []).append(i)
 
     for r in regions:
         r.points = marked_points(r.text)
@@ -668,7 +699,7 @@ def analyze_document(path: Path, work_dir: Path) -> DocAnalysis:
         text = "\n".join(p.text for p in ps).strip()
         if text or imgs:
             keys[label] = KeyPiece(text, imgs)
-    return DocAnalysis(layout, keys, "\n".join(rest).strip())
+    return DocAnalysis(layout, keys, "\n".join(rest).strip(), index, doc)
 
 
 def _chunk(regions: list[Region]) -> None:
