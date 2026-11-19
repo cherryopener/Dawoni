@@ -235,7 +235,9 @@ def test_transcript_confirm_and_scan_job(
     assert done["status"] == "succeeded" and done["result"]["saved"] == ["1"], done
 
     tr = c.get(f"{base}/students/F/transcripts/1").json()
-    assert not tr["transcript"]["confirmed"] and tr["needs_attention"]
+    # [판독불가]가 없으면 AI가 바로 확정 (2026-11-19) — 애매한 곳 표시는 남는다
+    assert tr["transcript"]["confirmed"] and tr["transcript"]["confirmed_by"] == "AI"
+    assert tr["needs_attention"]
     assert tr["page_images"] == ["scans/F/page_01.png"]
     assert c.get(f"{base}/file", params={"path": tr["page_images"][0]}).status_code == 200
 

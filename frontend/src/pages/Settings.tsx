@@ -226,6 +226,12 @@ export function SettingsPage() {
               label="교차 판독"
               desc="다른 모델로 한 번 더 읽어 다른 곳을 표시합니다. 판독 토큰이 두 배."
             />
+            <Switch
+              checked={c.ocr.auto_accept}
+              onCheckedChange={(v) => void patch({ ocr: { auto_accept: v } })}
+              label="AI가 판독을 바로 확정"
+              desc="[판독불가]가 없는 답안은 AI가 읽은 그대로 확정하고 채점합니다. 강사는 [판독불가]와 채점 검토만 봅니다. 끄면 모든 판독문이 강사 확인 전으로 남습니다."
+            />
             <Switch checked={c.ocr.clova_enabled} onCheckedChange={(v) => void patch({ ocr: { clova_enabled: v } })} label="CLOVA OCR 참고" desc="결과를 참고 자료로 붙입니다." />
             {c.ocr.clova_enabled && (
               <div className="flex gap-2 pb-2">

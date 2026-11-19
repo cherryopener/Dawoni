@@ -391,6 +391,7 @@ def test_cli_scan_confirm_then_grade(
     cfg = AppConfig()
     cfg.agents["agy"].executable = str(exe)
     cfg.ocr.cross_check = False
+    cfg.ocr.auto_accept = False  # 자동 확인을 끈 강사: 판독문은 강사 확인 전 (기본은 AI 확인)
     save_config(app_paths, cfg)
     w = ["--workspace", str(ws.root)]
     assert main(["scope", *w, "import", str(FIX / "scope.json")]) == 0

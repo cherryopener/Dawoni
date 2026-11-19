@@ -666,6 +666,10 @@ class StudentRecord(DawoniModel):
 UNREADABLE = "[판독불가]"
 """판독문에서 끝내 읽지 못한 자리. AI가 남기고 강사가 채운다 (ocr/review.py)."""
 
+AI_CONFIRMER = "AI"
+"""`Transcript.confirmed_by`: `[판독불가]`가 없어 AI가 바로 확정한 판독문
+(`config.ocr.auto_accept`). 강사가 열어 확인하면 강사 이름으로 바뀐다."""
+
 ERASED = "[지움]"
 """학생이 지운 자리 (지우개·연필로 지워 읽을 것이 없음). 강사가 원본을 보고 `[판독불가]`를 이것으로
 바꾼다 — 확정할 수 있고, 채점에서 뺀다 (2026-11-19 사용자 요청: 지운 부분만 지운 것으로)."""

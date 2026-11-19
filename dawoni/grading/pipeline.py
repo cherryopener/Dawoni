@@ -171,6 +171,9 @@ SUGGEST: TaskDef[RubricSuggestion] = TaskDef(
 
 LOW_CONFIDENCE = 0.6
 
+REVIEW_FLAG = re.compile(r"위치로만 맞음")
+"""채점 AI의 flags 가운데 강사가 정해야 하는 것 (지시서가 "강사가 정하게" 하라고 한 것)."""
+
 SecondWhen = Literal["low", "all"]
 
 
@@ -1218,7 +1221,10 @@ def grade_answer(
     judgements = [by_id[i.id] for i in rubric.items if i.id in by_id]
     low = [j.rubric_item_id for j in judgements if j.confidence < LOW_CONFIDENCE]
     if low:
-        flags.append(f"확신도 낮음: {', '.join(low)}")
+        settled = second is not None and not diff  # 다시 채점해도 같았다 → AI가 정한 것으로
+        flags.append(
+            f"확신도 낮음: {', '.join(low)}" + (" — 다시 채점해도 같아 그대로" if settled else "")
+        )
     pending = {c.id: c for c in rubric.candidates if c.status == "proposed"}
     matched = [pending[c] for c in matched_ids if c in pending]
     flags += [
@@ -1226,7 +1232,12 @@ def grade_answer(
         f"{', '.join(c.item_ids) or '해당 항목'} 점수를 주세요"
         for c in matched
     ]
-    needs_review = bool(diff or low or first_flags or matched)
+    # 정말 애매한 것만 강사에게 (2026-11-19 사용자 결정, 채팅에서처럼): 두 채점이 다름, 확신 낮은데
+    # 다시 채점하지 못함, 강사 미확인 정답 후보와 같음, 그래프 값이 위치로만 맞음. AI가 적은 다른
+    # 확인할 점(flags)은 메모로 남기고 AI 판정대로 둔다 (예전에는 flags가 하나라도 있으면 검토
+    # 필요).
+    must_ask = [f for f in first_flags if REVIEW_FLAG.search(f)]
+    needs_review = bool(diff or (low and second is None) or matched or must_ask)
     return GradeResult(
         student_id=transcript.student_id,
         question_number=q.number,
@@ -1251,9 +1262,14 @@ def grade_answer(
     )
 
 
+BLANK_FLAG = "빈 답안 — AI 없이 0점. 원본 그림에 답이 있으면 판독문을 채워 확정하세요"
+
+
 def blank_grade(q: ExamQuestion, rubric: Rubric, transcript: Transcript) -> GradeResult:
-    """빈 답안(판독문에 글이 없음): AI 없이 0점. 판독이 놓쳤을 수 있으므로 강사가 판독본(원본
-    그림)으로 확인하게 '검토 필요'로 둔다 (M3에서 남긴 것)."""
+    """빈 답안(판독문에 글이 없음): AI 없이 0점, 그대로 끝 (2026-11-19 사용자: "빈칸은 무조건
+    0점이니 강사가 확인 버튼을 일일이 누르지 않아도"). 예전에는 판독이 놓쳤을 수 있다고
+    '검토 필요'로 뒀다 — 교차 판독(두 번째 AI)도 아무것도 읽지 못했을 때만 빈 답안이 된다.
+    강사가 판독문을 확인하지 않은 채(자동 확인을 끔)면 예전처럼 검토 필요."""
     return GradeResult(
         student_id=transcript.student_id,
         question_number=q.number,
@@ -1270,10 +1286,10 @@ def blank_grade(q: ExamQuestion, rubric: Rubric, transcript: Transcript) -> Grad
             for i in rubric.items
         ],
         comment="",
-        flags=["빈 답안 — AI 없이 0점. 원본 그림에 답이 있으면 판독문을 채워 확정하세요"],
+        flags=[] if transcript.confirmed else [BLANK_FLAG],
         total=0,
         max_points=rubric.total,
-        status="needs_review",
+        status="auto" if transcript.confirmed else "needs_review",
         agent=CODE_AGENT,
         item_points={i.id: i.points for i in rubric.items},
         code_items=[i.id for i in rubric.items],

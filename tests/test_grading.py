@@ -509,7 +509,8 @@ def test_grade_repair_items() -> None:
 def test_second_grading_only_when_unsure(
     engine_with: EngineWith, q1: ExamQuestion, scope: ScopeProfile
 ) -> None:
-    """기본(low): 확신 있는 채점은 한 번만, 확신도가 낮으면 다른 세션으로 한 번 더."""
+    """기본(low): 확신 있는 채점은 한 번만, 확신도가 낮으면 다른 세션으로 한 번 더. 정말 애매한 것만
+    검토 필요 (2026-11-19): AI가 적은 확인할 점은 메모로, 다시 채점해도 같으면 AI 판정대로."""
     engine, exe = engine_with([GRADE_A])
     t = transcript_of("A_q1.txt")
     g = grade_answer(engine, q1, approved_rubric(), t, scope, double=SecondOpinion())
@@ -517,12 +518,27 @@ def test_second_grading_only_when_unsure(
     flagged = {**GRADE_A, "flags": ["(1) 판독 불확실 — 확인"]}
     engine, exe = engine_with([flagged])
     g = grade_answer(engine, q1, approved_rubric(), t, scope, double=SecondOpinion())
-    assert g.second_opinion is None and g.status == "needs_review", "확인할 점만으로는 재채점 안 함"
+    assert g.second_opinion is None, "확인할 점만으로는 재채점 안 함"
+    assert g.status == "auto" and g.flags == ["(1) 판독 불확실 — 확인"], "메모로 남고 AI 판정대로"
+    by_position = {**GRADE_A, "flags": ["위치로만 맞음: 최댓값 ≈ 15"]}
+    engine, exe = engine_with([by_position])
+    g = grade_answer(engine, q1, approved_rubric(), t, scope, double=SecondOpinion())
+    assert g.status == "needs_review", "강사가 정하라고 한 것은 검토 필요"
     low = copy.deepcopy(GRADE_A)
     low["judgements"][0]["confidence"] = 0.3
     engine, exe = engine_with([low, GRADE_A])
     g = grade_answer(engine, q1, approved_rubric(), t, scope, double=SecondOpinion())
-    assert g.second_opinion is not None and g.calls == 2 and g.status == "needs_review"
+    assert g.second_opinion is not None and g.calls == 2 and g.status == "auto"
+    assert any("다시 채점해도 같아" in f for f in g.flags)
+    other = copy.deepcopy(GRADE_A)
+    other["judgements"][0]["awarded"] = 0
+    other["judgements"][0]["deduction_reason"] = "근거 없음"
+    engine, exe = engine_with([low, other])
+    g = grade_answer(engine, q1, approved_rubric(), t, scope, double=SecondOpinion())
+    assert g.status == "needs_review" and g.disagreements, "두 채점이 다르면 강사에게"
+    engine, exe = engine_with([low])
+    g = grade_answer(engine, q1, approved_rubric(), t, scope)
+    assert g.status == "needs_review", "확신이 낮은데 다시 채점하지 않았으면 강사에게"
 
 
 def _parted() -> tuple[ExamQuestion, Rubric]:
@@ -576,5 +592,7 @@ def test_blank_part_and_blank_answer_need_no_ai(
     assert g.total == 0 and sorted(g.code_items) == ["R1", "R2"] and g.calls == 0
     blank = Transcript(student_id="학생", question_number="1", confirmed=True, lines=[])
     g = grade_answer(engine, q, rubric, blank, scope)
-    assert g.total == 0 and g.status == "needs_review" and g.agent == "code"
+    assert g.total == 0 and g.status == "auto" and g.agent == "code", "빈 답안은 0점으로 끝"
+    unseen = blank.model_copy(update={"confirmed": False})  # 자동 확인을 끈 판독문
+    assert grade_answer(engine, q, rubric, unseen, scope).status == "needs_review"
     assert not fake_prompts(exe)

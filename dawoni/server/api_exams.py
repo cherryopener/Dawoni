@@ -102,6 +102,7 @@ def _cell(store: ExamStore, student: str, q: ExamQuestion) -> dict[str, Any]:
         if t is None
         else {
             "confirmed": t.confirmed,
+            "confirmed_by": t.confirmed_by,
             "source": t.source,
             "attention": t.needs_attention,
             "unreadable": t.unreadable,
@@ -693,6 +694,15 @@ def get_transcript(exam_id: str, student: str, number: str, st: AppState = State
         "unreadable": t.unreadable,
         "question": store.exam().question(number).model_dump(mode="json"),
     }
+
+
+@router.post("/{exam_id}/transcripts/accept")
+def accept_transcripts(exam_id: str, st: AppState = State) -> dict[str, int]:
+    """`[판독불가]`가 없는 확인 전 판독문을 모두 AI 확인으로 (자동 확인 전에 판독한 시험).
+    AI 호출 없음."""
+    svc, store = _store(st, exam_id)
+    res = workflow.accept_readings(svc, store)
+    return {"readings": res.readings, "blanks": res.blanks}
 
 
 class TranscriptBody(learning.LearnFields):

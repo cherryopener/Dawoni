@@ -12,9 +12,9 @@ import type { Cell, ExamStudent, InboxPdf, Job, RosterStudent } from "@/lib/type
 import { useExam } from "../Exam";
 import { type EditTarget, TranscriptEditor } from "./TranscriptEditor";
 
-type Status = "이름 확인 대기" | "입력 대기" | "확인 전" | "확인 완료" | "판독 전";
-const ORDER: Status[] = ["이름 확인 대기", "입력 대기", "확인 전", "판독 전", "확인 완료"];
-const TONE: Record<Status, Tone> = { "이름 확인 대기": "bad", "입력 대기": "bad", "확인 전": "warn", "판독 전": "neutral", "확인 완료": "ok" };
+type Status = "이름 확인 대기" | "입력 대기" | "확인 전" | "AI 확인" | "확인 완료" | "판독 전";
+const ORDER: Status[] = ["이름 확인 대기", "입력 대기", "확인 전", "판독 전", "AI 확인", "확인 완료"];
+const TONE: Record<Status, Tone> = { "이름 확인 대기": "bad", "입력 대기": "bad", "확인 전": "warn", "판독 전": "neutral", "AI 확인": "accent", "확인 완료": "ok" };
 
 function statusOf(s: ExamStudent): { status: Status; unreadable: number } {
   const cells = Object.values(s.cells);
@@ -23,7 +23,9 @@ function statusOf(s: ExamStudent): { status: Status; unreadable: number } {
   if (unreadable) return { status: "입력 대기", unreadable };
   const ts = cells.map((c) => c.transcript).filter((t) => t !== null);
   if (ts.length === 0) return { status: "판독 전", unreadable };
-  return { status: ts.every((t) => t.confirmed) ? "확인 완료" : "확인 전", unreadable };
+  if (!ts.every((t) => t.confirmed)) return { status: "확인 전", unreadable };
+  // AI가 확정한 답안이 하나라도 있으면 "AI 확인" — 강사가 다 확인했으면 "확인 완료"
+  return { status: ts.some((t) => t.confirmed_by === "AI") ? "AI 확인" : "확인 완료", unreadable };
 }
 
 /** 이름 확인 전: 같은 반 동명이인, 또는 명부와 맞추지 못함 — 판독·채점은 하지만 점수표에는 확인 뒤에. */
@@ -288,6 +290,14 @@ export function ScanStep() {
   const queue: EditTarget[] = rows.flatMap(({ s }) =>
     detail.exam.questions.filter((q) => s.cells[q.number]?.transcript && !s.cells[q.number]!.transcript!.confirmed).map((q) => ({ student: s.student, question: q.number })),
   );
+  /** [판독불가]가 없는데 확인 전인 답안 (자동 확인 전에 판독한 시험) — 한 번에 AI 확인으로. */
+  const acceptable = rows.reduce((n, { s }) => n + Object.values(s.cells).filter((c) => c?.transcript && !c.transcript.confirmed && !c.transcript.unreadable).length, 0);
+  const acceptAll = () =>
+    act.run(async () => {
+      await api.post(`${base}/transcripts/accept`);
+      students.reload();
+      reload();
+    });
   const [openQueue, setOpenQueue] = useState<EditTarget[]>([]);
   const open = (t: EditTarget, withQueue: boolean) => {
     setOpenQueue(withQueue ? queue : []);
@@ -383,9 +393,14 @@ export function ScanStep() {
           {waiting > 0 && <Badge tone="bad">입력 대기 {waiting}</Badge>}
           <Help>
             문항 번호를 누르면 원본과 판독문을 나란히 보고 고칩니다. [판독불가]가 남은 답안은 "입력 대기" — 채우고 확인하면 그 학생·문항만 채점합니다.
-            나머지는 확인 전에도 채점까지 가고, 고쳐 확인하면 다시 채점합니다. 표지 이름을 잘못 읽었으면 이름을 눌러 고칩니다.
+            나머지는 AI가 바로 확정하고(AI 확인) 채점까지 갑니다 — 고쳐 확인하면 다시 채점합니다. 표지 이름을 잘못 읽었으면 이름을 눌러 고칩니다.
           </Help>
           <div className="flex-1" />
+          {acceptable > 0 && (
+            <Button variant="outline" size="sm" disabled={act.busy} onClick={() => void acceptAll()} title="[판독불가]가 없는 답안을 AI가 읽은 그대로 확정합니다 (AI 호출 없음, 빈 답안은 0점으로 끝)">
+              <Check /> AI 판독 승인 ({acceptable})
+            </Button>
+          )}
           <Button variant="primary" size="sm" disabled={queue.length === 0} onClick={() => open(queue[0]!, true)}>
             {queue.length ? `차례로 확인 (${queue.length})` : "모두 확인함"}
           </Button>
@@ -429,7 +444,7 @@ export function ScanStep() {
                       const c = s.cells[q.number];
                       const t = c?.transcript;
                       if (!t) return null;
-                      const state = t.unreadable ? `[판독불가] ${t.unreadable}곳` : t.confirmed ? "확인 완료" : "확인 전";
+                      const state = t.unreadable ? `[판독불가] ${t.unreadable}곳` : t.confirmed ? (t.confirmed_by === "AI" ? "AI 확인" : "확인 완료") : "확인 전";
                       return (
                         <Button
                           key={q.number}

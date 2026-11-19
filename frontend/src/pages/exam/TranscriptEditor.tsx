@@ -186,10 +186,22 @@ function Body({
       open
       full
       onOpenChange={(o) => !o && close()}
+      onEscape={() => {
+        if (zoom === 1) return false;
+        setZoom(1); // 확대한 원본이면 Esc는 100%로 (창은 그대로)
+        return true;
+      }}
       title={
         <span className="flex items-center gap-2">
           판독문 확인 · {v ? `${v.class_name ? `${v.class_name} ` : ""}${v.name}` : target.student} · {target.question}번
-          {t?.confirmed && <Badge tone="ok">확인 완료{t.confirmed_by ? ` (${t.confirmed_by})` : ""}</Badge>}
+          {t?.confirmed &&
+            (t.confirmed_by === "AI" ? (
+              <span title="[판독불가]가 없어 AI가 읽은 그대로 확정했습니다 — 고쳐 확인하면 강사 확인이 됩니다">
+                <Badge tone="accent">AI 확인</Badge>
+              </span>
+            ) : (
+              <Badge tone="ok">확인 완료{t.confirmed_by ? ` (${t.confirmed_by})` : ""}</Badge>
+            ))}
           {t && !t.confirmed && <Badge tone="warn">확인 전</Badge>}
           {left > 1 && <span className="text-[13px] font-normal text-text-3">남은 답안 {left}</span>}
         </span>
@@ -234,23 +246,7 @@ function Body({
       {v && rows && (
         <div className="grid h-full grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)] gap-5">
           <div className="flex min-h-0 flex-col rounded-lg bg-muted">
-            <div className="flex items-center gap-1 border-b border-line px-3 py-1.5 text-[12px] text-text-3">
-              <ZoomIn className="size-3.5" />
-              {ZOOMS.map((z) => (
-                <button key={z} type="button" onClick={() => setZoom(z)} className={cn("cursor-pointer rounded px-2 py-0.5 hover:bg-card", zoom === z && "bg-card font-medium text-text")}>
-                  {z * 100}%
-                </button>
-              ))}
-              <span className="ml-auto">원본 {v.page_images.length}쪽</span>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto p-3">
-              {v.page_images.length === 0 && <div className="p-6 text-center text-text-3">원본 그림 없음 (입력한 답안)</div>}
-              <div className="flex flex-col gap-3" style={{ width: `${zoom * 100}%` }}>
-                {v.page_images.map((p) => (
-                  <img key={p} src={examFileUrl(id, p)} alt="원본 쪽" className="w-full rounded bg-white" />
-                ))}
-              </div>
-            </div>
+            <PagePane examId={id} images={v.page_images} zoom={zoom} setZoom={setZoom} />
           </div>
           <div className="min-h-0 overflow-auto pr-1">
             <div className="sticky top-0 z-10 mb-3 flex flex-wrap items-center gap-1 rounded-lg border border-line bg-card px-2 py-1.5">
@@ -310,6 +306,58 @@ function Body({
         </div>
       )}
     </Dialog>
+  );
+}
+
+const PAD = 12; // 원본 칸 안쪽 여백 (p-3) — 확대해도 그대로라 누른 자리를 맞출 때 뺀다
+
+/** 원본 쪽: 돋보기처럼 누른 자리를 150 → 200 → 300%로 키우고, 300%에서 누르면 100%로. Esc도 100%로
+ * (창의 `onEscape`). 2026-11-19 사용자 요청. 위의 % 단추로 바로 고를 수도 있다. */
+function PagePane({ examId, images, zoom, setZoom }: { examId: string; images: string[]; zoom: number; setZoom: (z: number) => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  /** 누른 자리 (내용 좌표, 칸 안 좌표, 배율 변화) — 다시 그린 뒤 그 자리가 포인터 밑에 오게 굴린다. */
+  const anchor = useRef<{ x: number; y: number; cx: number; cy: number; f: number } | null>(null);
+  useLayoutEffect(() => {
+    const a = anchor.current;
+    const el = box.current;
+    anchor.current = null;
+    if (!a || !el) return;
+    el.scrollLeft = (a.x - PAD) * a.f + PAD - a.cx;
+    el.scrollTop = (a.y - PAD) * a.f + PAD - a.cy;
+  }, [zoom]);
+  const top = ZOOMS[ZOOMS.length - 1]!;
+  const click = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = box.current;
+    if (!el || images.length === 0) return;
+    const i = ZOOMS.indexOf(zoom);
+    const next = zoom >= top || i < 0 ? 1 : ZOOMS[i + 1]!;
+    const r = el.getBoundingClientRect();
+    const cx = e.clientX - r.left;
+    const cy = e.clientY - r.top;
+    anchor.current = { x: el.scrollLeft + cx, y: el.scrollTop + cy, cx, cy, f: next / zoom };
+    setZoom(next);
+  };
+  return (
+    <>
+      <div className="flex items-center gap-1 border-b border-line px-3 py-1.5 text-[12px] text-text-3">
+        <ZoomIn className="size-3.5" />
+        {ZOOMS.map((z) => (
+          <button key={z} type="button" onClick={() => setZoom(z)} className={cn("cursor-pointer rounded px-2 py-0.5 hover:bg-card", zoom === z && "bg-card font-medium text-text")}>
+            {z * 100}%
+          </button>
+        ))}
+        <span className="ml-2">원본을 누르면 확대 · Esc 100%</span>
+        <span className="ml-auto">원본 {images.length}쪽</span>
+      </div>
+      <div ref={box} onClick={click} className={cn("min-h-0 flex-1 overflow-auto p-3", images.length > 0 && (zoom >= top ? "cursor-zoom-out" : "cursor-zoom-in"))}>
+        {images.length === 0 && <div className="p-6 text-center text-text-3">원본 그림 없음 (입력한 답안)</div>}
+        <div className="flex flex-col gap-3" style={{ width: `${zoom * 100}%` }}>
+          {images.map((p) => (
+            <img key={p} src={examFileUrl(examId, p)} alt="원본 쪽" draggable={false} className="w-full rounded bg-white" />
+          ))}
+        </div>
+      </div>
+    </>
   );
 }
 

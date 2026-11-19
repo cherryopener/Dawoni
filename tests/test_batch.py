@@ -166,7 +166,8 @@ def test_cli_scan_batch(
     assert recs["김태희A"].needs_rename and recs["김태희A#2"].needs_rename, "둘 다 이름 확인 대기"
     assert recs["김태희A"].teacher_scores == {"1": 3} and recs["김태희A"].class_name == "TSS1"
     t = store.transcript("김태희A", "1")
-    assert t is not None and not t.confirmed and t.lines[0].text == "x=2일 때 최솟값 3"
+    assert t is not None and t.lines[0].text == "x=2일 때 최솟값 3"
+    assert t.confirmed and t.confirmed_by == "AI", "[판독불가]가 없으면 AI가 바로 확정 (2026-11-19)"
     assert t.pages == ["scans/김태희A/page_02.png"], "판독문에는 답안 쪽만 (표지는 page_01)"
     assert (store.scan_dir("김태희A") / "page_01.png").exists()
     with Image.open(store.root / t.pages[0]) as im:

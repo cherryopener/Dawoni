@@ -11,6 +11,7 @@ export function Dialog({
   footer,
   wide = false,
   full = false,
+  onEscape,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -22,6 +23,8 @@ export function Dialog({
   wide?: boolean;
   /** 화면 가득 (판독문 고치기: 원본과 판독문을 나란히). 안쪽은 스스로 넘친 부분을 굴린다. */
   full?: boolean;
+  /** Esc를 먼저 받는다 — true를 돌려주면 창을 닫지 않는다 (예: 확대한 원본을 100%로). */
+  onEscape?: () => boolean;
 }) {
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>
@@ -30,6 +33,9 @@ export function Dialog({
         <D.Content
           // 바깥을 눌러도 닫지 않는다 — 적던 내용이 사라지지 않게 (2026-11-05). 닫기는 ×·취소·Esc로
           onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => {
+            if (onEscape?.()) e.preventDefault();
+          }}
           className={
             "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 rounded-[var(--radius-card)] border border-line bg-card p-6 text-text " +
             (full

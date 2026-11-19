@@ -16,7 +16,9 @@ import pytest
 from PIL import Image, ImageDraw
 
 from dawoni.export.red_pen import (
+    Box,
     Scan,
+    Slot,
     find_cover_cells,
     find_table,
     layout,
@@ -28,6 +30,7 @@ from dawoni.export.red_pen import (
 from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.grading import (
     Exam,
+    ExamPart,
     ExamQuestion,
     GradeResult,
     ItemJudgement,
@@ -96,8 +99,8 @@ def test_table_slots_follow_question_and_part_rules(tmp_path: Path) -> None:
     assert table is not None
     slots, used = table_slots(table, _questions())
     assert used == 3
-    assert [(s.question, s.part, len(s.cells)) for s in slots] == [
-        ("1", "1)", 1), ("1", "2)", 1), ("2", None, 2), ("3", "(1)", 1), ("3", "(2)", 3),
+    assert [(s.question, s.parts, len(s.cells)) for s in slots] == [
+        ("1", ["1)"], 1), ("1", ["2)"], 1), ("2", [], 2), ("3", ["(1)"], 1), ("3", ["(2)"], 3),
     ]  # fmt: skip
     first = scan.back(slots[0].cells[0])
     assert 1770 < first.x0 < 1800 and 1900 < first.x1 < 1930, "맨 오른쪽 점수 칸"
@@ -113,7 +116,42 @@ def test_parts_that_do_not_match_rows_become_one_slot(tmp_path: Path) -> None:
     qs = _questions()
     q1 = qs[0].model_copy(update={"parts": [*qs[0].parts[:1]], "points": 4})
     slots, _ = table_slots(table, [q1, *qs[1:]])
-    assert (slots[0].question, slots[0].part, len(slots[0].cells)) == ("1", None, 2)
+    assert (slots[0].question, slots[0].parts, len(slots[0].cells)) == ("1", [], 2)
+
+
+def test_each_part_gets_its_own_score(tmp_path: Path) -> None:
+    """소문항이 여럿인 문항도 소문항마다 점수 (2026-11-19 사용자 요청 — 실제 답안지에서 2번 A·B와
+    3번이 문항 총점 하나로 나왔다). 3-(2)[실험결과 1]·[실험결과 2]·[실험결과 3]처럼 소문항이 표의
+    소문항 칸보다 많으면 맨 앞 표시((2))로 묶고, 그 칸이 점수 칸까지 셋으로 나뉘었으면 하나씩.
+    시험에 소문항이 없는 2번은 루브릭의 A·B로."""
+    scan = Scan.open(_answer_sheet(tmp_path / "p.png"))
+    table = find_table(scan)
+    assert table is not None
+    qs = _questions()
+    labs = ["(1)", "(2)[실험결과 1]", "(2)[실험결과 2]", "(2)[실험결과 3]"]
+    q3 = qs[2].model_copy(update={"parts": [ExamPart(label=x, points=3 if "실험" in x else 4)
+                                            for x in labs]})  # fmt: skip
+    slots, _ = table_slots(table, [*qs[:2], q3], {"2": ["A", "B"]})
+    assert [(s.question, s.parts, len(s.cells)) for s in slots] == [
+        ("1", ["1)"], 1), ("1", ["2)"], 1), ("2", ["A"], 1), ("2", ["B"], 1), ("3", ["(1)"], 1),
+        ("3", ["(2)[실험결과 1]"], 1), ("3", ["(2)[실험결과 2]"], 1), ("3", ["(2)[실험결과 3]"], 1),
+    ]  # fmt: skip
+    # 3-(2) 칸이 셋으로 나뉘지 않았으면(실험결과가 넷) 그 소문항들의 합 한 자리
+    four = [*labs, "(2)[실험결과 4]"]
+    q3b = q3.model_copy(update={"parts": [ExamPart(label=x, points=2) for x in four]})
+    slots, _ = table_slots(table, [*qs[:2], q3b])
+    assert (slots[-1].parts, len(slots[-1].cells)) == (four[1:], 3)
+    assert (slots[2].question, slots[2].parts) == ("2", []), "루브릭 표시가 없으면 문항 전체"
+
+    r = _rubric("3", [("R1", 2, "(2)[실험결과 1]"), ("R2", 1, "(2)[실험결과 1]"),
+                      ("R3", 3, "(2)[실험결과 2]")])  # fmt: skip
+    g = _grade(
+        "가", "3", [("R1", 2, 2, None), ("R2", 0, 1, "근거 없음"), ("R3", 1, 3, "척력 빠짐")]
+    )
+    one = Slot("3", ["(2)[실험결과 1]"], [Box(0, 0, 1, 1)], Box(0, 0, 1, 1))
+    both = Slot("3", ["(2)[실험결과 1]", "(2)[실험결과 2]"], [Box(0, 0, 1, 1)], Box(0, 0, 1, 1))
+    assert slot_note(one, g, r) == (2, 3, "2점 (−1: 근거 없음)")
+    assert slot_note(both, g, r)[:2] == (3, 6)
 
 
 def test_cover_score_cells(tmp_path: Path) -> None:
@@ -174,9 +212,9 @@ def test_slot_note_uses_pen_memo() -> None:
     scan_slots = [("1", "1)"), ("1", "2)")]
     r = _rubric("1", [("R1", 4, "1)"), ("R2", 5, "2)")])
     g = _grade("가", "1", [("R1", 4, 4, None), ("R2", 0, 5, r"정답 \(5W/\sqrt{33}\)")])
-    from dawoni.export.red_pen import Box, Slot
-
-    notes = [slot_note(Slot(q, p, [Box(0, 0, 1, 1)], Box(0, 0, 1, 1)), g, r) for q, p in scan_slots]
+    notes = [
+        slot_note(Slot(q, [p], [Box(0, 0, 1, 1)], Box(0, 0, 1, 1)), g, r) for q, p in scan_slots
+    ]
     assert notes[0] == (4, 4, "정답 → 4점")
     assert notes[1] == (0, 5, r"0점 (−5: 정답 \(5W/\sqrt{33}\))")
 

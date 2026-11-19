@@ -44,6 +44,7 @@ from dawoni.grading.store import ExamStore, ScopeStore
 from dawoni.models.base import utcnow
 from dawoni.models.calibration import CalibrationEval, EvalCase, RubricSuggestion
 from dawoni.models.grading import (
+    AI_CONFIRMER,
     UNREADABLE,
     CandidateMatches,
     Exam,
@@ -291,6 +292,7 @@ def scan_student(
         if old is not None and old.confirmed and not overwrite:
             res.kept_confirmed.append(t.question_number)
             continue
+        t = ai_accept(svc, t)
         store.save_transcript(t)
         res.saved.append(t)
     res.unassigned = outcome.unassigned
@@ -583,21 +585,22 @@ def scan_batch(
                 prev = store.transcript(sid, t.question_number)
                 if prev is not None and prev.confirmed and not overwrite:
                     continue
-                store.save_transcript(t.model_copy(update={"notes": t.notes + outcome.notes}))
-            for q in qs:  # 빈 답안: 원본 쪽만 단 빈 판독문 — 코드 0점, 강사가 판독본에서 채운다
+                store.save_transcript(
+                    ai_accept(svc, t.model_copy(update={"notes": t.notes + outcome.notes}))
+                )
+            for q in qs:  # 빈 답안: 원본 쪽만 단 빈 판독문 — 코드 0점 (AI 확인이면 확인할 것 없음)
                 if q.number in outcome.transcripts or store.transcript(sid, q.number) is not None:
                     continue
                 own = [pages[i] for i in q.answer_pages if i in pages] or answer
-                store.save_transcript(
-                    Transcript(
-                        student_id=sid,
-                        question_number=q.number,
-                        lines=[],
-                        source="ocr",
-                        pages=[x.relative_to(store.root).as_posix() for x in own],
-                        notes=[BLANK_NOTE],
-                    )
+                blank = Transcript(
+                    student_id=sid,
+                    question_number=q.number,
+                    lines=[],
+                    source="ocr",
+                    pages=[x.relative_to(store.root).as_posix() for x in own],
+                    notes=[BLANK_NOTE],
                 )
+                store.save_transcript(ai_accept(svc, blank))
             # 빈 답안(판독문 없음)도 판독한 것으로 적어 둔다 — 다시 하면 건너뛰게
             done = sorted({*record.transcribed, *(q.number for q in qs)})
             job.record = record.model_copy(update={"transcribed": done})
@@ -826,6 +829,56 @@ def grade_ready(
     if not ready or not students:
         return None
     return grade_exam(svc, store, students=students, only=ready, progress=progress)
+
+
+def ai_accept(svc: Services, t: Transcript) -> Transcript:
+    """`[판독불가]`가 없는 판독문은 AI가 바로 확정한다 (`config.ocr.auto_accept`, 2026-11-19 사용자
+    결정). 애매한 줄은 AI의 가장 그럴듯한 읽기로 두고 `uncertain`도 남긴다 — 채점 AI가 `[?]`로 보고
+    판정에 영향이 크면 확신도를 낮춰 검토 필요로 간다."""
+    if not svc.config.ocr.auto_accept or t.confirmed or t.unreadable:
+        return t
+    return t.model_copy(update={"confirmed": True, "confirmed_by": AI_CONFIRMER})
+
+
+@dataclass
+class Accepted:
+    readings: int = 0
+    """AI 확인으로 바꾼 판독문."""
+    blanks: int = 0
+    """빈 답안이라 검토 필요였던 0점 채점을 끝낸 것."""
+
+
+def accept_readings(svc: Services, store: ExamStore) -> Accepted:
+    """이미 판독한 시험(이 기능 전)에서 `[판독불가]`가 없는 확인 전 판독문을 모두 AI 확인으로. 이미
+    채점했으면 채점의 '판독문 확인' 표시만 켜고 다시 채점하지 않는다 (내용이 그대로). 빈 답안이라는
+    까닭만으로 검토 필요였던 0점은 끝낸다 (`blank_grade`)."""
+    from dawoni.grading.pipeline import BLANK_FLAG
+
+    exam = store.exam()
+    out = Accepted()
+    for s in store.students():
+        for q in exam.questions:
+            t = store.transcript(s, q.number)
+            if t is None or t.unreadable:
+                continue
+            if not t.confirmed:
+                t = t.model_copy(update={"confirmed": True, "confirmed_by": AI_CONFIRMER})
+                store.save_transcript(t)
+                out.readings += 1
+            g = store.grade(s, q.number)
+            if g is None:
+                continue
+            update: dict[str, object] = {}
+            if not g.transcript_confirmed:
+                update["transcript_confirmed"] = True
+            if t.is_blank and g.status == "needs_review" and g.flags == [BLANK_FLAG]:
+                update |= {"status": "auto", "flags": []}
+                out.blanks += 1
+            if update:
+                store.save_grade(g.model_copy(update=update))
+    if out.readings or out.blanks:
+        refresh_scores(svc, store)
+    return out
 
 
 def needs_input(store: ExamStore) -> list[Transcript]:

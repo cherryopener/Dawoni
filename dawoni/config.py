@@ -108,6 +108,10 @@ class OcrSettings(_Settings):
     mathpix_app_key: str | None = None
     cross_check: bool = True
     """손글씨 판독 시 두 번째 AI로 교차 판독."""
+    auto_accept: bool = True
+    """`[판독불가]`가 없는 판독문은 AI가 바로 확정한다 ('AI 확인') — 강사는 `[판독불가]`와 채점
+    검토만 본다 (2026-11-19 사용자 결정: 채팅에서처럼 바로 결과가 나오게). 끄면 예전처럼 모두
+    강사 확인 전."""
 
 
 DEFAULT_SCANNER_URL = "smb://192.168.0.100/share/folder"

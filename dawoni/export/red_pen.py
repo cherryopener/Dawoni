@@ -24,6 +24,7 @@ from __future__ import annotations
 import io
 import itertools
 import logging
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -217,15 +218,60 @@ class Slot:
     """점수를 적을 한 덩어리 — 소문항, 또는 소문항을 나누지 못한 문항 전체."""
 
     question: str
-    part: str | None
+    parts: list[str]
+    """이 자리의 소문항 (보통 하나). 비었으면 문항 전체, 여럿이면 그 소문항들의 합 — 칸이 소문항마다
+    나뉘지 않은 덩어리 (예: 3-(2) 칸 하나에 실험결과 1·2·3 소문항)."""
     cells: list[Box]
     """점수 칸 (여러 줄에 걸치면 여럿)."""
     answer: Box
     """답안 칸 — 이유를 쓸 빈자리를 여기서 찾는다."""
 
 
-def table_slots(table: Table, questions: list[ExamQuestion]) -> tuple[list[Slot], int]:
-    """표의 문항 칸 → 점수 자리. 앞에서부터 문항을 차례로 채우고, 쓴 문항 수를 돌려준다."""
+_TOP = re.compile(r"\s*(\(?[0-9A-Za-z가-힣ㄱ-ㅎ㉠-㉯①-⑳]{1,3}\)?)")
+
+
+def _top(label: str) -> str:
+    """소문항 표시의 맨 앞 칸 — "(2)[실험결과 1]" → "(2)", "1)" → "1)", "A" → "A"."""
+    m = _TOP.match(label)
+    return m.group(1) if m else label.strip()
+
+
+Rows = tuple[int, int]
+"""표 줄 번호 (문항 안에서): 이 줄부터 저 줄까지가 한 칸."""
+
+
+def _plan(labels: list[str], groups: list[Rows]) -> list[tuple[list[str], Rows]] | None:
+    """소문항 표시 → 표의 소문항 칸. 수가 같으면 하나씩. 아니면 표시의 맨 앞으로 묶어 칸 수와
+    맞추고(3-(2)[실험결과 1]·[실험결과 2]… → (2) 칸), 그 칸 안이 점수 칸까지 소문항 수만큼
+    나뉘었으면 하나씩, 아니면 그 소문항들의 합으로. 맞출 수 없으면 None (문항 전체 한 자리)."""
+    if not labels or not groups:
+        return None
+    if len(labels) == len(groups):
+        return [([label], g) for label, g in zip(labels, groups, strict=True)]
+    tops = list(dict.fromkeys(_top(x) for x in labels))
+    if len(tops) != len(groups):
+        return None
+    plan: list[tuple[list[str], Rows]] = []
+    for top, (i, j) in zip(tops, groups, strict=True):
+        mine = [x for x in labels if _top(x) == top]
+        if len(mine) > 1 and j - i == len(mine):
+            plan += [([x], (i + k, i + k + 1)) for k, x in enumerate(mine)]
+        else:
+            plan.append((mine, (i, j)))
+    return plan
+
+
+def rubric_parts(rubric: Rubric | None) -> list[str]:
+    """루브릭 항목의 소문항 표시 (차례대로) — 시험에 소문항이 없는데 루브릭이 A·B로 나눈 문항."""
+    return list(dict.fromkeys(i.part for i in (rubric.items if rubric else []) if i.part))
+
+
+def table_slots(
+    table: Table, questions: list[ExamQuestion], fallback: dict[str, list[str]] | None = None
+) -> tuple[list[Slot], int]:
+    """표의 문항 칸 → 점수 자리. 앞에서부터 문항을 차례로 채우고, 쓴 문항 수를 돌려준다.
+    `fallback`: 시험에 소문항이 없는 문항의 소문항 표시 (루브릭에서, `rubric_parts`) — 2026-11-19
+    사용자 요청: 소문항이 여럿인 문항도 소문항마다 점수를."""
     rules = table.rules
     heights = [b[0] - a[0] for a, b in itertools.pairwise(rules)]
     start = 0
@@ -244,15 +290,12 @@ def table_slots(table: Table, questions: list[ExamQuestion]) -> tuple[list[Slot]
         used += 1
         inside = body[top : bottom + 1]
         subs = [i for i, (_, lv) in enumerate(inside) if lv <= 1]
-        groups = list(itertools.pairwise(subs))
-        parts: list[str | None] = [p.label for p in q.parts]
-        if not parts or len(parts) != len(groups):
-            whole: list[str | None] = [None]
-            parts, groups = whole, [(0, len(inside) - 1)]
-        for part, (i, j) in zip(parts, groups, strict=True):
+        labels = [p.label for p in q.parts] or (fallback or {}).get(q.number, [])
+        plan = _plan(labels, list(itertools.pairwise(subs))) or [([], (0, len(inside) - 1))]
+        for parts, (i, j) in plan:
             ys = [y for y, _ in inside[i : j + 1]]
             cells = [Box(s0, y, s1, z) for y, z in itertools.pairwise(ys)]
-            slots.append(Slot(q.number, part, cells, Box(a0, ys[0], a1, ys[-1])))
+            slots.append(Slot(q.number, parts, cells, Box(a0, ys[0], a1, ys[-1])))
     return slots, used
 
 
@@ -471,21 +514,21 @@ def pts(v: float) -> str:
 def slot_note(slot: Slot, g: GradeResult, rubric: Rubric) -> tuple[float, float, str]:
     """(받은 점수, 배점, 이유 글). 만점이면 '정답 → 4점', 아니면 '1점 (−2: 감점 이유) …'."""
     part_of = {i.id: i.part for i in rubric.items}
-    js = [
-        j for j in g.judgements if slot.part is None or part_of.get(j.rubric_item_id) == slot.part
-    ]
+    want = set(slot.parts)
+    js = [j for j in g.judgements if not want or part_of.get(j.rubric_item_id) in want]
     pg = part_grades(slot.question, g, rubric)
-    key = f"{slot.question}-{slot.part}" if slot.part else slot.question
-    if slot.part is None:
+    keys = [f"{slot.question}-{p}" for p in slot.parts]
+    if not slot.parts:
         awarded, full = g.total, g.max_points
-    elif key in pg:
-        awarded, full = pg[key].awarded, pg[key].points
+    elif all(k in pg for k in keys):
+        awarded, full = sum(pg[k].awarded for k in keys), sum(pg[k].points for k in keys)
     else:
         awarded = sum(j.awarded for j in js)
         full = sum(g.item_points.get(j.rubric_item_id, 0) for j in js)
     if awarded >= full:
         return awarded, full, f"정답 → {pts(full)}점"
-    teacher = g.teacher_part_notes.get(slot.part or "", "").strip()
+    notes = [g.teacher_part_notes.get(p, "").strip() for p in slot.parts or [""]]
+    teacher = " · ".join(n for n in notes if n)
     if teacher:
         return awarded, full, f"{pts(awarded)}점 ({teacher})"
     bits: list[str] = []
@@ -579,7 +622,8 @@ def write_student(doc: pymupdf.Document, store: ExamStore, student: str, exam: E
             if todo:
                 res.warnings.append(f"{student}: {path.name}에서 답안 표를 찾지 못함")
             continue
-        slots, used = table_slots(table, todo)
+        fallback = {n: rubric_parts(r) for n, r in rubrics.items()}
+        slots, used = table_slots(table, todo, fallback)
         todo = todo[used:]
         ink = scan.ink()
         for slot in slots:

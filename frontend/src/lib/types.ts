@@ -139,7 +139,8 @@ export type StudentRecord = {
 };
 
 export type Cell = {
-  transcript: { confirmed: boolean; source: string; attention: boolean; unreadable: number; lines: number } | null;
+  /** `confirmed_by` "AI": [판독불가]가 없어 AI가 바로 확정 (`config.ocr.auto_accept`). */
+  transcript: { confirmed: boolean; confirmed_by: string | null; source: string; attention: boolean; unreadable: number; lines: number } | null;
   grade: { total: number; max: number; status: "auto" | "needs_review" | "teacher_confirmed"; disagreements: number; stale: boolean } | null;
 };
 export type ExamStudent = { student: string; record: StudentRecord | null; cells: Record<string, Cell> };
@@ -243,7 +244,7 @@ export type Config = {
   role_tiers: Record<string, Tier>;
   /** AI마다 등급 → 모델·생각 깊이 (`AppConfig.tiers`). 모든 역할이 등급으로 이 표를 함께 쓴다. */
   tiers: Record<string, Partial<Record<Tier, TierModel>>>;
-  ocr: { cross_check: boolean; clova_enabled: boolean; mathpix_enabled: boolean; clova_invoke_url: string | null; clova_secret: string | null; mathpix_app_id: string | null; mathpix_app_key: string | null };
+  ocr: { cross_check: boolean; auto_accept: boolean; clova_enabled: boolean; mathpix_enabled: boolean; clova_invoke_url: string | null; clova_secret: string | null; mathpix_app_id: string | null; mathpix_app_key: string | null };
   scanner: { smb_url: string | null; username: string | null };
 };
 

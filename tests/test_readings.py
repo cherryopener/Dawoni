@@ -261,6 +261,39 @@ def test_erased_and_illegible_spots_confirm_without_new_grading(
     assert workflow.wants_grading(store, before, changed), "글을 고쳤으면 다시 채점"
 
 
+def test_older_exam_readings_are_accepted_in_one_go(app_paths: AppPaths, tmp_path: Path) -> None:
+    """자동 확인 전에 판독한 시험: [판독불가]가 없는 확인 전 판독문을 한 번에 AI 확인으로 (AI 호출
+    없음). [판독불가]가 남은 판독문은 그대로, 빈 답안이라 검토 필요였던 0점은 끝낸다."""
+    from dawoni.grading.pipeline import BLANK_FLAG
+    from dawoni.models.grading import GradeResult, ItemJudgement
+
+    svc = _services(app_paths, tmp_path)
+    store = _exam(svc)
+    _student(store, "김다원", "김다원")  # LINES에 [판독불가]
+    _student(store, "박서준", "박서준")
+    clean = [ln.model_copy(update={"text": ln.text.replace("[판독불가]", "더")}) for ln in LINES]
+    store.save_transcript(Transcript(student_id="박서준", question_number="1", lines=clean))
+    _student(store, "이하늘", "이하늘")
+    store.save_transcript(Transcript(student_id="이하늘", question_number="1", lines=[]))
+    j = ItemJudgement(rubric_item_id="R1", awarded=0, reason="답 없음", confidence=1)
+    store.save_grade(GradeResult(student_id="이하늘", question_number="1", rubric_version=1,
+                                 judgements=[j], comment="", total=0, max_points=1,
+                                 flags=[BLANK_FLAG], status="needs_review",
+                                 transcript_confirmed=False, item_points={"R1": 1}))  # fmt: skip
+    c = _client_for(app_paths, svc)
+    r = c.post(f"/api/exams/{store.exam_id}/transcripts/accept").json()
+    assert r == {"readings": 2, "blanks": 1}
+    kim, park = store.transcript("김다원", "1"), store.transcript("박서준", "1")
+    assert kim is not None and not kim.confirmed, "[판독불가]는 강사가"
+    assert park is not None and park.confirmed and park.confirmed_by == "AI"
+    g = store.grade("이하늘", "1")
+    assert g is not None and g.status == "auto" and g.transcript_confirmed and not g.flags
+    assert c.post(f"/api/exams/{store.exam_id}/transcripts/accept").json() == {
+        "readings": 0,
+        "blanks": 0,
+    }
+
+
 # ---------------------------------------------------------------- 묶음 판독 + 명부 + 동명이인
 
 
