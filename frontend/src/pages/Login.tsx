@@ -20,13 +20,16 @@ export function LoginPage({ auth }: { auth: AuthStatus }) {
   return (
     <div className="grid min-h-full place-items-center px-6">
       <Card className="w-full max-w-sm p-8 text-center">
-        <img src={logoMark} alt="" className="mx-auto size-12 object-contain" />
-        <h1 className="m-0 mt-4 text-[18px] font-medium">다워니</h1>
+        <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-muted">
+          <img src={logoMark} alt="" className="size-10 object-contain" />
+        </span>
+        <h1 className="m-0 mt-4 text-[20px] font-medium">다워니</h1>
+        <p className="m-0 mt-0.5 text-[12px] text-text-3">손글씨 서술형 채점</p>
         {auth.state === "checking" ? (
           <p className="m-0 mt-2 text-text-2">로그인 확인 중…</p>
         ) : (
           <>
-            <p className="m-0 mt-2 text-text-2">학원에서 허가한 Google 계정으로 로그인하세요. 기본 브라우저에서 로그인 창이 열립니다.</p>
+            <p className="m-0 mt-4 text-text-2">학원에서 허가한 Google 계정으로 로그인하세요. 기본 브라우저에서 로그인 창이 열립니다.</p>
             {auth.message && <p className={"m-0 mt-2 text-[13px] " + (auth.state === "blocked" ? "text-bad" : "text-text-2")}>{auth.message}</p>}
             {auth.state === "blocked" && (
               <p className="m-0 mt-1 text-[13px] text-text-2">관리자에게 이 이메일을 알려 주면 명단에 넣어 줍니다. 다른 계정으로 다시 로그인할 수도 있습니다.</p>

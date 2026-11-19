@@ -72,10 +72,10 @@ export function Coordinator({ open, onOpenChange }: { open: boolean; onOpenChang
   return (
     <D.Root open={open} onOpenChange={close}>
       <D.Portal>
-        <D.Overlay className="fixed inset-0 z-40 bg-black/40" />
+        <D.Overlay className="dialog-overlay fixed inset-0 z-40 bg-[#1e1d1a]/25 backdrop-blur-[2px] dark:bg-black/50" />
         <D.Content
           onInteractOutside={(e) => e.preventDefault()} // 바깥을 눌러도 적던 부탁을 잃지 않게
-          className="fixed left-1/2 top-[14vh] z-50 w-[min(620px,92vw)] -translate-x-1/2 overflow-hidden rounded-[var(--radius-card)] border border-line bg-card text-text"
+          className="dialog-content fixed left-1/2 top-[14vh] z-50 w-[min(620px,92vw)] -translate-x-1/2 overflow-hidden rounded-2xl border border-line bg-card text-text"
         >
           <D.Title className="sr-only">총괄 AI에게 부탁하기</D.Title>
           <form
@@ -129,7 +129,7 @@ export function Coordinator({ open, onOpenChange }: { open: boolean; onOpenChang
                 <Wand2 className="size-4 text-accent" />
                 <span className="font-medium">이렇게 할까요?</span>
               </div>
-              <div className="mt-3 rounded-lg border border-line p-4">
+              <div className="mt-3 rounded-xl border border-line bg-muted/40 p-4">
                 <div className="text-[15px] font-medium">{p.summary}</div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <Badge tone="accent">{ACTION[p.action ?? ""] ?? p.action}</Badge>

@@ -170,6 +170,9 @@ function Shell({ dark, toggleTheme, teacher, email }: { dark: boolean; toggleThe
         <a href={href("exams")} className="mr-4 flex items-center gap-2 text-[15px] font-medium text-text no-underline">
           <img src={logoMark} alt="" className="size-7 object-contain" />
           다워니
+          <span className="text-[11px] font-normal text-text-3" title="버전(이 빌드의 커밋 날짜)">
+            {__BUILD_LABEL__}
+          </span>
         </a>
         {NAV.map((n) => (
           <a

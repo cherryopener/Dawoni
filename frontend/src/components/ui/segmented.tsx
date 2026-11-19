@@ -15,7 +15,7 @@ export function Segmented<T extends string>({
       type="single"
       value={value}
       onValueChange={(v) => v && onChange(v as T)}
-      className="inline-flex rounded-lg border border-line bg-muted p-0.5"
+      className="inline-flex w-fit rounded-lg border border-line bg-muted p-0.5"
     >
       {options.map((o) => (
         <TG.Item

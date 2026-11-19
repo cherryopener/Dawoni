@@ -8,6 +8,7 @@ import { Dropzone, ErrorNote, Input, Progress } from "@/components/ui/misc";
 import { Select } from "@/components/ui/select";
 import { api, ApiError, enc, useAction, useApi, waitJob } from "@/lib/api";
 import { go, href } from "@/lib/router";
+import { cn } from "@/lib/cn";
 import { useSession } from "@/lib/session";
 import { STEPS, stepIndex } from "@/lib/steps";
 import type { ExamListItem, Job, Level } from "@/lib/types";
@@ -173,68 +174,95 @@ export function ExamsPage() {
   const { data, error, loading, reload } = useApi<ExamListItem[]>("/exams");
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
+      <QuickStartHeader />
       <KeyPrepStart />
       <div className="mt-4">
         <QuickStart />
       </div>
-      <div className="mt-8 flex items-center">
-        <h1 className="m-0 flex-1 text-[18px] font-medium">시험</h1>
-        <Button variant="ghost" onClick={() => setOpen(true)} title="답안지 없이 시험지·해설만 읽고 루브릭을 단계별로 확인할 때">
+      <div className="mt-10 flex items-center gap-2">
+        <h2 className="m-0 text-[15px] font-medium">시험</h2>
+        {data && data.length > 0 && <span className="text-[13px] text-text-3 tabular-nums">{data.length}</span>}
+        <div className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="답안지 없이 시험지·해설만 읽고 루브릭을 단계별로 확인할 때">
           <Plus /> 시험지만 읽기
         </Button>
       </div>
       {error && (
-        <div className="mt-4">
+        <div className="mt-3">
           <ErrorNote message={error} />
         </div>
       )}
       {data && data.length === 0 && (
-        <Card className="mt-6 px-6 py-12 text-center text-text-2">아직 시험이 없습니다. 위 1단계(새 채점)에 파일을 놓아 시작하세요.</Card>
+        <div className="mt-3 rounded-xl border border-dashed border-line-strong px-6 py-10 text-center text-[13px] text-text-3">
+          아직 시험이 없습니다. 위 1단계(새 채점)에 파일을 놓아 시작하세요.
+        </div>
       )}
-      {loading && !data && <div className="mt-6 text-text-3">불러오는 중…</div>}
-      <div className="mt-6 flex flex-col gap-3">
-        {(data ?? []).map((e) => {
-          const s = e.summary;
-          const idx = stepIndex(s.step);
-          const cells = s.students * s.questions;
-          const done = s.step === "export" || (s.step === "result" && cells > 0 && s.graded >= cells);
-          const ratio = s.step === "result" ? (cells ? s.graded / cells : 0.1) : (idx + (done ? 1 : 0.5)) / STEPS.length;
-          return (
-            <Card key={e.id} className="flex items-center gap-2 pr-3 hover:bg-muted">
-              <a href={href("exams", e.id, s.step)} className="flex min-w-0 flex-1 items-center gap-5 py-4 pl-5 text-text no-underline">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[15px] font-medium">{e.title}</span>
-                    <span className="text-[13px] text-text-3">
-                      {e.created_at.slice(0, 10)} · 문항 {s.questions}개 · {s.students}명
-                    </span>
-                  </div>
-                  <div className="mt-3 flex items-center gap-3">
-                    <div className="w-48">
-                      <Progress value={ratio * 100} tone={done ? "ok" : "accent"} />
+      {loading && !data && <div className="mt-3 text-text-3">불러오는 중…</div>}
+      {data && data.length > 0 && (
+        <Card className="mt-3 overflow-hidden">
+          <div className="divide-y divide-line">
+            {data.map((e) => {
+              const s = e.summary;
+              const idx = stepIndex(s.step);
+              const cells = s.students * s.questions;
+              const done = s.step === "export" || (s.step === "result" && cells > 0 && s.graded >= cells);
+              const ratio = s.step === "result" ? (cells ? s.graded / cells : 0.1) : (idx + (done ? 1 : 0.5)) / STEPS.length;
+              return (
+                <div key={e.id} className="group flex items-center gap-2 pr-3 transition-colors hover:bg-muted/60">
+                  <a href={href("exams", e.id, s.step)} className="flex min-w-0 flex-1 items-center gap-5 py-3.5 pl-5 text-text no-underline">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline gap-2">
+                        <span className="truncate text-[15px] font-medium">{e.title}</span>
+                        <span className="shrink-0 text-[12px] text-text-3 tabular-nums">
+                          {e.created_at.slice(0, 10)} · 문항 {s.questions}개 · {s.students}명
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center gap-3">
+                        <div className="w-40">
+                          <Progress value={ratio * 100} tone={done ? "ok" : "accent"} />
+                        </div>
+                        <span className={cn("text-[12px]", done ? "text-ok" : "text-text-2")}>
+                          {done ? "끝남" : s.step === "result" ? "채점" : STEPS[idx]?.label}
+                          {(s.step === "grade" || s.step === "result") && ` ${s.graded}/${cells}`}
+                        </span>
+                      </div>
                     </div>
-                    <span className="text-[13px] text-text-2">
-                      {done ? "끝남" : s.step === "result" ? "채점" : STEPS[idx]?.label}
-                      {(s.step === "grade" || s.step === "result") && ` ${s.graded}/${cells}`}
-                    </span>
-                  </div>
+                    <div className="flex shrink-0 gap-1.5">
+                      {s.needs_input > 0 && <Badge tone="bad">입력 대기 {s.needs_input}</Badge>}
+                      {s.needs_rename + s.not_in_roster > 0 && <Badge tone="bad">이름 확인 {s.needs_rename + s.not_in_roster}</Badge>}
+                      {s.needs_review > 0 && <Badge tone="warn">검토 필요 {s.needs_review}</Badge>}
+                    </div>
+                    <ChevronRight className="size-4 shrink-0 text-text-3 transition-transform group-hover:translate-x-0.5" />
+                  </a>
+                  <button
+                    type="button"
+                    aria-label={`${e.title} 지우기`}
+                    title="시험 지우기"
+                    onClick={() => setDoomed(e)}
+                    className="grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg text-text-3 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-bad-soft hover:text-bad focus-visible:opacity-100"
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
                 </div>
-                <div className="flex gap-1.5">
-                  {s.needs_input > 0 && <Badge tone="bad">입력 대기 {s.needs_input}</Badge>}
-                  {s.needs_rename + s.not_in_roster > 0 && <Badge tone="bad">이름 확인 {s.needs_rename + s.not_in_roster}</Badge>}
-                  {s.needs_review > 0 && <Badge tone="warn">검토 필요 {s.needs_review}</Badge>}
-                </div>
-                <ChevronRight className="size-4 text-text-3" />
-              </a>
-              <Button size="icon" variant="ghost" aria-label={`${e.title} 지우기`} title="시험 지우기" onClick={() => setDoomed(e)}>
-                <Trash2 />
-              </Button>
-            </Card>
-          );
-        })}
-      </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
       <NewExam open={open} onOpenChange={setOpen} />
       <DeleteExam exam={doomed} onClose={() => setDoomed(null)} onDeleted={reload} />
+    </div>
+  );
+}
+
+/** 첫 화면 머리: 인사와 오늘 날짜 — 무엇을 하는 화면인지 한 줄로. */
+function QuickStartHeader() {
+  const teacher = useSession().status.teacher;
+  const today = new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric", weekday: "long" });
+  return (
+    <div className="mb-6">
+      <div className="text-[13px] text-text-3">{today}</div>
+      <h1 className="m-0 mt-1 text-[22px] font-medium tracking-[-0.01em]">{teacher ? `${teacher}님, 어떤 시험을 채점할까요?` : "어떤 시험을 채점할까요?"}</h1>
     </div>
   );
 }

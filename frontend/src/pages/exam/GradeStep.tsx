@@ -1,4 +1,4 @@
-import { ArrowRight, Check, FileImage, Minus, PenLine, Plus, X } from "lucide-react";
+import { ArrowRight, Check, CircleAlert, FileImage, Minus, PenLine, Plus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { RichText, TeX } from "@/components/Math";
 import { Badge } from "@/components/ui/badge";
@@ -8,13 +8,13 @@ import { Help } from "@/components/ui/help";
 import { ErrorNote, Input, Progress } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
-import { api, enc, examFileUrl, useAction, useApi, waitJob } from "@/lib/api";
+import { api, enc, useAction, useApi, waitJob } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useTeacher } from "@/lib/session";
 import { pts } from "@/lib/steps";
 import type { BoardRow, ExamStudent, Job, Piece, ReviewSheet } from "@/lib/types";
 import { useExam } from "../Exam";
-import { type EditTarget, TranscriptEditor } from "./TranscriptEditor";
+import { type EditTarget, PagePane, TranscriptEditor } from "./TranscriptEditor";
 
 type Assignments = Record<string, { teacher: string | null }>;
 type Group = "검토 필요" | "확인 전" | "입력 대기" | "채점 전" | "완료";
@@ -47,7 +47,7 @@ export function GradeStep() {
   };
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-3 border-b border-line px-6 py-2.5">
+      <div className="flex shrink-0 items-center gap-3 border-b border-line bg-card px-4 py-2">
         <Segmented
           value={view}
           onChange={setView}
@@ -102,6 +102,17 @@ function Marked({ text, uncertain }: { text: string; uncertain: string[] }) {
   );
 }
 
+const GROUP_DOT: Record<Group, string> = {
+  "검토 필요": "bg-warn",
+  "확인 전": "bg-accent",
+  "입력 대기": "bg-bad",
+  "채점 전": "bg-line-strong",
+  완료: "bg-ok",
+};
+
+/** 채점 검토 (2026-11-20 다시 그림 — "윈도우98 느낌"에서): 왼쪽 할 일 순서 학생 목록, 가운데 원본(누르면 확대),
+ * 오른쪽 점수 판. 점수는 따로 '고치기' 모드 없이 소문항마다 −/+로 바로 바꾸고, 바꾸면 AI 점수와 이유 칸이
+ * 보인다. 아래 줄에 판독문 고치기·확정하고 다음. */
 function Review({ q, start }: { q: string; start?: string }) {
   const { id, base, reload } = useExam();
   const by = useTeacher();
@@ -112,22 +123,29 @@ function Review({ q, start }: { q: string; start?: string }) {
   }, [students.data, q]);
   const [sel, setSel] = useState<string | null>(start ?? null);
   const [fixing, setFixing] = useState<EditTarget | null>(null);
+  const [zoom, setZoom] = useState(1);
   const cur = sel ?? order[0]?.s.student ?? null;
   const sheet = useApi<ReviewSheet>(cur ? `${base}/review/${enc(cur)}/${enc(q)}` : null);
-  const [editing, setEditing] = useState(false);
   const [scores, setScores] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
   const act = useAction();
   const sh = sheet.data?.student === cur ? sheet.data : undefined;
   const parts = (sh?.parts ?? []).filter((p) => p.awarded !== null);
+  const done = order.filter((x) => x.g === "완료").length;
+  const curGroup = order.find((x) => x.s.student === cur)?.g ?? null;
+  const total = sh && sh.total !== null ? parts.reduce((n, p) => n + (scores[p.label] ?? p.awarded ?? 0), 0) : null;
+  const changedAny = parts.some((p) => scores[p.label] !== undefined && scores[p.label] !== p.awarded);
 
+  const pick = (student: string) => {
+    setSel(student);
+    setScores({});
+    setNotes({});
+    setZoom(1);
+  };
   const next = () => {
     const i = order.findIndex((x) => x.s.student === cur);
     const n = order.slice(i + 1).find((x) => x.g !== "완료") ?? order[i + 1];
-    if (n) setSel(n.s.student);
-    setEditing(false);
-    setScores({});
-    setNotes({});
+    if (n) pick(n.s.student);
   };
   const confirm = () =>
     act.run(async () => {
@@ -152,11 +170,17 @@ function Review({ q, start }: { q: string; start?: string }) {
   useEffect(() => {
     const f = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (document.querySelector("[role=dialog]")) return; // 판독문 고치기 창이 열려 있으면 그 창의 키
+      // 판독문 고치기 화면·창이 열려 있으면 그쪽의 키
+      if (fixing || document.querySelector("[role=dialog], [data-workspace], [data-radix-popper-content-wrapper]")) return;
       if (e.key === "Enter") void confirm();
-      if (e.key === "ArrowDown") {
+      else if (e.key === "Escape" && zoom !== 1) setZoom(1);
+      else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
-        next();
+        if (e.key === "ArrowDown") next();
+        else {
+          const i = order.findIndex((x) => x.s.student === cur);
+          if (i > 0) pick(order[i - 1]!.s.student);
+        }
       }
     };
     window.addEventListener("keydown", f);
@@ -168,102 +192,170 @@ function Review({ q, start }: { q: string; start?: string }) {
   }
   return (
     <div className="flex h-full">
-      <aside className="w-60 shrink-0 overflow-auto border-r border-line p-3">
-        {GROUPS.map((g) => {
-          const list = order.filter((x) => x.g === g);
-          if (list.length === 0) return null;
-          return (
-            <div key={g} className="mb-3">
-              <div className="px-3 pb-1 pt-2 text-[12px] text-text-3">
-                {g} {list.length}
-              </div>
-              {list.map(({ s }) => {
-                const c = s.cells[q]!;
-                return (
-                  <button
-                    key={s.student}
-                    type="button"
-                    onClick={() => {
-                      setSel(s.student);
-                      setEditing(false);
-                      setScores({});
-                      setNotes({});
-                    }}
-                    className={cn("flex w-full cursor-pointer items-center rounded-lg px-3 py-2.5 text-left hover:bg-muted", cur === s.student && "bg-muted")}
-                  >
-                    <span className="flex-1">
-                      {s.record?.name ?? s.student}
-                      <span className="block text-[12px] text-text-3">
-                        {s.record?.class_name}
-                        {c.grade?.disagreements ? " · 두 채점이 다름" : ""}
-                        {c.transcript?.unreadable ? ` · [판독불가] ${c.transcript.unreadable}곳` : ""}
+      <aside className="flex w-64 shrink-0 flex-col border-r border-line bg-card">
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <div className="flex items-baseline justify-between text-[12px] text-text-2">
+            <span>확정</span>
+            <span className="tabular-nums">
+              <span className="font-medium text-text">{done}</span> / {order.length}
+            </span>
+          </div>
+          <div className="mt-2">
+            <Progress value={order.length ? (done / order.length) * 100 : 0} tone={done === order.length && done > 0 ? "ok" : "accent"} />
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-2">
+          {GROUPS.map((g) => {
+            const list = order.filter((x) => x.g === g);
+            if (list.length === 0) return null;
+            return (
+              <div key={g} className="mb-2">
+                <div className="flex items-center gap-2 px-2.5 pt-2 pb-1 text-[12px] text-text-3">
+                  <span className={cn("size-1.5 rounded-full", GROUP_DOT[g])} />
+                  {g}
+                  <span className="tabular-nums">{list.length}</span>
+                </div>
+                {list.map(({ s }) => {
+                  const c = s.cells[q]!;
+                  const here = cur === s.student;
+                  return (
+                    <button
+                      key={s.student}
+                      type="button"
+                      onClick={() => pick(s.student)}
+                      className={cn(
+                        "relative flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-muted",
+                        here && "bg-muted before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary",
+                      )}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className={cn("block truncate", here && "font-medium")}>{s.record?.name ?? s.student}</span>
+                        <span className="block truncate text-[12px] text-text-3">
+                          {s.record?.class_name}
+                          {c.grade?.disagreements ? " · 두 채점이 다름" : ""}
+                          {c.transcript?.unreadable ? ` · [판독불가] ${c.transcript.unreadable}곳` : ""}
+                        </span>
                       </span>
-                    </span>
-                    <span className={cn("font-medium", g === "완료" ? "text-text" : g === "입력 대기" ? "text-bad" : "text-warn")}>
-                      {c.grade ? `${pts(c.grade.total)}/${pts(c.grade.max)}` : "—"}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          );
-        })}
+                      <span className={cn("shrink-0 text-[13px] tabular-nums", g === "완료" ? "text-text-2" : g === "입력 대기" ? "text-bad" : "text-text")}>
+                        {c.grade ? (
+                          <>
+                            {pts(c.grade.total)}
+                            <span className="text-text-3">/{pts(c.grade.max)}</span>
+                          </>
+                        ) : (
+                          "—"
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
       </aside>
-      <div className="flex min-w-0 flex-1 gap-5 overflow-auto p-5">
-        <Card className="flex min-h-[520px] flex-1 flex-col gap-3 overflow-auto bg-muted p-3">
-          {(sh?.page_images ?? []).map((p) => (
-            <img key={p} src={examFileUrl(id, p)} alt="원본 스캔" className="w-full rounded-lg" />
-          ))}
-          {sh && sh.page_images.length === 0 && (
-            <div className="m-auto flex flex-col items-center gap-2 text-text-3">
-              <FileImage className="size-8" />
-              원본 그림 없음 (입력한 답안)
+
+      <div className="min-w-0 flex-1">
+        {sh && sh.page_images.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 bg-muted text-text-3">
+            <FileImage className="size-8" />
+            원본 그림 없음 (입력한 답안)
+          </div>
+        ) : (
+          <div className="grid h-full">
+            <PagePane examId={id} images={sh?.page_images ?? []} zoom={zoom} setZoom={setZoom} />
+          </div>
+        )}
+      </div>
+
+      <div className="flex w-[44%] min-w-[400px] max-w-[640px] shrink-0 flex-col border-l border-line bg-card">
+        <div className="shrink-0 border-b border-line px-6 py-4">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate text-[17px] font-medium">{sh?.name ?? cur}</span>
+                {curGroup && curGroup !== "완료" && curGroup !== "확인 전" && <Badge tone={curGroup === "입력 대기" ? "bad" : curGroup === "검토 필요" ? "warn" : "neutral"}>{curGroup}</Badge>}
+                {curGroup === "완료" && (
+                  <Badge tone="ok">
+                    <Check /> 확정
+                  </Badge>
+                )}
+              </div>
+              <div className="mt-0.5 flex items-center gap-1.5 text-[13px] text-text-3">
+                {sh?.class_name && <span>{sh.class_name}</span>}
+                {sh?.class_name && <span>·</span>}
+                <span>{q}번</span>
+                {sh?.graded_before_confirm && (
+                  <>
+                    <span>·</span>
+                    <span className="flex items-center gap-1">
+                      판독문 확인 전 채점 <Help>판독문을 확정하기 전에 채점했습니다. 판독문을 고쳐 반영하면 다시 채점합니다.</Help>
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
-          )}
-        </Card>
-        <div className="flex w-[46%] min-w-[380px] flex-col gap-5">
+            {total !== null && sh && (
+              <div className="text-right">
+                <div className="text-[26px] leading-none font-medium tabular-nums">
+                  {pts(total)}
+                  <span className="text-[16px] text-text-3"> / {pts(sh.max)}</span>
+                </div>
+                {changedAny && <div className="mt-1 text-[12px] text-accent-text">AI {pts(sh.total)}점에서 바꿈</div>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
           {!sh && <div className="text-text-3">불러오는 중…</div>}
           {sh && sh.total === null && (
-            <div className="text-text-2">{sh.unreadable ? "판독불가가 남아 있어 채점 전입니다. '판독문 고치기'에서 원본을 보고 채우세요." : "아직 채점하지 않았습니다."}</div>
+            <div className="rounded-xl bg-muted px-4 py-3 text-[13px] text-text-2">
+              {sh.unreadable ? "[판독불가]가 남아 있어 채점 전입니다. '판독문 고치기'에서 원본을 보고 채우세요." : "아직 채점하지 않았습니다."}
+            </div>
           )}
           {sh?.disagreements.map((d) => (
-            <div key={d} className="rounded-lg bg-warn-soft px-3 py-2 text-[13px] text-warn">
+            <div key={d} className="mb-4 flex items-start gap-2 rounded-xl bg-warn-soft px-4 py-3 text-[13px] text-warn">
+              <CircleAlert className="mt-0.5 size-4 shrink-0" />
               두 채점이 다름: {d}
             </div>
           ))}
           {sh?.parts.map((p) => {
             const score = scores[p.label] ?? p.awarded;
+            const moved = score !== null && p.awarded !== null && score !== p.awarded;
             const setScore = (v: number) => setScores({ ...scores, [p.label]: Math.max(0, Math.min(p.points, v)) });
             return (
-              <section key={p.label}>
-                <div className="flex items-center gap-2">
-                  <span className="text-[16px] font-medium">{p.label}</span>
-                  {sh.graded_before_confirm && (
-                    <Badge tone="accent">
-                      판독문 확인 전 <Help>판독문을 확정하기 전에 채점했습니다. 판독문을 고쳐 반영하면 다시 채점합니다.</Help>
-                    </Badge>
-                  )}
+              <section key={p.label} className="mb-7 last:mb-0">
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="text-[15px] font-medium">{p.label}</span>
                   <div className="flex-1" />
-                  {score === null ? null : editing ? (
-                    <div className="flex items-center gap-1">
-                      <Button size="icon" variant="ghost" aria-label="빼기" onClick={() => setScore(score - 1)}>
-                        <Minus />
-                      </Button>
-                      <span className="w-16 text-center text-[15px] font-medium">
+                  {score !== null && (
+                    <div
+                      className={cn(
+                        "flex items-center rounded-full border p-0.5",
+                        moved ? "border-accent bg-accent-soft" : score === p.points ? "border-transparent bg-ok-soft" : "border-transparent bg-warn-soft",
+                      )}
+                    >
+                      <button type="button" aria-label="1점 빼기" title="1점 빼기" disabled={score <= 0} onClick={() => setScore(score - 1)} className="grid size-7 cursor-pointer place-items-center rounded-full text-text-2 hover:bg-card disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent">
+                        <Minus className="size-3.5" />
+                      </button>
+                      <span className={cn("min-w-14 text-center text-[14px] font-medium tabular-nums", moved ? "text-accent-text" : score === p.points ? "text-ok" : "text-warn")}>
                         {pts(score)} / {pts(p.points)}
                       </span>
-                      <Button size="icon" variant="ghost" aria-label="더하기" onClick={() => setScore(score + 1)}>
-                        <Plus />
-                      </Button>
+                      <button type="button" aria-label="1점 더하기" title="1점 더하기" disabled={score >= p.points} onClick={() => setScore(score + 1)} className="grid size-7 cursor-pointer place-items-center rounded-full text-text-2 hover:bg-card disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent">
+                        <Plus className="size-3.5" />
+                      </button>
                     </div>
-                  ) : (
-                    <span className={cn("rounded-full px-3 py-1 text-[14px] font-medium", score === p.points ? "bg-ok-soft text-ok" : "bg-warn-soft text-warn")}>
-                      {pts(score)} / {pts(p.points)}
-                    </span>
                   )}
                 </div>
-                {editing && score !== null && score !== p.awarded && (
-                  <div className="mt-2">
+                {moved && (
+                  <div className="mb-3">
+                    <div className="mb-1.5 flex items-center gap-2 text-[12px] text-text-2">
+                      AI {pts(p.awarded)}점 → {pts(score)}점
+                      <button type="button" onClick={() => setScore(p.awarded!)} className="cursor-pointer text-text-3 underline-offset-2 hover:text-text hover:underline">
+                        되돌리기
+                      </button>
+                    </div>
                     <Input
                       value={notes[p.label] ?? ""}
                       onChange={(e) => setNotes({ ...notes, [p.label]: e.target.value })}
@@ -273,53 +365,60 @@ function Review({ q, start }: { q: string; start?: string }) {
                     <div className="mt-1 text-[12px] text-text-3">확정하면 채점 사례집(배우기)에 남아 다음 시험의 해설 다듬기·루브릭에 쓰입니다.</div>
                   </div>
                 )}
-                <div className="mt-3 text-[15px] leading-[2]">
-                  {p.lines.length === 0 && <span className="text-text-3">(빈 답안)</span>}
+                <div className="rounded-xl bg-muted px-4 py-3 text-[15px] leading-[2]">
+                  {p.lines.length === 0 && <span className="text-text-3">빈 답안</span>}
                   {p.lines.map((line, i) => (
                     <div key={i} className={cn(line.struck && "text-text-3 line-through")}>
                       <Pieces pieces={line.pieces} uncertain={line.uncertain} />
                     </div>
                   ))}
                 </div>
-                <div className="mt-3 flex flex-col gap-2">
-                  {p.good.map((r, i) => (
-                    <div key={`g${i}`} className="flex items-start gap-2 rounded-lg bg-ok-soft px-4 py-3 text-ok">
-                      <Check className="mt-0.5 size-4 shrink-0" />
-                      <RichText text={r.reason} className="flex-1" />
-                    </div>
-                  ))}
-                  {p.bad.map((r, i) => (
-                    <div key={`b${i}`} className="flex items-start gap-2 rounded-lg bg-bad-soft px-4 py-3 text-bad">
-                      <X className="mt-0.5 size-4 shrink-0" />
-                      <RichText text={r.reason} className="flex-1" />
-                    </div>
-                  ))}
-                </div>
+                {(p.good.length > 0 || p.bad.length > 0) && (
+                  <ul className="m-0 mt-3 flex list-none flex-col gap-2 p-0">
+                    {p.good.map((r, i) => (
+                      <li key={`g${i}`} className="flex items-start gap-2.5 text-[14px] leading-relaxed">
+                        <span className="mt-[3px] grid size-[18px] shrink-0 place-items-center rounded-full bg-ok-soft text-ok">
+                          <Check className="size-3" strokeWidth={3} />
+                        </span>
+                        <RichText text={r.reason} className="flex-1" />
+                      </li>
+                    ))}
+                    {p.bad.map((r, i) => (
+                      <li key={`b${i}`} className="flex items-start gap-2.5 text-[14px] leading-relaxed">
+                        <span className="mt-[3px] grid size-[18px] shrink-0 place-items-center rounded-full bg-bad-soft text-bad">
+                          <X className="size-3" strokeWidth={3} />
+                        </span>
+                        <RichText text={r.reason} className="flex-1" />
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </section>
             );
           })}
-          {act.error && <ErrorNote message={act.error} />}
-          <div className="flex flex-wrap gap-2">
-            {sh && (
-              <Button size="lg" variant="outline" onClick={() => setFixing({ student: sh.student, question: q })} title="원본과 나란히 보고 판독문을 고쳐 확인 — 고치면 다시 채점">
-                <PenLine /> 판독문 고치기
-              </Button>
-            )}
-            {sh && sh.total !== null && (
-              <Button size="lg" variant="outline" onClick={() => setEditing(!editing)}>
-                {editing ? "고치기 끝" : "점수 고치기"}
-              </Button>
-            )}
-            {sh && sh.total === null && !sh.unreadable && (
-              <Button size="lg" variant="outline" disabled={act.busy} onClick={() => void gradeNow()}>
-                {act.busy ? "채점 중…" : "이 학생 채점"}
-              </Button>
-            )}
-            <Button size="lg" variant="primary" disabled={act.busy || !sh} onClick={() => void confirm()}>
-              {sh?.total === null ? "다음" : "확정하고 다음"} <ArrowRight />
+          {act.error && (
+            <div className="mt-4">
+              <ErrorNote message={act.error} />
+            </div>
+          )}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-2 border-t border-line bg-card px-6 py-3">
+          {sh && (
+            <Button variant="ghost" size="sm" className="h-9" onClick={() => setFixing({ student: sh.student, question: q })} title="원본과 나란히 보고 판독문을 고쳐 확인 — 고치면 다시 채점">
+              <PenLine /> 판독문 고치기
             </Button>
-          </div>
-          <div className="text-[12px] text-text-3">Enter 확정 · ↓ 다음 학생</div>
+          )}
+          {sh && sh.total === null && !sh.unreadable && (
+            <Button variant="outline" size="sm" className="h-9" disabled={act.busy} onClick={() => void gradeNow()}>
+              {act.busy ? "채점 중…" : "이 학생 채점"}
+            </Button>
+          )}
+          <div className="flex-1" />
+          <span className="text-[12px] text-text-3">Enter 확정 · ↑↓ 학생</span>
+          <Button variant="primary" className="h-10 px-5" disabled={act.busy || !sh} onClick={() => void confirm()}>
+            {sh?.total === null ? "다음" : "확정하고 다음"} <ArrowRight />
+          </Button>
         </div>
       </div>
       <TranscriptEditor

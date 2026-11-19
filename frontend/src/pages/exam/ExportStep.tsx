@@ -1,4 +1,4 @@
-import { FileSpreadsheet, FileText, FolderOpen, Info } from "lucide-react";
+import { ArrowUpRight, FileSpreadsheet, FileText, FolderOpen, Info } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,29 +49,34 @@ export function ExportStep() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
       {left > 0 && (
-        <div className="rounded-lg bg-muted px-4 py-2.5 text-[13px] text-text-2">
+        <div className="flex items-center gap-2.5 rounded-[var(--radius-card)] border border-line bg-card px-4 py-3 text-[13px] text-text-2">
+          <Info className="size-4 shrink-0 text-text-3" />
           아직 채점이 끝나지 않은 답안이 {left}건 있습니다. 점수표에는 빈 칸(회색)으로 들어갑니다.
         </div>
       )}
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader
           icon={<FileSpreadsheet />}
+          tone="ok"
           title="점수표 (엑셀)"
           desc={o.scores_exists ? `${o.scores.split("/").pop()} · 반 → 이름 가나다순` : "채점이 저장되면 저절로 만듭니다."}
           right={
             <div className="flex gap-1">
-              <Button variant="ghost" disabled={!o.folder_exists || act.busy} onClick={() => void reveal()}>
+              <Button variant="ghost" size="sm" className="h-9" disabled={!o.folder_exists || act.busy} onClick={() => void reveal()}>
                 <FolderOpen /> 폴더
               </Button>
-              <Button variant="primary" disabled={!o.scores_exists || act.busy} onClick={() => void openScores()}>
-                점수표 열기
+              <Button variant="primary" size="sm" className="h-9" disabled={!o.scores_exists || act.busy} onClick={() => void openScores()}>
+                <ArrowUpRight /> 점수표 열기
               </Button>
             </div>
           }
         />
-        <CardBody className="flex flex-col gap-2">
-          <Switch checked={o.scores_by_class} onCheckedChange={(v) => void write({ by_class: v })} label="반마다 시트 나누기" desc="끄면 한 시트에 모든 반" />
-          <div className="flex flex-wrap gap-1.5 text-[12px]">
+        <CardBody className="flex flex-col gap-3">
+          <div className="rounded-xl border border-line px-4 py-1">
+            <Switch checked={o.scores_by_class} onCheckedChange={(v) => void write({ by_class: v })} label="반마다 시트 나누기" desc="끄면 한 시트에 모든 반" />
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 text-[12px] text-text-3">
+            <span className="mr-1">점수표의 칸 색</span>
             <Badge tone="neutral">미채점 회색</Badge>
             <Badge tone="warn">검토 필요 노랑</Badge>
             <Badge tone="accent">판독문 확인 전 옅은 파랑</Badge>
@@ -95,30 +100,38 @@ export function ExportStep() {
         </CardBody>
       </Card>
 
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader
           icon={<FileText />}
+          tone="bad"
           title="채점 답안지 (PDF)"
           desc="학생 답안지 위에 빨간 글씨로 총점·문항 점수, 소문항 점수, 감점 이유 — 반마다 한 파일"
           right={
             <div className="flex gap-1">
-              <Button variant="ghost" disabled={o.marked.length === 0 || pdf.busy} onClick={() => void pdf.run(() => api.post("/files/reveal", { path: o.marked_folder }))}>
+              <Button variant="ghost" size="sm" className="h-9" disabled={o.marked.length === 0 || pdf.busy} onClick={() => void pdf.run(() => api.post("/files/reveal", { path: o.marked_folder }))}>
                 <FolderOpen /> 폴더
               </Button>
-              <Button variant={o.marked.length ? "outline" : "primary"} disabled={pdf.busy || s.graded === 0} onClick={() => void makePdf()}>
+              <Button variant={o.marked.length ? "outline" : "primary"} size="sm" className="h-9" disabled={pdf.busy || s.graded === 0} onClick={() => void makePdf()}>
                 {pdf.busy ? "만드는 중…" : o.marked.length ? "다시 만들기" : "만들기"}
               </Button>
             </div>
           }
         />
-        <CardBody className="flex flex-col gap-1.5">
-          {o.marked.length === 0 && <div className="text-[13px] text-text-3">채점이 끝난 뒤 만듭니다. 검토 필요·채점 전 답안은 알려 드립니다.</div>}
-          {o.marked.map((name) => (
-            <button key={name} type="button" onClick={() => void openPdf(name)} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-muted">
-              <FileText className="size-4 text-text-3" />
-              <span className="flex-1">{name}</span>
-            </button>
-          ))}
+        <CardBody className="flex flex-col gap-2">
+          {o.marked.length === 0 && (
+            <div className="rounded-xl border border-dashed border-line-strong px-4 py-6 text-center text-[13px] text-text-3">채점이 끝난 뒤 만듭니다. 검토 필요·채점 전 답안은 알려 드립니다.</div>
+          )}
+          {o.marked.length > 0 && (
+            <div className="divide-y divide-line rounded-xl border border-line">
+              {o.marked.map((name) => (
+                <button key={name} type="button" onClick={() => void openPdf(name)} className="group flex w-full cursor-pointer items-center gap-2.5 px-3 py-2.5 text-left first:rounded-t-xl last:rounded-b-xl hover:bg-muted/50">
+                  <FileText className="size-4 text-bad" />
+                  <span className="flex-1 truncate">{name}</span>
+                  <ArrowUpRight className="size-4 text-text-3 group-hover:text-text" />
+                </button>
+              ))}
+            </div>
+          )}
           {pdfNotes.length > 0 && (
             <div className="mt-1 max-h-40 overflow-auto rounded-lg bg-muted px-3 py-2 text-[12px] text-text-2">
               {pdfNotes.map((n) => (

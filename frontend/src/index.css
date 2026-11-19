@@ -1,53 +1,65 @@
 @import "tailwindcss";
 
-/* PLAN §11-1: 회색 바탕 + 흰 카드, 강조색 하나, 의미 색(초록·노랑·빨강)은 상태에만.
-   얇은 테두리, 둥근 모서리, 그림자·그라데이션 없음. 굵기는 보통(400)·중간(500) 두 가지. */
+/* PLAN §11-1: 바탕 + 카드, 강조색 하나, 의미 색(초록·노랑·빨강)은 상태에만.
+   얇은 테두리, 둥근 모서리, 그림자·그라데이션 없음. 굵기는 보통(400)·중간(500) 두 가지.
+   색 (2026-11-19 사용자 요청 — "흰 창에 파란 단추"에서): 종이처럼 따뜻한 회색 바탕과 미색 카드, 주 단추는
+   먹색(--primary), 고른 것·초점·진행은 차분한 남보라(--accent). 의미 색은 채도를 낮춰 바탕과 어울리게. */
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --bg: #f3f4f6;
-  --card: #ffffff;
-  --muted: #f4f4f5;
-  --line: #e4e4e7;
-  --text: #18181b;
-  --text-2: #52525b;
-  --text-3: #a1a1aa;
-  --accent: #2563eb;
+  --bg: #f4f3ef;
+  --card: #fdfcfa;
+  --muted: #efede8;
+  --line: #e3e0d9;
+  --line-strong: #cfcbc2;
+  --text: #1e1d1a;
+  --text-2: #5d5953;
+  --text-3: #a29e96;
+  --primary: #24231f;
+  --primary-fg: #fbfaf7;
+  --accent: #5a54c0;
   --accent-fg: #ffffff;
-  --accent-soft: #dbeafe;
-  --accent-text: #1d4ed8;
-  --ok: #15803d;
-  --ok-soft: #dcfce7;
-  --warn: #b45309;
-  --warn-soft: #fef3c7;
-  --bad: #b91c1c;
-  --bad-soft: #fee2e2;
+  --accent-soft: #ebeaf8;
+  --accent-text: #463fa6;
+  --ok: #2e7a47;
+  --ok-soft: #e2f0e5;
+  --warn: #a35a10;
+  --warn-soft: #f9eedb;
+  --bad: #b23a2f;
+  --bad-soft: #f8e5e2;
   /* 채점 근거 색: 맞은 곳 연두 바탕, 틀린 곳 빨간 밑줄 */
-  --quote-ok: #d9f99d;
-  --quote-bad: #dc2626;
+  --quote-ok: #dcefb8;
+  --quote-bad: #c8372c;
+  --unreadable-bg: #f6dce6;
+  --unreadable-fg: #8a2850;
 }
 
 .dark {
-  --bg: #111113;
-  --card: #1b1b1e;
-  --muted: #26262a;
-  --line: #2e2e33;
-  --text: #f4f4f5;
-  --text-2: #a1a1aa;
-  --text-3: #71717a;
-  --accent: #3b82f6;
-  --accent-fg: #ffffff;
-  --accent-soft: #172554;
-  --accent-text: #93c5fd;
-  --ok: #4ade80;
-  --ok-soft: #14291c;
-  --warn: #fbbf24;
-  --warn-soft: #33260b;
-  --bad: #f87171;
-  --bad-soft: #3a1515;
-  --quote-ok: #2b3a14;
-  --quote-bad: #f87171;
+  --bg: #141413;
+  --card: #1c1c1a;
+  --muted: #262624;
+  --line: #31302d;
+  --line-strong: #45433f;
+  --text: #f0eee9;
+  --text-2: #aaa69e;
+  --text-3: #75716a;
+  --primary: #eeece6;
+  --primary-fg: #1c1c1a;
+  --accent: #8e87ee;
+  --accent-fg: #15141f;
+  --accent-soft: #25233f;
+  --accent-text: #bbb6ff;
+  --ok: #72c48c;
+  --ok-soft: #18281d;
+  --warn: #e3b05a;
+  --warn-soft: #322710;
+  --bad: #ee8a7f;
+  --bad-soft: #3a1c18;
+  --quote-ok: #2c3a17;
+  --quote-bad: #ee8a7f;
+  --unreadable-bg: #4a1f33;
+  --unreadable-fg: #f7c4d8;
 }
 
 @theme inline {
@@ -58,6 +70,9 @@
   --color-text: var(--text);
   --color-text-2: var(--text-2);
   --color-text-3: var(--text-3);
+  --color-line-strong: var(--line-strong);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
   --color-accent-soft: var(--accent-soft);
@@ -87,6 +102,43 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+}
+
+/* 스크롤 막대: 윈도우 기본(▲▼ 화살표가 있는 회색 막대) 대신 얇은 막대 — Edge·크롬 121+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* 체크박스·라디오·범위: 윈도우 기본 파랑 대신 강조색 */
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+/* 창(Dialog): 살짝 떠오르며 열린다 */
+@keyframes dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+/* 가운데 맞춤은 Tailwind의 translate 속성이 하므로 여기서는 transform만 (겹치면 왼쪽 위로 튄다) */
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+.dialog-overlay[data-state="open"] {
+  animation: dialog-overlay-in 140ms ease-out;
+}
+.dialog-content[data-state="open"] {
+  animation: dialog-in 160ms ease-out;
 }
 
 /* 굵기는 두 가지만 — 브라우저 기본 bold(700)를 중간으로 */
@@ -120,8 +172,8 @@ th {
 }
 
 .unreadable {
-  background: #fbcfe8;
-  color: #831843;
+  background: var(--unreadable-bg);
+  color: var(--unreadable-fg);
   border-radius: 3px;
   padding: 0 4px;
 }

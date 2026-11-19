@@ -98,6 +98,13 @@ uv run python -m ruff format --check dawoni tests
 - 채점 답안지 PDF(`export/red_pen.py`): 판독 쪽 그림 위에 빨간 글씨. 칸은 AI 없이 표 줄로 찾고, 이유는
   채점의 `pen`(20자 안팎 메모). 식은 ziamath(LaTeX → SVG, 2026-11-18 사용자 허락으로 의존성 추가).
 
+## 화면 모양 (2026-11-20 사용자 요청 — PLAN §16 45번)
+
+- 색은 `frontend/src/index.css`의 토큰만: 따뜻한 회색 바탕·미색 카드, 주 단추 먹색(`--primary`), 강조 남보라(`--accent`).
+  화면당 주 단추는 하나. 꺼진 주 단추는 옅은 바탕·흐린 글씨.
+- 창(`Dialog`)은 짧은 확인·몇 칸 입력에만. 큰 작업은 `Workspace`(화면 전체, 돌아가기·Esc). Windows 기본 `<select>` 대신 `Select`.
+- 위 줄 '다워니' 옆 버전 `v.버전(yy.mm.dd 커밋 날짜)` — `vite.config.ts`.
+
 ## AI 모델 (사용자 결정)
 
 - **기본 등급별 모델** (2026-11-19 사용자 결정, PLAN §16 41번 — `config._default_tiers`):

@@ -1,5 +1,6 @@
 import { ArrowRight, Check } from "lucide-react";
 import { useCallback, useState } from "react";
+import logoMark from "@/assets/logo-mark.png";
 import { AGENT_NAMES, AgentList } from "@/components/Agents";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -66,23 +67,31 @@ export function SetupWizard() {
 
   return (
     <div className="mx-auto flex min-h-full max-w-xl flex-col justify-center px-6 py-10">
-      <div className="mb-6 flex items-center gap-2">
+      <div className="mb-6 flex items-center gap-3">
+        <img src={logoMark} alt="" className="size-9 object-contain" />
+        <div>
+          <div className="text-[18px] font-medium">다워니 시작하기</div>
+          <div className="text-[13px] text-text-3">손글씨 서술형 채점 — 처음 한 번만 정합니다</div>
+        </div>
+      </div>
+      <div className="mb-4 flex items-center gap-2">
         {STEPS.map((s, i) => (
           <div key={s} className="flex items-center gap-2">
             <span
               className={cn(
                 "grid size-6 place-items-center rounded-full text-[12px]",
-                i < step ? "bg-ok-soft text-ok" : i === step ? "bg-accent text-accent-fg" : "bg-muted text-text-3",
+                i < step ? "bg-ok-soft text-ok" : i === step ? "bg-primary text-primary-fg" : "border border-line-strong text-text-3",
               )}
             >
               {i < step ? <Check className="size-3.5" /> : i + 1}
             </span>
-            <span className={cn("text-[13px]", i === step ? "text-text" : "text-text-3")}>{s}</span>
-            {i < STEPS.length - 1 && <span className="mx-1 h-px w-8 bg-line" />}
+            <span className={cn("text-[13px]", i === step ? "font-medium text-text" : "text-text-3")}>{s}</span>
+            {i < STEPS.length - 1 && <span className="mx-1 h-px w-8 bg-line-strong" />}
           </div>
         ))}
       </div>
-      <Card className="p-6">
+      <Card className="overflow-hidden">
+        <div className="p-6">
         {step === 0 && (
           <>
             {locked ? (
@@ -103,7 +112,7 @@ export function SetupWizard() {
               <AgentList onUsable={onUsable} />
             </div>
             {usable !== null && usable.length > 0 && (
-              <div className="mt-3 flex items-center gap-3 border-t border-line pt-3">
+              <div className="mt-3 flex items-center gap-3 rounded-xl border border-line px-4 py-3">
                 <span className="flex-1">
                   기본 AI
                   <span className="block text-[12px] text-text-2">시험 읽기·판독·채점에 먼저 쓰는 AI입니다. 설정에서 바꿀 수 있습니다.</span>
@@ -142,6 +151,9 @@ export function SetupWizard() {
         )}
         {step === 2 && (
           <>
+            <span className="mb-3 grid size-11 place-items-center rounded-full bg-ok-soft text-ok">
+              <Check className="size-5" />
+            </span>
             <h2 className="m-0 text-[18px]">준비됐습니다</h2>
             <p className="m-0 mt-1 text-text-2">시험지와 해설지를 넣어 첫 시험을 만드세요. 설정은 언제든 바꿀 수 있습니다.</p>
           </>
@@ -151,7 +163,8 @@ export function SetupWizard() {
             <ErrorNote message={act.error} />
           </div>
         )}
-        <div className="mt-6 flex justify-between">
+        </div>
+        <div className="flex justify-between border-t border-line bg-muted/50 px-6 py-3">
           <Button variant="ghost" disabled={step === 0} onClick={() => setStep(step - 1)}>
             이전
           </Button>

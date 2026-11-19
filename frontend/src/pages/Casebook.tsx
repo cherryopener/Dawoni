@@ -1,18 +1,18 @@
-import { BookMarked, Pencil, Trash2 } from "lucide-react";
+import { BookMarked, FolderOpen, Pencil, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { RichText } from "@/components/Math";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Help } from "@/components/ui/help";
-import { ErrorNote, Input } from "@/components/ui/misc";
+import { ErrorNote, Input, textareaClass } from "@/components/ui/misc";
 import { Switch } from "@/components/ui/switch";
 import { api, useAction, useApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { fromDollars, toDollars } from "@/lib/transcript";
 import type { Case } from "@/lib/types";
 
-const textarea = "w-full rounded-lg border border-line bg-card px-3 py-2 text-text outline-none placeholder:text-text-3 focus:border-accent";
+const textarea = textareaClass;
 const pts = (n: number | null) => (n === null ? "?" : Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))));
 
 /** 채점 사례집 (2026-11-18): 채점 검토에서 강사가 바꾼 점수가 사례 한 건(md)으로 쌓인다. 다음 시험의 해설
@@ -39,23 +39,24 @@ export function CasebookCard() {
     });
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardHeader
         icon={<BookMarked />}
+        tone="ok"
         title={
-          <>
-            채점 사례집 <Badge tone="accent">{data.data?.cases.length ?? 0}</Badge>
+          <span className="flex items-center gap-2">
+            채점 사례집 <Badge>{data.data?.cases.length ?? 0}</Badge>
             <Help>
               채점 검토에서 점수를 바꾸면 그 판단(학생 표현 · 기준 · AI 점수 → 강사 점수 · 이유)이 한 건씩 쌓입니다. 다음 시험에서 해설 다듬기와 루브릭을 만들 때 그 문항과 맞는 사례만
               참고로 들어갑니다. 승인할 필요는 없고, 끄거나 고치거나 지울 수 있습니다.
             </Help>
-          </>
+          </span>
         }
         desc={`채점 검토에서 바꾼 점수가 쌓입니다 — 다음 시험의 해설 다듬기·루브릭에 그 문항과 맞는 사례만 들어갑니다 (쓰는 사례 ${live}건).`}
         right={
           data.data && (
-            <Button variant="ghost" onClick={() => void act.run(() => api.post("/files/reveal", { path: data.data!.folder }))}>
-              폴더 열기
+            <Button variant="ghost" size="sm" className="h-9" onClick={() => void act.run(() => api.post("/files/reveal", { path: data.data!.folder }))}>
+              <FolderOpen /> 폴더 열기
             </Button>
           )
         }
@@ -71,7 +72,9 @@ export function CasebookCard() {
             더 보기 ({cases.length - shown})
           </Button>
         )}
-        {data.data && data.data.cases.length === 0 && <div className="text-text-3">아직 사례가 없습니다. 채점 검토에서 점수를 바꾸면 여기에 쌓입니다.</div>}
+        {data.data && data.data.cases.length === 0 && (
+          <div className="rounded-xl border border-dashed border-line-strong px-4 py-5 text-center text-[13px] text-text-3">아직 사례가 없습니다. 채점 검토에서 점수를 바꾸면 여기에 쌓입니다.</div>
+        )}
       </CardBody>
     </Card>
   );
@@ -81,7 +84,7 @@ function CaseRow({ c, busy, onSave, onDelete }: { c: Case; busy: boolean; onSave
   const [edit, setEdit] = useState<{ title: string; body: string; keywords: string } | null>(null);
   const src = `${c.exam} ${c.question}번${c.part ? ` ${c.part}` : ""}`.trim();
   return (
-    <div className={cn("rounded-lg border border-line p-3", !c.enabled && "opacity-60")}>
+    <div className={cn("rounded-xl border border-line p-3.5 transition-opacity", !c.enabled && "opacity-55")}>
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={c.verdict === "인정" ? "ok" : "bad"}>{c.verdict}</Badge>
         <span className="min-w-0 flex-1 font-medium">
@@ -94,7 +97,7 @@ function CaseRow({ c, busy, onSave, onDelete }: { c: Case; busy: boolean; onSave
       </div>
       {edit === null ? (
         <>
-          <div className="mt-2 text-[14px]">
+          <div className="mt-2 rounded-lg bg-muted/60 px-3 py-2 text-[14px] leading-relaxed">
             {c.body.split("\n").map((ln, i) => (
               <div key={i}>
                 <RichText text={ln.replace(/\*\*/g, "")} />
@@ -115,7 +118,7 @@ function CaseRow({ c, busy, onSave, onDelete }: { c: Case; busy: boolean; onSave
               <Trash2 />
             </Button>
           </div>
-          <div className="-mb-2">
+          <div className="-mb-2 border-t border-line/70">
             <Switch checked={c.enabled} onCheckedChange={(v) => onSave({ enabled: v })} label={<span className="text-[13px]">다음 시험에 쓰기</span>} />
           </div>
         </>

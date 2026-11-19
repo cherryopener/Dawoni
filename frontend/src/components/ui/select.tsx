@@ -1,5 +1,6 @@
 import * as S from "@radix-ui/react-select";
 import { Check, ChevronDown } from "lucide-react";
+import { cn } from "@/lib/cn";
 
 /** 많은 것 중 하나 고르기 → 드롭다운. */
 export function Select({
@@ -18,10 +19,10 @@ export function Select({
   return (
     <S.Root value={value || undefined} onValueChange={onChange}>
       <S.Trigger
-        className={
-          "inline-flex h-9 min-w-40 cursor-pointer items-center justify-between gap-2 rounded-lg border border-line bg-card px-3 text-left data-[placeholder]:text-text-3 " +
-          className
-        }
+        className={cn(
+          "inline-flex h-9 min-w-40 cursor-pointer items-center justify-between gap-2 rounded-lg border border-line bg-card px-3 text-left outline-none hover:border-line-strong focus-visible:border-accent focus-visible:ring-3 focus-visible:ring-accent-soft data-[placeholder]:text-text-3",
+          className,
+        )}
       >
         <S.Value placeholder={placeholder} />
         <S.Icon>

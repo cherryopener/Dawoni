@@ -1,9 +1,9 @@
-import { FileText, Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
+import { Pencil, Plus, Search, Trash2, Upload } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
-import { Chips, ErrorNote, Input } from "@/components/ui/misc";
+import { Chips, ErrorNote, Input, PageTitle } from "@/components/ui/misc";
 import { Select } from "@/components/ui/select";
 import { api, enc, useAction, useApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -16,22 +16,45 @@ const DAYS: Record<string, number> = { "1m": 31, "3m": 92, "1y": 366 };
 /** 한 학생의 한 시험: 문항을 누르면 그 학생의 채점 검토(원본·판독문·점수·이유)를 연다. */
 function ExamRow({ e }: { e: HistoryExam }) {
   return (
-    <div className="flex items-center gap-3 border-t border-line py-3">
-      <a href={href("exams", e.exam_id)} className="flex-1 text-text no-underline hover:underline">
-        <div>{e.title}</div>
-        <div className="text-[12px] text-text-3">{e.date}</div>
+    <div className="flex items-center gap-4 px-5 py-3">
+      <a href={href("exams", e.exam_id)} className="min-w-0 flex-1 text-text no-underline hover:text-accent-text">
+        <div className="truncate font-medium">{e.title}</div>
+        <div className="text-[12px] text-text-3 tabular-nums">{e.date}</div>
       </a>
-      <span className="w-24 text-right font-medium">{e.total === null ? `채점 ${e.graded}/${e.questions}` : `${pts(e.total)} / ${pts(e.max)}`}</span>
-      <div className="flex">
+      <div className="flex flex-wrap justify-end gap-1">
         {(e.numbers ?? []).map((q) => (
-          <Button key={q} size="sm" variant="ghost" asChild>
-            <a href={href("exams", e.exam_id, "grade", q, e.student_id)} className="no-underline">
-              <FileText /> {q}번
-            </a>
-          </Button>
+          <a
+            key={q}
+            href={href("exams", e.exam_id, "grade", q, e.student_id)}
+            title={`${q}번 채점 검토에서 보기`}
+            className="inline-flex h-7 items-center rounded-full border border-line px-2.5 text-[12px] text-text-2 no-underline hover:border-line-strong hover:bg-muted hover:text-text"
+          >
+            {q}번
+          </a>
         ))}
       </div>
+      <span className="w-24 shrink-0 text-right tabular-nums">
+        {e.total === null ? (
+          <span className="text-[13px] text-text-3">
+            채점 {e.graded}/{e.questions}
+          </span>
+        ) : (
+          <>
+            <span className="text-[16px] font-medium">{pts(e.total)}</span>
+            <span className="text-[13px] text-text-3"> / {pts(e.max)}</span>
+          </>
+        )}
+      </span>
     </div>
+  );
+}
+
+/** 이름 첫 글자 동그라미. */
+function Avatar({ name, big = false }: { name: string; big?: boolean }) {
+  return (
+    <span className={cn("grid shrink-0 place-items-center rounded-full bg-accent-soft font-medium text-accent-text", big ? "size-11 text-[16px]" : "size-8 text-[13px]")}>
+      {name.trim().slice(0, 1) || "?"}
+    </span>
   );
 }
 
@@ -57,9 +80,9 @@ function RosterDialog({ draft, classes, onClose }: { draft: Draft | null; classe
       onClose(true);
     });
   const field = (k: "name" | "class_name" | "school", label: string, extra: object = {}) => (
-    <label className="flex items-center gap-3">
-      <span className="w-12 text-text-2">{label}</span>
-      <Input value={d[k]} onChange={(e) => setD({ ...d, [k]: e.target.value })} className="flex-1" {...extra} />
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[13px] text-text-2">{label}</span>
+      <Input value={d[k]} onChange={(e) => setD({ ...d, [k]: e.target.value })} className="w-full" {...extra} />
     </label>
   );
   return (
@@ -134,36 +157,35 @@ export function StudentsPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
-      <div className="flex items-center gap-3">
-        <h1 className="m-0 flex-1 text-[20px] font-medium">학생</h1>
+      <PageTitle title="학생" desc="이름 · 반 · 학교 · 시험으로 찾아, 문항을 누르면 그 학생의 채점 검토를 엽니다. 명부는 엑셀 · CSV · 사진으로 한 번에 넣습니다.">
         <input ref={fileRef} type="file" accept=".xlsx,.csv,.jpg,.jpeg,.png" className="hidden" onChange={(e) => void importRoster(e.target.files?.[0])} />
-        <Button disabled={act.busy} onClick={() => setDraft({ id: null, name: "", class_name: classes.length === 1 ? classes[0]! : "", school: "" })}>
+        <Button variant="outline" disabled={act.busy} onClick={() => setDraft({ id: null, name: "", class_name: classes.length === 1 ? classes[0]! : "", school: "" })}>
           <Plus /> 학생 추가
         </Button>
         <Button variant="primary" disabled={act.busy} onClick={() => fileRef.current?.click()}>
           <Upload /> 명부 넣기
         </Button>
-      </div>
+      </PageTitle>
       {(error || act.error) && (
-        <div className="mt-3">
+        <div className="mt-4">
           <ErrorNote message={(act.error ?? error)!} />
         </div>
       )}
-      {note && <div className="mt-3 rounded-lg bg-muted px-4 py-2.5 text-[13px]">{note}</div>}
-      <div className="mt-5 flex items-center gap-3">
+      {note && <div className="mt-4 rounded-xl border border-line bg-card px-4 py-2.5 text-[13px] text-text-2">{note}</div>}
+      <div className="mt-6 flex items-center gap-2">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-2.5 size-4 text-text-3" />
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="이름 · 학교 · 시험" className="w-full pl-9" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-text-3" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="이름 · 학교 · 시험" className="h-10 w-full pl-9" />
         </div>
         <Select
           value={period}
           onChange={setPeriod}
-          className="min-w-32"
+          className="h-10 min-w-32"
           options={[
             { value: "1m", label: "최근 1달" },
             { value: "3m", label: "최근 3달" },
             { value: "1y", label: "최근 1년" },
-            { value: "all", label: "전체" },
+            { value: "all", label: "전체 기간" },
           ]}
         />
       </div>
@@ -172,36 +194,55 @@ export function StudentsPage() {
           <Chips options={allClasses} value={classes} onChange={setClasses} />
         </div>
       )}
-      <div className="mt-5 grid grid-cols-[1fr_1.4fr] gap-4">
-        <Card className="max-h-[60vh] overflow-auto">
-          {hits.map((s) => (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => setSel(s.key)}
-              className={cn("flex w-full cursor-pointer items-center gap-3 border-t border-line px-5 py-3 text-left first:border-t-0 hover:bg-muted", st?.key === s.key && "bg-muted")}
-            >
-              <span className="flex-1">{s.name}</span>
-              <span className="text-[13px] text-text-2">{[s.class_name, s.school].filter(Boolean).join(" · ")}</span>
-            </button>
-          ))}
-          {data && hits.length === 0 && <div className="px-5 py-6 text-text-3">{data.length === 0 ? "명부를 넣거나 답안을 판독하면 학생이 생깁니다." : "찾는 학생이 없습니다."}</div>}
+      <div className="mt-5 grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] items-start gap-4">
+        <Card className="flex max-h-[64vh] flex-col overflow-hidden">
+          <div className="shrink-0 border-b border-line px-5 py-2.5 text-[12px] text-text-3">
+            학생 <span className="tabular-nums">{hits.length}</span>
+          </div>
+          <div className="min-h-0 overflow-auto p-1.5">
+            {hits.map((s) => {
+              const here = st?.key === s.key;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => setSel(s.key)}
+                  className={cn(
+                    "relative flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left hover:bg-muted",
+                    here && "bg-muted before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary",
+                  )}
+                >
+                  <Avatar name={s.name} />
+                  <span className="min-w-0 flex-1">
+                    <span className={cn("block truncate", here && "font-medium")}>{s.name}</span>
+                    <span className="block truncate text-[12px] text-text-3">{[s.class_name, s.school].filter(Boolean).join(" · ") || "반 모름"}</span>
+                  </span>
+                  <span className="shrink-0 text-[12px] text-text-3 tabular-nums">{s.exams.length}회</span>
+                </button>
+              );
+            })}
+            {data && hits.length === 0 && <div className="px-4 py-8 text-center text-[13px] text-text-3">{data.length === 0 ? "명부를 넣거나 답안을 판독하면 학생이 생깁니다." : "찾는 학생이 없습니다."}</div>}
+          </div>
         </Card>
         {st && (
-          <Card className="p-5">
-            <div className="flex items-start gap-2">
-              <div className="flex-1">
-                <div className="text-[16px] font-medium">{st.name}</div>
+          <Card className="overflow-hidden">
+            <div className="flex items-center gap-3.5 px-5 py-4">
+              <Avatar name={st.name} big />
+              <div className="min-w-0 flex-1">
+                <div className="text-[17px] font-medium">{st.name}</div>
                 <div className="text-[13px] text-text-2">{[st.class_name, st.school, st.roster_id ?? "명부 밖"].filter(Boolean).join(" · ")}</div>
               </div>
               {st.roster_id && (
-                <Button size="sm" variant="ghost" onClick={() => setDraft({ id: st.roster_id, name: st.name, class_name: st.class_name ?? "", school: st.school ?? "" })}>
+                <Button size="sm" variant="outline" onClick={() => setDraft({ id: st.roster_id, name: st.name, class_name: st.class_name ?? "", school: st.school ?? "" })}>
                   <Pencil /> 고치기
                 </Button>
               )}
             </div>
-            <div className="mt-4 flex flex-col">
-              {st.exams.length === 0 && <div className="py-3 text-text-3">본 시험이 없습니다.</div>}
+            <div className="border-t border-line bg-muted/50 px-5 py-2 text-[12px] text-text-3">
+              본 시험 <span className="tabular-nums">{st.exams.length}</span>
+            </div>
+            <div className="divide-y divide-line">
+              {st.exams.length === 0 && <div className="px-5 py-6 text-center text-[13px] text-text-3">본 시험이 없습니다.</div>}
               {st.exams.map((e) => (
                 <ExamRow key={e.exam_id + e.student_id} e={e} />
               ))}

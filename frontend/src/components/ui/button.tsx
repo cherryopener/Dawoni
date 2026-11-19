@@ -11,7 +11,9 @@ const button = cva(
   {
     variants: {
       variant: {
-        primary: "bg-accent text-accent-fg hover:opacity-90",
+        // 꺼진 주 단추는 반투명(회색 단추처럼 보임)이 아니라 옅은 바탕·흐린 글씨 — 켜지면 먹색 (2026-11-19 사용자 요청)
+        primary:
+          "bg-primary text-primary-fg hover:opacity-85 disabled:border disabled:border-line disabled:bg-muted disabled:text-text-3 disabled:opacity-100",
         outline: "border border-line bg-card text-text hover:bg-muted",
         ghost: "text-text-2 hover:bg-muted hover:text-text",
         danger: "border border-line bg-card text-bad hover:bg-bad-soft",

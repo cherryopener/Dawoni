@@ -1,9 +1,10 @@
 import * as P from "@radix-ui/react-popover";
-import { Loader2 } from "lucide-react";
+import { CircleCheck, CircleSlash, CircleX, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/misc";
 import { api, jobsChanged, onJobsChanged } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import type { Job } from "@/lib/types";
 
 export const JOB_NAMES: Record<string, string> = {
@@ -71,38 +72,50 @@ export function JobsButton() {
         <span className="text-[13px]">{running.length > 0 ? `작업 ${running.length}개` : "작업"}</span>
       </P.Trigger>
       <P.Portal>
-        <P.Content align="end" sideOffset={6} className="z-50 w-80 rounded-[var(--radius-card)] border border-line bg-card p-4 text-text">
-          <div className="text-[13px] font-medium text-text-2">작업</div>
-          {jobs.length === 0 && <div className="mt-3 text-[13px] text-text-3">아직 작업이 없습니다.</div>}
-          {jobs.slice(0, 8).map((j) => (
-            <div key={j.id} className="mt-3">
-              <div className="flex items-center gap-2 text-[13px]">
-                <span className="flex-1">{JOB_NAMES[j.kind] ?? j.kind}</span>
-                {ACTIVE.has(j.status) ? (
-                  <button type="button" onClick={() => cancel(j.id)} className="cursor-pointer text-[12px] text-text-3 hover:text-text">
-                    멈추기
-                  </button>
-                ) : j.status === "succeeded" ? (
-                  <Badge tone="ok">끝남</Badge>
-                ) : j.status === "failed" ? (
-                  <Badge tone="bad">멈춤</Badge>
-                ) : (
-                  <Badge>취소</Badge>
-                )}
-              </div>
-              {ACTIVE.has(j.status) && (
-                <>
-                  <div className="mt-1.5">
-                    <Progress value={j.progress.total ? (j.progress.done / j.progress.total) * 100 : 5} />
+        <P.Content align="end" sideOffset={6} className="z-50 flex max-h-[min(560px,80vh)] w-[360px] flex-col rounded-[var(--radius-card)] border border-line bg-card text-text">
+          <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+            <span className="flex-1 text-[15px] font-medium">작업</span>
+            {running.length > 0 && <Badge tone="accent">진행 {running.length}</Badge>}
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto p-1.5">
+            {jobs.length === 0 && <div className="px-3 py-8 text-center text-[13px] text-text-3">아직 작업이 없습니다.</div>}
+            {jobs.slice(0, 8).map((j) => {
+              const active = ACTIVE.has(j.status);
+              return (
+                <div key={j.id} className="flex items-start gap-3 rounded-lg px-3 py-2.5 hover:bg-muted/50">
+                  <span
+                    className={cn(
+                      "mt-0.5 grid size-8 shrink-0 place-items-center rounded-full [&_svg]:size-4",
+                      active ? "bg-accent-soft text-accent-text" : j.status === "succeeded" ? "bg-ok-soft text-ok" : j.status === "failed" ? "bg-bad-soft text-bad" : "bg-muted text-text-3",
+                    )}
+                  >
+                    {active ? <Loader2 className="animate-spin" /> : j.status === "succeeded" ? <CircleCheck /> : j.status === "failed" ? <CircleX /> : <CircleSlash />}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-[13px]">
+                      <span className="flex-1 font-medium">{JOB_NAMES[j.kind] ?? j.kind}</span>
+                      {active ? (
+                        <button type="button" onClick={() => cancel(j.id)} className="cursor-pointer text-[12px] text-text-3 hover:text-bad">
+                          멈추기
+                        </button>
+                      ) : (
+                        <span className="text-[12px] text-text-3">{j.status === "succeeded" ? "끝남" : j.status === "failed" ? "멈춤" : "취소"}</span>
+                      )}
+                    </div>
+                    {active && (
+                      <>
+                        <div className="mt-2">
+                          <Progress value={j.progress.total ? (j.progress.done / j.progress.total) * 100 : 5} />
+                        </div>
+                        <div className="mt-1.5 text-[12px] text-text-3">{[j.progress.message, eta(j)].filter(Boolean).join(" · ") || "시작하는 중"}</div>
+                      </>
+                    )}
+                    {j.status === "failed" && j.error && <div className="mt-1 text-[12px] leading-snug text-bad">{j.error.message}</div>}
                   </div>
-                  <div className="mt-1 text-[12px] text-text-3">
-                    {[j.progress.message, eta(j)].filter(Boolean).join(" · ") || "시작하는 중"}
-                  </div>
-                </>
-              )}
-              {j.status === "failed" && j.error && <div className="mt-1 text-[12px] text-bad">{j.error.message}</div>}
-            </div>
-          ))}
+                </div>
+              );
+            })}
+          </div>
         </P.Content>
       </P.Portal>
     </P.Root>

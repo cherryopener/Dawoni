@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Help } from "@/components/ui/help";
-import { Advanced, ErrorNote, Input } from "@/components/ui/misc";
+import { Advanced, ErrorNote, Input, PageTitle } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/segmented";
 import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -100,17 +100,17 @@ export function SettingsPage() {
   const maxTokens = Math.max(1, ...Object.values(usage.data?.roles ?? {}).map((r) => r.tokens));
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-8">
-      <h1 className="m-0 text-[20px] font-medium">설정</h1>
+    <div className="mx-auto flex max-w-3xl flex-col gap-5 px-6 py-8">
+      <PageTitle title="설정" desc="AI 연결 · 저장소 · 스캐너 · 손글씨 판독 · 계정. 바꿀 일이 드문 것은 '고급' 안에 있습니다." />
       {(act.error || cfg.error) && <ErrorNote message={(act.error ?? cfg.error)!} />}
 
-      <Card>
-        <CardHeader icon={<Bot />} title="AI 연결" desc="이미 구독 중인 AI의 공식 프로그램을 일꾼으로 씁니다." />
-        <CardBody className="pt-2">
+      <Card className="overflow-hidden">
+        <CardHeader icon={<Bot />} tone="accent" title="AI 연결" desc="이미 구독 중인 AI의 공식 프로그램을 일꾼으로 씁니다." />
+        <CardBody>
           <AgentList />
           {c && (
-            <>
-              <div className="mt-3 flex items-center gap-3 border-t border-line pt-3">
+            <div className="mt-3 divide-y divide-line rounded-xl border border-line px-4">
+              <div className="flex items-center gap-3 py-2.5">
                 <span className="flex-1">기본 AI</span>
                 <Select
                   value={c.default_agent}
@@ -118,7 +118,7 @@ export function SettingsPage() {
                   options={Object.entries(AGENT_LABEL).map(([value, label]) => ({ value, label }))}
                 />
               </div>
-              <div className="mt-3 flex items-center gap-3">
+              <div className="flex items-center gap-3 py-2.5">
                 <span className="flex-1">
                   총괄 AI <Help>"2반 3번만 다시 채점해" 같은 부탁을 작업으로 바꾸는 AI입니다. 학생 답안은 보지 않습니다. 강사마다 구독하는 AI로 고르세요.</Help>
                 </span>
@@ -129,24 +129,24 @@ export function SettingsPage() {
                   options={Object.entries(AGENT_LABEL).map(([value, label]) => ({ value, label }))}
                 />
               </div>
-            </>
+            </div>
           )}
           <div className="mt-4">
             <Advanced label="역할별 모델 · 토큰 사용량">
               {c && <TierTable agent={c.default_agent} config={c} roles={roles.data ?? []} onPatch={(body) => void patch(body)} />}
-              <table className="mt-4 w-full border-collapse text-left text-[13px]">
-                <thead className="text-[12px] text-text-3">
+              <table className="mt-5 w-full border-collapse text-left text-[13px]">
+                <thead className="border-b border-line text-[12px] text-text-3">
                   <tr>
-                    <th className="py-1.5 font-normal">역할</th>
-                    <th className="py-1.5 font-normal">등급</th>
-                    <th className="py-1.5 text-right font-normal">최근 {usage.data?.days ?? 30}일 토큰</th>
+                    <th className="py-2 font-normal">역할</th>
+                    <th className="py-2 font-normal">등급</th>
+                    <th className="py-2 text-right font-normal">최근 {usage.data?.days ?? 30}일 토큰</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(roles.data ?? []).map((r) => {
                     const u = usage.data?.roles[r.name];
                     return (
-                      <tr key={r.name} className="border-t border-line">
+                      <tr key={r.name} className="border-t border-line/70">
                         <td className="py-1.5">
                           {r.title}
                           {r.tier !== r.default_tier && <span className="ml-1 text-[11px] text-text-3">(기본 {r.default_tier})</span>}
@@ -177,7 +177,7 @@ export function SettingsPage() {
         </CardBody>
       </Card>
 
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader icon={<FolderSync />} title="저장소" desc="시험·학생·판독본이 놓이는 작업공간 폴더" />
         <CardBody className="flex flex-col gap-3">
           {sharing.data && (
@@ -191,7 +191,7 @@ export function SettingsPage() {
             />
           )}
           <div className="flex items-center gap-2">
-            <Input readOnly value={status.workspace ?? ""} className="flex-1 text-text-2" />
+            <Input readOnly value={status.workspace ?? ""} className="flex-1 bg-muted/60 font-mono text-[12px] text-text-2" />
             <Button variant="outline" onClick={() => void changeFolder()}>
               바꾸기
             </Button>
@@ -205,7 +205,7 @@ export function SettingsPage() {
         </CardBody>
       </Card>
 
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader icon={<Printer />} title="복합기 스캐너" desc="공유 폴더 주소와 사용자 이름만 저장합니다. 비밀번호는 Windows가 처음 열 때 묻고 보관합니다." />
         <CardBody className="flex gap-2">
           <Input value={scanner.smb_url} onChange={(e) => setScanner({ ...scanner, smb_url: e.target.value })} placeholder="smb://192.168.0.100/share" className="flex-1" />
@@ -217,9 +217,9 @@ export function SettingsPage() {
       </Card>
 
       {c && (
-        <Card>
-          <CardHeader icon={<ScanText />} title="손글씨 판독" />
-          <CardBody className="flex flex-col">
+        <Card className="overflow-hidden">
+          <CardHeader icon={<ScanText />} title="손글씨 판독" desc="AI가 손글씨 답안을 읽는 방법" />
+          <CardBody className="flex flex-col divide-y divide-line/70">
             <Switch
               checked={c.ocr.cross_check}
               onCheckedChange={(v) => void patch({ ocr: { cross_check: v } })}
@@ -257,7 +257,7 @@ export function SettingsPage() {
         </Card>
       )}
 
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader
           icon={<UserRound />}
           title="계정"
@@ -307,9 +307,9 @@ function TierTable({ agent, config, roles, onPatch }: { agent: string; config: C
         <Help>역할마다 등급(빠름·보통·강함)을 고르고, 등급마다 모델은 AI별로 하나입니다. 같은 등급의 역할은 모두 같은 모델을 씁니다.</Help>
       </div>
       <table className="w-full border-collapse text-left text-[13px]">
-        <thead className="text-[12px] text-text-3">
+        <thead className="border-b border-line text-[12px] text-text-3">
           <tr>
-            <th className="py-1.5 font-normal">등급</th>
+            <th className="py-2 font-normal">등급</th>
             <th className="py-1.5 font-normal">모델</th>
             {effort && <th className="py-1.5 font-normal">생각 깊이</th>}
             <th className="py-1.5 font-normal">쓰는 역할</th>
@@ -321,7 +321,7 @@ function TierTable({ agent, config, roles, onPatch }: { agent: string; config: C
             const options = models ? [...models] : [];
             if (t.model && !options.some((o) => o.value === t.model)) options.push({ value: t.model, label: t.model });
             return (
-              <tr key={tier} className="border-t border-line align-middle">
+              <tr key={tier} className="border-t border-line/70 align-middle">
                 <td className="w-14 py-1.5">{TIER_LABEL[tier]}</td>
                 <td className="py-1.5">
                   {options.length > 0 ? (

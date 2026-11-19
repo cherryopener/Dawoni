@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, ImagePlus, X, ZoomIn, ZoomOut } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog } from "@/components/ui/dialog";
+import { Workspace } from "@/components/ui/workspace";
 import { ErrorNote } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/segmented";
 import { api, enc, useAction, useApi, waitJob } from "@/lib/api";
@@ -145,163 +145,186 @@ export function RegionDialog({
   const ready = boxes.length + pasted.length > 0;
   const isKeyPage = info?.key_pages.includes(page);
 
+  if (!open) return null;
+  const how =
+    what === "question"
+      ? parts.length
+        ? `문항 전체(그림 포함)를 끌어 지정하세요. 소문항은 지금 정해 둔 ${labels} 그대로 둡니다.`
+        : "문항 전체(그림 포함)를 끌어 지정하세요. 소문항·배점도 그림에서 읽습니다."
+      : `해설지에서 ${number}번 해설 부분을 끌어 지정하세요. 쪽을 넘어가면 다음 쪽에서도 끌면 됩니다.`;
   return (
-    <Dialog
-      wide
-      open={open}
-      onOpenChange={close}
-      title={`${number}번 — 원본에서 영역 지정해서 읽기`}
-      desc={
-        what === "question"
-          ? parts.length
-            ? `문항 전체(그림 포함)를 끌어 지정하세요. 소문항은 지금 정해 둔 ${labels} 그대로 둡니다.`
-            : "문항 전체(그림 포함)를 끌어 지정하세요. 소문항·배점도 그림에서 읽습니다."
-          : `해설지에서 ${number}번 해설 부분을 끌어 지정하세요. 쪽을 넘어가면 다음 쪽에서도 끌면 됩니다.`
-      }
-      footer={
+    <Workspace
+      onBack={() => close(false)}
+      title={
         <>
-          <Button variant="ghost" disabled={act.busy} onClick={() => close(false)}>
-            취소
-          </Button>
-          <Button variant="primary" disabled={!ready || act.busy} onClick={() => void run()}>
-            {act.busy ? msg || "읽는 중…" : what === "question" ? "본문 읽기" : "해설 읽기"}
-          </Button>
+          <span className="text-[15px] font-medium">{number}번</span>
+          <span className="text-[15px] text-text-2">원본에서 영역 지정해서 읽기</span>
         </>
       }
-    >
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <Segmented
-          value={what}
-          onChange={(v) => {
-            setWhat(v);
-            setBoxes([]);
-            setPasted([]);
-          }}
-          options={[
-            { value: "question", label: "문항 본문" },
-            { value: "key", label: "해설" },
-          ]}
-        />
-        {info?.pdf && (
-          <div className="flex items-center gap-1">
-            <Button size="icon" variant="ghost" aria-label="앞 쪽" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-              <ChevronLeft />
-            </Button>
-            <span className="min-w-20 text-center tabular-nums text-text-2">
-              {page} / {total}쪽{isKeyPage ? " · 해설" : ""}
-            </span>
-            <Button size="icon" variant="ghost" aria-label="다음 쪽" disabled={page >= total} onClick={() => setPage(page + 1)}>
-              <ChevronRight />
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setZoom(!zoom)}>
-              {zoom ? <ZoomOut /> : <ZoomIn />} {zoom ? "쪽 전체" : "크게"}
-            </Button>
-          </div>
-        )}
-        <div className="flex-1" />
-        <span className="text-[13px] text-text-3">캡처한 그림은 Ctrl+V로 붙여 넣기</span>
-        <Button size="sm" variant="ghost" onClick={() => fileInput.current?.click()}>
-          <ImagePlus /> 그림 파일
+      actions={
+        <Button variant="primary" size="sm" className="h-9 px-4" disabled={!ready || act.busy} onClick={() => void run()}>
+          {act.busy ? msg || "읽는 중…" : what === "question" ? "본문 읽기" : "해설 읽기"}
         </Button>
-        <input
-          ref={fileInput}
-          type="file"
-          accept="image/*"
-          multiple
-          hidden
-          onChange={(e) => {
-            setPasted((p) => [...p, ...(e.target.files ? [...e.target.files] : [])]);
-            e.target.value = "";
-          }}
-        />
-      </div>
-
-      {src.error && <ErrorNote message={src.error} />}
-      {info && !info.pdf && (
-        <div className="rounded-lg border border-dashed border-line px-4 py-8 text-center text-text-2">
-          시험지 원본이 PDF가 아니어서 쪽을 보여 줄 수 없습니다. 캡처(Win+Shift+S)한 그림을 Ctrl+V로 붙여 넣어 주세요.
-        </div>
-      )}
-      {info?.pdf && (
-        <div className={"overflow-auto rounded-lg border border-line bg-muted " + (zoom ? "max-h-[66vh]" : "flex justify-center p-2")}>
-          <div
-            ref={area}
-            className={"relative cursor-crosshair touch-none select-none " + (zoom ? "" : "inline-block")}
-            onPointerDown={down}
-            onPointerMove={move}
-            onPointerUp={up}
-            onPointerCancel={() => setDrag(null)}
-          >
-            <img
-              src={`/api${base}/source/pages/${page}`}
-              alt={`${page}쪽`}
-              draggable={false}
-              className={zoom ? "block w-full" : "block max-h-[64vh] w-auto"}
-            />
-            {onPage.map(({ b, i }) => (
-              <div
-                key={i}
-                className="absolute border-2 border-accent bg-accent/15"
-                style={{ left: `${b.x0 * 100}%`, top: `${b.y0 * 100}%`, width: `${(b.x1 - b.x0) * 100}%`, height: `${(b.y1 - b.y0) * 100}%` }}
-              >
-                <span className="absolute left-0 top-0 rounded-br bg-accent px-1.5 text-[12px] text-accent-fg">{i + 1}</span>
-                <button
-                  type="button"
-                  aria-label={`영역 ${i + 1} 지우기`}
-                  className="absolute right-0 top-0 cursor-pointer rounded-bl bg-card/90 p-0.5 text-text-2 hover:text-bad"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={() => setBoxes((bs) => bs.filter((_, k) => k !== i))}
+      }
+    >
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_300px]">
+        <div className="relative flex min-h-0 flex-col bg-muted">
+          {src.error && (
+            <div className="p-4">
+              <ErrorNote message={src.error} />
+            </div>
+          )}
+          {info && !info.pdf && (
+            <div className="m-auto max-w-md rounded-xl border border-dashed border-line-strong px-6 py-10 text-center text-text-2">
+              시험지 원본이 PDF가 아니어서 쪽을 보여 줄 수 없습니다. 캡처(Win+Shift+S)한 그림을 Ctrl+V로 붙여 넣어 주세요.
+            </div>
+          )}
+          {info?.pdf && (
+            <>
+              <div className={"min-h-0 flex-1 overflow-auto p-6 pb-20 " + (zoom ? "" : "flex justify-center")}>
+                <div
+                  ref={area}
+                  className={"relative cursor-crosshair touch-none select-none " + (zoom ? "mx-auto max-w-[1100px]" : "inline-block self-start")}
+                  onPointerDown={down}
+                  onPointerMove={move}
+                  onPointerUp={up}
+                  onPointerCancel={() => setDrag(null)}
                 >
-                  <X className="size-3.5" />
+                  <img
+                    src={`/api${base}/source/pages/${page}`}
+                    alt={`${page}쪽`}
+                    draggable={false}
+                    className={"block rounded-md border border-line bg-white " + (zoom ? "w-full" : "max-h-[calc(100vh-8.5rem)] w-auto")}
+                  />
+                  {onPage.map(({ b, i }) => (
+                    <div
+                      key={i}
+                      className="absolute rounded-sm border-2 border-accent bg-accent/15"
+                      style={{ left: `${b.x0 * 100}%`, top: `${b.y0 * 100}%`, width: `${(b.x1 - b.x0) * 100}%`, height: `${(b.y1 - b.y0) * 100}%` }}
+                    >
+                      <span className="absolute left-0 top-0 rounded-br bg-accent px-1.5 text-[12px] text-accent-fg">{i + 1}</span>
+                      <button
+                        type="button"
+                        aria-label={`영역 ${i + 1} 지우기`}
+                        className="absolute right-0 top-0 cursor-pointer rounded-bl bg-card/90 p-0.5 text-text-2 hover:text-bad"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        onClick={() => setBoxes((bs) => bs.filter((_, k) => k !== i))}
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {drag && drag.page === page && (
+                    <div
+                      className="pointer-events-none absolute border-2 border-dashed border-accent bg-accent/10"
+                      style={{
+                        left: `${Math.min(drag.x0, drag.x1) * 100}%`,
+                        top: `${Math.min(drag.y0, drag.y1) * 100}%`,
+                        width: `${Math.abs(drag.x1 - drag.x0) * 100}%`,
+                        height: `${Math.abs(drag.y1 - drag.y0) * 100}%`,
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+              {/* 쪽 넘기기·크기: 원본 위에 떠 있는 작은 줄 (판독문 확인의 확대 줄과 같은 모양) */}
+              <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-0.5 whitespace-nowrap rounded-full border border-line bg-card p-1 text-[12px] text-text-2">
+                <button type="button" aria-label="앞 쪽" disabled={page <= 1} onClick={() => setPage(page - 1)} className="grid size-7 cursor-pointer place-items-center rounded-full hover:bg-muted disabled:cursor-default disabled:opacity-35">
+                  <ChevronLeft className="size-4" />
+                </button>
+                <span className="min-w-20 text-center tabular-nums">
+                  {page} / {total}쪽{isKeyPage ? " · 해설" : ""}
+                </span>
+                <button type="button" aria-label="다음 쪽" disabled={page >= total} onClick={() => setPage(page + 1)} className="grid size-7 cursor-pointer place-items-center rounded-full hover:bg-muted disabled:cursor-default disabled:opacity-35">
+                  <ChevronRight className="size-4" />
+                </button>
+                <div className="mx-1 h-4 w-px bg-line" />
+                <button type="button" onClick={() => setZoom(!zoom)} className="flex h-7 cursor-pointer items-center gap-1 rounded-full px-2.5 hover:bg-muted">
+                  {zoom ? <ZoomOut className="size-3.5" /> : <ZoomIn className="size-3.5" />} {zoom ? "쪽 전체" : "크게"}
                 </button>
               </div>
-            ))}
-            {drag && drag.page === page && (
-              <div
-                className="pointer-events-none absolute border-2 border-dashed border-accent bg-accent/10"
-                style={{
-                  left: `${Math.min(drag.x0, drag.x1) * 100}%`,
-                  top: `${Math.min(drag.y0, drag.y1) * 100}%`,
-                  width: `${Math.abs(drag.x1 - drag.x0) * 100}%`,
-                  height: `${Math.abs(drag.y1 - drag.y0) * 100}%`,
-                }}
-              />
+            </>
+          )}
+        </div>
+
+        <aside className="flex min-h-0 flex-col gap-5 overflow-y-auto border-l border-line bg-card p-5">
+          <div>
+            <div className="mb-2 text-[12px] text-text-3">무엇을 읽을까요</div>
+            <Segmented
+              value={what}
+              onChange={(v) => {
+                setWhat(v);
+                setBoxes([]);
+                setPasted([]);
+              }}
+              options={[
+                { value: "question", label: "문항 본문" },
+                { value: "key", label: "해설" },
+              ]}
+            />
+            <p className="m-0 mt-3 text-[13px] leading-relaxed text-text-2">{how}</p>
+          </div>
+
+          <div>
+            <div className="mb-2 text-[12px] text-text-3">지정한 영역</div>
+            {boxes.length === 0 && pasted.length === 0 && <div className="text-[13px] text-text-3">아직 없습니다. 왼쪽 쪽 위에서 끌어 주세요.</div>}
+            <div className="flex flex-col gap-1">
+              {boxes.map((b, i) => (
+                <div key={i} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] hover:bg-muted">
+                  <span className="grid size-5 shrink-0 place-items-center rounded bg-accent text-[11px] text-accent-fg">{i + 1}</span>
+                  <button type="button" onClick={() => setPage(b.page)} className="flex-1 cursor-pointer text-left text-text-2 hover:text-text">
+                    {b.page}쪽
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`영역 ${i + 1} 지우기`}
+                    onClick={() => setBoxes((bs) => bs.filter((_, k) => k !== i))}
+                    className="cursor-pointer text-text-3 opacity-0 group-hover:opacity-100 hover:text-bad"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            {thumbs.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {thumbs.map((u, i) => (
+                  <span key={u} className="relative inline-block">
+                    <img src={u} alt={`붙여 넣은 그림 ${i + 1}`} className="h-16 rounded-md border border-line" />
+                    <button
+                      type="button"
+                      aria-label={`붙여 넣은 그림 ${i + 1} 빼기`}
+                      className="absolute -right-1.5 -top-1.5 cursor-pointer rounded-full border border-line bg-card p-0.5 text-text-2 hover:text-bad"
+                      onClick={() => setPasted((p) => p.filter((_, k) => k !== i))}
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
             )}
           </div>
-        </div>
-      )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-[13px] text-text-2">
-        {boxes.length === 0 && pasted.length === 0 && <span className="text-text-3">아직 지정한 영역이 없습니다.</span>}
-        {boxes.map((b, i) => (
-          <button
-            key={i}
-            type="button"
-            onClick={() => setPage(b.page)}
-            className="cursor-pointer rounded-md border border-line px-2 py-0.5 hover:bg-muted"
-          >
-            영역 {i + 1} · {b.page}쪽
-          </button>
-        ))}
-        {thumbs.map((u, i) => (
-          <span key={u} className="relative inline-block">
-            <img src={u} alt={`붙여 넣은 그림 ${i + 1}`} className="h-14 rounded border border-line" />
-            <button
-              type="button"
-              aria-label={`붙여 넣은 그림 ${i + 1} 빼기`}
-              className="absolute -right-1.5 -top-1.5 cursor-pointer rounded-full border border-line bg-card p-0.5 text-text-2 hover:text-bad"
-              onClick={() => setPasted((p) => p.filter((_, k) => k !== i))}
-            >
-              <X className="size-3" />
-            </button>
-          </span>
-        ))}
+          <div className="rounded-xl bg-muted p-3 text-[12px] leading-relaxed text-text-2">
+            캡처한 그림(Win+Shift+S)은 Ctrl+V로 붙여 넣을 수 있습니다.
+            <Button size="sm" variant="outline" className="mt-2 w-full" onClick={() => fileInput.current?.click()}>
+              <ImagePlus /> 그림 파일 고르기
+            </Button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/*"
+              multiple
+              hidden
+              onChange={(e) => {
+                setPasted((p) => [...p, ...(e.target.files ? [...e.target.files] : [])]);
+                e.target.value = "";
+              }}
+            />
+          </div>
+          {act.error && <ErrorNote message={act.error} />}
+        </aside>
       </div>
-      {act.error && (
-        <div className="mt-3">
-          <ErrorNote message={act.error} />
-        </div>
-      )}
-    </Dialog>
+    </Workspace>
   );
 }

@@ -1,11 +1,11 @@
-import { AlertTriangle, ArrowRight, Check, ChevronRight, Download, FileText, FolderOpen, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, ChevronRight, Download, FileText, FolderOpen, Pencil, Plus, RotateCcw, Save, Sparkles, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RichText } from "@/components/Math";
 import { Badge, type Tone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
-import { ErrorNote, Input, Progress } from "@/components/ui/misc";
+import { ErrorNote, Input, Progress, textareaClass } from "@/components/ui/misc";
 import { Select } from "@/components/ui/select";
 import { api, enc, errorText, jobsChanged, onJobsChanged, useAction } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -41,7 +41,7 @@ const KINDS: { value: LineKind; label: string }[] = [
 const KIND_LABEL = Object.fromEntries(KINDS.map((k) => [k.value, k.label])) as Record<LineKind, string>;
 const POINTED = new Set<LineKind>(["item", "level"]);
 
-const textarea = "w-full rounded-lg border border-line bg-card px-3 py-2 text-text outline-none placeholder:text-text-3 focus:border-accent";
+const textarea = textareaClass;
 
 const pts = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))));
 const included = (l: PrepLine) => (l.decision !== null ? l.decision === "in" : l.source !== "ask");
@@ -174,25 +174,28 @@ export function KeyPrepPage({ prepId }: { prepId: string }) {
       </div>
 
       <Card className="p-5">
-        <div className="flex flex-wrap items-start gap-3">
+        <div className="flex flex-wrap items-start gap-3.5">
+          <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-accent-soft text-accent-text">
+            <Sparkles className="size-5" />
+          </span>
           <div className="min-w-0 flex-1">
-            <div className="text-[17px] font-medium">{prep.title}</div>
+            <div className="text-[18px] font-medium">{prep.title}</div>
             <div className="mt-0.5 text-[13px] text-text-3">
               {prep.source_name} · {prep.level} · 문항 {qs.length}개 · 다듬음 {done}
               {pending > 0 && ` · 답할 질문 ${pending}개`}
               {blanks > 0 && ` · 강사가 적을 곳 ${blanks}개`}
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => setDeleting(true)} title="초안 지우기 (받은 HWPX는 남습니다)">
+          <Button variant="ghost" size="icon" className="text-text-3 hover:bg-bad-soft hover:text-bad" onClick={() => setDeleting(true)} title="초안 지우기 (받은 HWPX는 남습니다)" aria-label="초안 지우기">
             <Trash2 />
           </Button>
           <Button
-            variant="primary"
+            variant={lastFile ? "outline" : "primary"}
             disabled={act.busy || running || done === 0 || blanks > 0}
             onClick={() => void exportHwpx()}
             title={blanks > 0 ? "강사가 적을 곳(□)을 먼저 채우거나 빼 주세요" : undefined}
           >
-            <Download /> HWPX로 받기
+            <Download /> {lastFile ? "HWPX 다시 받기" : "HWPX로 받기"}
           </Button>
         </div>
         {running && (
@@ -203,7 +206,7 @@ export function KeyPrepPage({ prepId }: { prepId: string }) {
             </div>
           </div>
         )}
-        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-text-2">
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-xl bg-muted/60 px-3.5 py-2.5 text-[12px] text-text-2">
           {(Object.keys(SOURCE) as LineSource[]).map((s) => (
             <span key={s} className="flex items-center gap-1.5">
               <Badge tone={SOURCE[s].tone}>{SOURCE[s].label}</Badge>
@@ -212,13 +215,13 @@ export function KeyPrepPage({ prepId }: { prepId: string }) {
           ))}
         </div>
         {blanks > 0 && !running && (
-          <div className="mt-3 rounded-lg bg-bad-soft px-3 py-2 text-[13px] text-bad">
+          <div className="mt-3 rounded-xl bg-bad-soft px-3.5 py-2.5 text-[13px] text-bad">
             AI가 정답 그림에서도 풀이로도 정할 수 없던 값이 {blanks}곳 있습니다 — 아래 <b>강사가 적기</b> 줄의 빈칸({BLANK})을 채우거나 그 줄을 빼야 HWPX를
             받을 수 있습니다.
           </div>
         )}
         {prep.warnings.map((w) => (
-          <div key={w} className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-[13px]">
+          <div key={w} className="mt-3 rounded-xl bg-warn-soft px-3.5 py-2.5 text-[13px] text-warn">
             {w}
           </div>
         ))}
@@ -228,7 +231,7 @@ export function KeyPrepPage({ prepId }: { prepId: string }) {
           </div>
         )}
         {failed.length > 0 && !running && (
-          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg bg-bad-soft px-3 py-2 text-[13px] text-bad">
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl bg-bad-soft px-3.5 py-2.5 text-[13px] text-bad">
             <span className="flex-1">{failed.map((q) => `${q.number}번`).join(", ")}을 다듬지 못했습니다 — HWPX에는 원래 해설 그대로 들어갑니다.</span>
             <Button size="sm" variant="outline" disabled={act.busy} onClick={() => void redo(failed.map((q) => q.number))}>
               <RotateCcw /> 다시 다듬기
@@ -246,10 +249,15 @@ export function KeyPrepPage({ prepId }: { prepId: string }) {
           </div>
         )}
         {lastFile && (
-          <div className="mt-4 rounded-lg border border-line p-3">
+          <div className="mt-4 rounded-xl border border-line p-3.5">
             <div className="flex flex-wrap items-center gap-2">
-              <FileText className="size-4 text-text-3" />
-              <span className="min-w-0 flex-1 truncate text-[14px]">{lastFile.split("/").pop()}</span>
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent-soft text-accent-text">
+                <FileText className="size-4" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{lastFile.split("/").pop()}</span>
+                <span className="block text-[12px] text-text-3">다듬은 해설지 HWPX</span>
+              </span>
               <Button size="sm" variant="ghost" onClick={() => void openFile(lastFile)}>
                 한글로 열기
               </Button>
@@ -259,7 +267,7 @@ export function KeyPrepPage({ prepId }: { prepId: string }) {
               <Button size="sm" variant="ghost" onClick={() => void act.run(() => api.post("/files/save-as", { path: lastFile }))}>
                 <Save /> 다른 이름으로 저장
               </Button>
-              <Button size="sm" variant="outline" onClick={() => void toStage1()} title="첫 화면의 1단계(새 채점)에 시험지로 넣습니다">
+              <Button size="sm" variant="primary" onClick={() => void toStage1()} title="첫 화면의 1단계(새 채점)에 시험지로 넣습니다">
                 1단계로 — 이 해설지로 채점 <ArrowRight />
               </Button>
             </div>
@@ -315,7 +323,9 @@ function QuestionCard({ prepId, q, busy, onChange, onRedo }: { prepId: string; q
   return (
     <Card className="p-5">
       <div className="flex flex-wrap items-center gap-2">
-        <h3 className="m-0 text-[16px] font-medium">{q.number}번</h3>
+        <span className="grid h-8 min-w-8 shrink-0 place-items-center rounded-lg bg-primary px-2 text-[14px] font-medium text-primary-fg tabular-nums" title={`${q.number}번`}>
+          {q.number}
+        </span>
         {q.points !== null && (
           <span className="text-[13px] text-text-3" title={q.points_guessed ? "시험지에 배점 표시가 없어 1단계와 같은 규칙(⌊100 ÷ 문항 수⌋)으로 정했습니다" : undefined}>
             {pts(q.points)}점{q.points_guessed && " (배점 표시 없음 — ⌊100÷문항 수⌋)"}
@@ -344,7 +354,7 @@ function QuestionCard({ prepId, q, busy, onChange, onRedo }: { prepId: string; q
       </div>
 
       {showQ && (
-        <div className="mt-3 rounded-lg bg-muted px-4 py-3 text-[14px]">
+        <div className="mt-3 rounded-xl bg-muted px-4 py-3 text-[14px] leading-relaxed">
           {q.text.split("\n").map((ln, i) => (
             <div key={i}>
               <RichText text={ln} />
@@ -360,7 +370,7 @@ function QuestionCard({ prepId, q, busy, onChange, onRedo }: { prepId: string; q
         </div>
       )}
       {showKey && (
-        <div className="mt-3 rounded-lg border border-line px-4 py-3 text-[14px]">
+        <div className="mt-3 rounded-xl border border-line px-4 py-3 text-[14px] leading-relaxed">
           <div className="mb-1.5 text-[12px] text-text-3">원래 해설 — 줄이 그어진 문단은 아래 새 기준으로 바뀝니다</div>
           {q.key_paragraphs.map((t, i) => (
             <div key={i} className={cn("flex gap-2", replaced.has(i + 1) && "text-text-3 line-through")}>
@@ -387,7 +397,7 @@ function QuestionCard({ prepId, q, busy, onChange, onRedo }: { prepId: string; q
       {q.status === "done" && (
         <>
           {differ.length > 0 && (
-            <div className="mt-3 flex gap-2 rounded-lg bg-warn-soft px-3 py-2 text-[13px]">
+            <div className="mt-3 flex gap-2 rounded-xl bg-warn-soft px-3.5 py-2.5 text-[13px]">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warn" />
               <div>
                 {q.has_key ? "AI가 해설지를 따라 풀어 본 답이 해설지와 다르거나 확실하지 않습니다 — 해설지를 확인하세요." : "AI가 직접 푼 답입니다 — 확인하세요."}
@@ -401,12 +411,12 @@ function QuestionCard({ prepId, q, busy, onChange, onRedo }: { prepId: string; q
             </div>
           )}
           {q.cases.length > 0 && (
-            <div className="mt-3 rounded-lg bg-accent-soft px-3 py-2 text-[13px] text-accent-text">
+            <div className="mt-3 rounded-xl bg-accent-soft px-3.5 py-2.5 text-[13px] text-accent-text">
               지난 채점 사례 {q.cases.length}건을 참고했습니다 (배우기 → 채점 사례집): {q.cases.join(" · ")}
             </div>
           )}
           {memos.length > 0 && (
-            <div className="mt-3 rounded-lg bg-muted px-3 py-2 text-[13px] text-text-2">
+            <div className="mt-3 rounded-xl bg-muted px-3.5 py-2.5 text-[13px] text-text-2">
               <span className="text-text">AI 확인 메모</span> (답은 해설지와 같음)
               {memos.map((c) => (
                 <div key={c.label} className="mt-0.5">
@@ -421,7 +431,7 @@ function QuestionCard({ prepId, q, busy, onChange, onRedo }: { prepId: string; q
             <PartBlock key={`${p.label}-${i}`} part={p} single={q.parts.length === 1 && !p.label} onChange={(np) => setPart(i, np)} />
           ))}
           {q.problems.length > 0 && (
-            <ul className="m-0 mt-3 list-disc rounded-lg bg-warn-soft py-2 pl-8 pr-3 text-[13px]">
+            <ul className="m-0 mt-3 list-disc rounded-xl bg-warn-soft py-2.5 pl-8 pr-3.5 text-[13px] text-warn">
               {q.problems.map((x) => (
                 <li key={x}>{x}</li>
               ))}
@@ -460,7 +470,7 @@ function QuestionCard({ prepId, q, busy, onChange, onRedo }: { prepId: string; q
 function Explanation({ q, onChange }: { q: PrepQuestion; onChange: (q: PrepQuestion) => void }) {
   const [edit, setEdit] = useState<string | null>(null);
   return (
-    <div className={cn("mt-3 rounded-lg border border-line px-4 py-3", !q.explanation_in && "opacity-60")}>
+    <div className={cn("mt-3 rounded-xl border border-line px-4 py-3", !q.explanation_in && "opacity-60")}>
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone="accent">AI 해설</Badge>
         <span className="flex-1 text-[12px] text-text-3">{q.has_key ? "해설지에 풀이가 없어 AI가 썼습니다" : "해설지가 없어 AI가 풀어 썼습니다"}</span>
@@ -531,8 +541,8 @@ function PartBlock({ part, single, onChange }: { part: PrepPart; single: boolean
   };
 
   return (
-    <div className="mt-4">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line pb-1.5">
+    <div className="mt-5 overflow-hidden rounded-xl border border-line">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line bg-muted/50 px-3.5 py-2">
         <span className="text-[14px] font-medium">{single ? "부분 점수 기준" : part.label}</span>
         <span className="text-[13px] text-text-3">{pts(part.points)}점</span>
         {part.answer && (
@@ -554,8 +564,8 @@ function PartBlock({ part, single, onChange }: { part: PrepPart; single: boolean
           부분점수 없음
         </button>
       </div>
-      {part.no_partial && <div className="mt-1.5 text-[12px] text-text-3">맞으면 만점, 아니면 0점 — 같은 답의 다른 표기·풀이 인정만 넣습니다.</div>}
-      <div className="mt-1 flex flex-col">
+      {part.no_partial && <div className="px-3.5 pt-2 text-[12px] text-text-3">맞으면 만점, 아니면 0점 — 같은 답의 다른 표기·풀이 인정만 넣습니다.</div>}
+      <div className="flex flex-col p-1.5">
         {part.lines.map((l) =>
           editing === l.id ? (
             <LineEditor
@@ -591,9 +601,11 @@ function PartBlock({ part, single, onChange }: { part: PrepPart; single: boolean
         )}
       </div>
       {!draft && (
-        <Button size="sm" variant="ghost" className="mt-1" onClick={add}>
-          <Plus /> 줄 더하기
-        </Button>
+        <div className="border-t border-line/70 px-1.5 py-1">
+          <Button size="sm" variant="ghost" className="text-text-3" onClick={add}>
+            <Plus /> 줄 더하기
+          </Button>
+        </div>
       )}
     </div>
   );
@@ -636,14 +648,24 @@ function LineRow({ line, onDecide, onEdit, onDelete }: { line: PrepLine; onDecid
           </Button>
         )}
         {ask ? (
-          <>
-            <Button size="sm" variant={line.decision === "in" ? "primary" : "outline"} onClick={() => onDecide(line.decision === "in" ? null : "in")}>
-              넣기
-            </Button>
-            <Button size="sm" variant={line.decision === "out" ? "primary" : "outline"} onClick={() => onDecide(line.decision === "out" ? null : "out")}>
-              빼기
-            </Button>
-          </>
+          <div className="inline-flex rounded-lg border border-line bg-card p-0.5">
+            <button
+              type="button"
+              aria-pressed={line.decision === "in"}
+              onClick={() => onDecide(line.decision === "in" ? null : "in")}
+              className={cn("inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2.5 text-[12px] font-medium [&_svg]:size-3.5", line.decision === "in" ? "bg-ok-soft text-ok" : "text-text-2 hover:bg-muted")}
+            >
+              <Check /> 넣기
+            </button>
+            <button
+              type="button"
+              aria-pressed={line.decision === "out"}
+              onClick={() => onDecide(line.decision === "out" ? null : "out")}
+              className={cn("inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2.5 text-[12px] font-medium [&_svg]:size-3.5", line.decision === "out" ? "bg-bad-soft text-bad" : "text-text-2 hover:bg-muted")}
+            >
+              <X /> 빼기
+            </button>
+          </div>
         ) : (
           <Button size="sm" variant="ghost" onClick={() => onDecide(on ? "out" : null)} title={on ? "이 줄을 넣지 않기" : "다시 넣기"}>
             {on ? <X /> : <Check />}
@@ -674,7 +696,7 @@ function LineEditor({ line, noPartial, onSave, onCancel }: { line: PrepLine; noP
     onSave({ kind, text: fromDollars(text.trim()), points: pointed && n > 0 ? n : pointed ? 1 : null, decision });
   };
   return (
-    <div className="my-1 flex flex-col gap-2 rounded-lg border border-accent bg-card p-3">
+    <div className="my-1 flex flex-col gap-2 rounded-xl border border-accent bg-card p-3 ring-3 ring-accent-soft">
       <div className="flex flex-wrap items-center gap-2">
         <Select value={kind} onChange={(v) => setKind(v as LineKind)} options={kinds} className="w-36 min-w-0" />
         {pointed && (

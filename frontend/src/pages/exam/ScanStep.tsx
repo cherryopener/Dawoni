@@ -1,12 +1,13 @@
-import { AlertTriangle, Check, FileText, Pencil, Printer, RefreshCw } from "lucide-react";
+import { AlertTriangle, Check, FileText, Minus, Pencil, Plus, Printer, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Badge, type Tone } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Help } from "@/components/ui/help";
 import { Chips, Dropzone, ErrorNote, Input, Progress } from "@/components/ui/misc";
 import { api, enc, examFileUrl, onJobsChanged, useAction, useApi, waitJob } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { refreshNotices } from "@/lib/notices";
 import type { Cell, ExamStudent, InboxPdf, Job, RosterStudent } from "@/lib/types";
 import { useExam } from "../Exam";
@@ -14,7 +15,6 @@ import { type EditTarget, TranscriptEditor } from "./TranscriptEditor";
 
 type Status = "이름 확인 대기" | "입력 대기" | "확인 전" | "AI 확인" | "확인 완료" | "판독 전";
 const ORDER: Status[] = ["이름 확인 대기", "입력 대기", "확인 전", "판독 전", "AI 확인", "확인 완료"];
-const TONE: Record<Status, Tone> = { "이름 확인 대기": "bad", "입력 대기": "bad", "확인 전": "warn", "판독 전": "neutral", "AI 확인": "accent", "확인 완료": "ok" };
 
 function statusOf(s: ExamStudent): { status: Status; unreadable: number } {
   const cells = Object.values(s.cells);
@@ -72,7 +72,7 @@ function BatchDialog({ pdf, onClose }: { pdf: InboxPdf | null; onClose: () => vo
       open={pdf !== null}
       onOpenChange={(v) => !v && onClose()}
       title="답안지 판독"
-      desc={pdf ? `${pdf.name}${pdf.pages ? ` · ${pdf.pages}쪽` : ""}` : ""}
+      desc="학생마다 표지에서 반·이름을 읽고 손글씨 답안을 판독합니다. 끝나면 채점까지 이어집니다."
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -84,21 +84,53 @@ function BatchDialog({ pdf, onClose }: { pdf: InboxPdf | null; onClose: () => vo
         </>
       }
     >
-      <div className="flex flex-col gap-4">
-        <label className="flex items-center gap-3">
-          <span className="flex-1">
-            학생 한 명의 쪽 수 <span className="text-[12px] text-text-3">(표지 포함)</span>
+      <div className="flex flex-col gap-5">
+        <div className="flex items-center gap-3 rounded-xl bg-muted px-3 py-2.5">
+          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-bad-soft text-bad">
+            <FileText className="size-4" />
           </span>
-          <Input type="number" min={1} value={per} onChange={(e) => setPer(e.target.value)} className="w-20 text-right" />
-        </label>
-        {n !== null && (
-          <div className={"text-[13px] " + (Number.isInteger(n) ? "text-text-2" : "text-bad")}>
-            {Number.isInteger(n) ? `학생 ${n}명으로 나눕니다.` : `쪽 수가 나누어떨어지지 않습니다 (${pdf?.pages}쪽 ÷ ${per}).`}
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-medium">{pdf?.name}</div>
+            <div className="text-[12px] text-text-3">{pdf?.pages ? `${pdf.pages}쪽` : "쪽 수 모름"}</div>
           </div>
-        )}
+        </div>
+        <div>
+          <div className="mb-2 text-[13px] text-text-2">
+            학생 한 명의 쪽 수 <span className="text-text-3">(표지 포함)</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center rounded-lg border border-line">
+              <button type="button" aria-label="1쪽 빼기" disabled={Number(per) <= 1} onClick={() => setPer(String(Math.max(1, Number(per) - 1)))} className="grid size-9 cursor-pointer place-items-center text-text-2 hover:bg-muted disabled:cursor-default disabled:opacity-30">
+                <Minus className="size-4" />
+              </button>
+              <input
+                type="number"
+                min={1}
+                value={per}
+                onChange={(e) => setPer(e.target.value)}
+                aria-label="학생 한 명의 쪽 수"
+                className="h-9 w-12 border-x border-line bg-transparent text-center tabular-nums outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+              />
+              <button type="button" aria-label="1쪽 더하기" onClick={() => setPer(String(Number(per) + 1))} className="grid size-9 cursor-pointer place-items-center text-text-2 hover:bg-muted">
+                <Plus className="size-4" />
+              </button>
+            </div>
+            {n !== null && (
+              <span className={cn("text-[13px]", Number.isInteger(n) ? "text-text-2" : "text-bad")}>
+                {Number.isInteger(n) ? (
+                  <>
+                    → 학생 <b className="font-medium text-text">{n}명</b>으로 나눕니다
+                  </>
+                ) : (
+                  `나누어떨어지지 않습니다 (${pdf?.pages}쪽 ÷ ${per})`
+                )}
+              </span>
+            )}
+          </div>
+        </div>
         {(roster.data?.classes.length ?? 0) > 0 && (
           <div>
-            <div className="mb-1.5 text-[13px] text-text-2">
+            <div className="mb-2 text-[13px] text-text-2">
               반 <Help>이 PDF의 반을 하나 고르면 그 반 명단에서만 표지 이름을 고르고 반은 그 반으로 합니다 (늦게 본 학생 한 명도). 여럿 고르면 그 안에서, 비우면 명부의 반 전체.</Help>
             </div>
             <Chips options={roster.data!.classes} value={classes} onChange={setClasses} />
@@ -166,6 +198,7 @@ function RenameDialog({ students, onClose }: { students: ExamStudent[] | null; o
     });
   return (
     <Dialog
+      medium
       open={open}
       onOpenChange={(v) => !v && onClose()}
       title="이름 확인"
@@ -181,7 +214,7 @@ function RenameDialog({ students, onClose }: { students: ExamStudent[] | null; o
         </>
       }
     >
-      <div className="flex max-h-[55vh] flex-col gap-4 overflow-auto">
+      <div className="flex flex-col gap-3">
         <datalist id="roster-classes">
           {(roster.data?.classes ?? []).map((c) => (
             <option key={c} value={c} />
@@ -193,22 +226,23 @@ function RenameDialog({ students, onClose }: { students: ExamStudent[] | null; o
           const state = stateLine(s, everyone.length === 0);
           const list = `roster-${s.student}`;
           return (
-            <div key={s.student} className="flex items-start gap-3">
+            <div key={s.student} className="flex items-start gap-4 rounded-xl border border-line p-3">
               <a href={examFileUrl(id, `scans/${s.student}/page_01.png`)} target="_blank" rel="noreferrer" title="표지 크게 보기" className="shrink-0">
                 <img
                   src={examFileUrl(id, `scans/${s.student}/page_01.png`)}
                   alt="표지"
-                  className="h-28 w-20 rounded-lg bg-white object-contain"
+                  className="h-36 w-28 rounded-lg border border-line bg-white object-contain"
                   onError={(e) => (e.currentTarget.style.visibility = "hidden")}
                 />
               </a>
               <div className="min-w-0 flex-1 text-[13px]">
-                <div className="text-text-2">
+                <div className="text-[15px] font-medium text-text">{s.record?.name ?? s.student}</div>
+                <div className="mt-0.5 text-text-2">
                   {s.record?.school ?? "학교 모름"}
                   {s.record?.cover_name && s.record.cover_name !== s.record.name && <span className="text-text-3"> · 표지: {s.record.cover_name}</span>}
                 </div>
-                <div className={state.cls}>{state.text}</div>
-                <div className="mt-2 flex gap-2">
+                <div className={cn("mt-1", state.cls)}>{state.text}</div>
+                <div className="mt-3 flex gap-2">
                   <Input
                     list="roster-classes"
                     value={f.klass ?? s.record?.class_name ?? ""}
@@ -232,13 +266,13 @@ function RenameDialog({ students, onClose }: { students: ExamStudent[] | null; o
                   </datalist>
                 </div>
                 {hit ? (
-                  <div className="mt-1.5 text-text-2">
-                    명부: {[hit.class_name, hit.name].filter(Boolean).join(" ")}
+                  <div className="mt-2 flex items-center gap-1.5 text-ok">
+                    <Check className="size-3.5" /> 명부: {[hit.class_name, hit.name].filter(Boolean).join(" ")}
                     {hit.school ? ` (${hit.school})` : ""}
                   </div>
                 ) : (
                   name && (
-                    <div className="mt-1.5 flex flex-col gap-1 text-text-2">
+                    <div className="mt-2 flex flex-col gap-1.5 text-text-2">
                       <label className="flex items-center gap-1.5">
                         <input type="checkbox" checked={Boolean(f.add)} onChange={(e) => set(s.student, { add: e.target.checked, off: false })} />
                         명부에 넣고 잇기
@@ -262,13 +296,23 @@ function RenameDialog({ students, onClose }: { students: ExamStudent[] | null; o
   );
 }
 
-/** 판독문 버튼 하나의 모양: 확인 완료 ✓, [판독불가] 빨강, 확인 전 노랑. */
-function cellTone(c: Cell | undefined): string {
+/** 판독문 칩 하나의 모양: 강사 확인 초록 ✓ · AI 확인 남보라 · 확인 전 노랑 · [판독불가] 빨강. */
+function cellChip(c: Cell | undefined): string {
   const t = c?.transcript;
   if (!t) return "";
-  if (t.unreadable) return "text-bad";
-  return t.confirmed ? "text-ok" : "text-warn";
+  if (t.unreadable) return "border-bad/40 bg-bad-soft text-bad";
+  if (!t.confirmed) return "border-warn/40 bg-warn-soft text-warn";
+  return t.confirmed_by === "AI" ? "border-transparent bg-accent-soft text-accent-text" : "border-transparent bg-ok-soft text-ok";
 }
+
+const DOT: Record<Status, string> = {
+  "이름 확인 대기": "bg-bad",
+  "입력 대기": "bg-bad",
+  "확인 전": "bg-warn",
+  "판독 전": "bg-line-strong",
+  "AI 확인": "bg-accent",
+  "확인 완료": "bg-ok",
+};
 
 /** ③ 답안 판독: 스캔 넣기 → 표지·손글씨 판독 → 강사가 화면에서 원본과 나란히 보고 고쳐 확인 (2026-11-18 HWPX 대신). */
 export function ScanStep() {
@@ -282,7 +326,6 @@ export function ScanStep() {
   const act = useAction();
 
   const rows = (students.data ?? []).map((s) => ({ s, ...statusOf(s) })).sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
-  const waiting = rows.filter((r) => r.status === "입력 대기").length;
   const dup = rows.filter((r) => r.status === "이름 확인 대기").length;
   const twins = rows.filter((r) => r.s.record?.needs_rename).length;
   const offRoster = dup - twins;
@@ -304,6 +347,11 @@ export function ScanStep() {
     setEdit(t);
   };
 
+  const [filter, setFilter] = useState<Status | null>(null);
+  const counts = ORDER.map((st) => ({ st, n: rows.filter((r) => r.status === st).length })).filter((x) => x.n > 0);
+  const shown = filter ? rows.filter((r) => r.status === filter) : rows;
+  const inboxList = inbox.data ?? [];
+
   const upload = (files: File[]) =>
     act.run(async () => {
       const f = files[0];
@@ -318,67 +366,71 @@ export function ScanStep() {
   const openScanner = () => act.run(() => api.post("/scanner/open"));
 
   return (
-    <div className="mx-auto flex max-w-5xl flex-col gap-4 px-6 py-6">
-      <div className="grid grid-cols-2 gap-4">
-        <Card>
-          <CardHeader
-            icon={<Printer />}
-            title="스캔본 폴더"
-            desc="복합기 공유 폴더에서 옮긴 PDF (새것 먼저)"
-            right={
-              <div className="flex gap-1">
-                <Button size="sm" variant="ghost" onClick={() => void openScanner()}>
-                  복합기 폴더 열기
-                </Button>
-                <Button size="icon" variant="ghost" aria-label="새로 고침" onClick={inbox.reload}>
-                  <RefreshCw />
-                </Button>
-              </div>
-            }
-          />
-          <CardBody className="max-h-48 overflow-auto pt-3">
-            {(inbox.data ?? []).length === 0 && <div className="px-2 text-[13px] text-text-3">PDF가 없습니다.</div>}
-            {(inbox.data ?? []).slice(0, 8).map((f) => (
-              <div key={f.path} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted">
-                <FileText className="size-4 text-text-3" />
-                <span className="flex-1 truncate">
-                  {f.name} {f.pages && <span className="text-text-3">· {f.pages}쪽</span>}
-                </span>
-                <Button size="sm" variant="outline" onClick={() => setPdf(f)}>
-                  판독
-                </Button>
-              </div>
-            ))}
-          </CardBody>
-        </Card>
-        <Dropzone title="스캔 PDF를 끌어다 놓기" hint="여러 학생이 한 파일이어도 됩니다 (학생당 쪽 수로 나눔)" accept=".pdf" onFiles={(f) => void upload(f)} />
-      </div>
+    <div className="mx-auto flex max-w-5xl flex-col gap-5 px-6 py-6">
+      {/* 답안지 넣기: 끌어다 놓기 · 복합기 스캔본 폴더 */}
+      <Card className="overflow-hidden">
+        <div className="flex items-center gap-2 px-5 pt-4 pb-3">
+          <span className="text-[15px] font-medium">답안지 넣기</span>
+          <span className="text-[12px] text-text-3">여러 학생이 한 PDF여도 됩니다 — 학생당 쪽 수로 나눕니다</span>
+          <div className="flex-1" />
+          <Button size="sm" variant="ghost" onClick={() => void openScanner()}>
+            <Printer /> 복합기 폴더 열기
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 gap-4 px-5 pb-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+          <Dropzone compact={rows.length > 0} title="스캔 PDF를 끌어다 놓기" hint="또는 눌러서 고르기" accept=".pdf" onFiles={(f) => void upload(f)} className={rows.length > 0 ? "" : "py-8"} />
+          <div className="flex min-w-0 flex-col rounded-xl border border-line">
+            <div className="flex items-center gap-2 border-b border-line px-3 py-2 text-[12px] text-text-3">
+              스캔본 폴더 <span className="tabular-nums">{inboxList.length}</span>
+              <div className="flex-1" />
+              <button type="button" aria-label="새로 고침" title="새로 고침" onClick={inbox.reload} className="grid size-6 cursor-pointer place-items-center rounded-md hover:bg-muted hover:text-text">
+                <RefreshCw className="size-3.5" />
+              </button>
+            </div>
+            <div className={cn("overflow-auto p-1", rows.length > 0 ? "max-h-32" : "max-h-44")}>
+              {inboxList.length === 0 && <div className="px-2 py-3 text-[13px] text-text-3">복합기에서 옮긴 PDF가 아직 없습니다.</div>}
+              {inboxList.slice(0, 8).map((f) => (
+                <div key={f.path} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-muted">
+                  <FileText className="size-4 shrink-0 text-text-3" />
+                  <span className="min-w-0 flex-1 truncate text-[13px]">{f.name}</span>
+                  {f.pages && <span className="shrink-0 text-[12px] text-text-3 tabular-nums">{f.pages}쪽</span>}
+                  <Button size="sm" variant="outline" className="h-7 px-2.5 text-[12px]" onClick={() => setPdf(f)}>
+                    판독
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {jobs.map((j) => (
-        <Card key={j.id}>
-          <CardBody className="flex items-center gap-4">
-            <div className="flex-1">
-              <div className="flex text-[13px]">
-                <span className="flex-1">{j.progress.message || "판독 시작하는 중"}</span>
-                <span className="text-text-3">{j.progress.total ? `${j.progress.done}/${j.progress.total}` : ""}</span>
-              </div>
-              <div className="mt-2">
-                <Progress value={j.progress.total ? (j.progress.done / j.progress.total) * 100 : 5} />
-              </div>
+        <Card key={j.id} className="flex items-center gap-4 px-5 py-4">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline text-[13px]">
+              <span className="flex-1 font-medium">{j.progress.message || "판독 시작하는 중"}</span>
+              <span className="text-text-3 tabular-nums">{j.progress.total ? `${j.progress.done}/${j.progress.total}` : ""}</span>
             </div>
-            <Button size="sm" variant="ghost" onClick={() => void api.post(`/jobs/${j.id}/cancel`)}>
-              멈추기
-            </Button>
-          </CardBody>
+            <div className="mt-2">
+              <Progress value={j.progress.total ? (j.progress.done / j.progress.total) * 100 : 5} />
+            </div>
+          </div>
+          <Button size="sm" variant="ghost" onClick={() => void api.post(`/jobs/${j.id}/cancel`)}>
+            멈추기
+          </Button>
         </Card>
       ))}
 
       {dup > 0 && (
-        <div className="flex items-center gap-2 rounded-[var(--radius-card)] border border-line bg-bad-soft px-4 py-3 text-bad">
-          <AlertTriangle className="size-4" />
-          <span className="flex-1">
-            이름을 확인할 시험지가 있습니다 ({dup}장{twins ? ` · 같은 반 같은 이름 ${twins}` : ""}{offRoster ? ` · 명부에 없음 ${offRoster}` : ""}). 판독·채점은
-            계속하고, 판독본은 이름을 확인하면 만듭니다.
+        <div className="flex items-center gap-3 rounded-[var(--radius-card)] border border-bad/25 bg-bad-soft px-4 py-3 text-bad">
+          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-card/70">
+            <AlertTriangle className="size-4" />
+          </span>
+          <span className="min-w-0 flex-1 text-[13px]">
+            <b className="font-medium">이름을 확인할 시험지 {dup}장</b>
+            {twins ? ` · 같은 반 같은 이름 ${twins}` : ""}
+            {offRoster ? ` · 명부에 없음 ${offRoster}` : ""}
+            <span className="text-bad/80"> — 판독·채점은 계속하고, 점수표에는 확인한 뒤에 들어갑니다.</span>
           </span>
           <Button size="sm" variant="outline" onClick={() => setRenameFor(rows.filter((r) => namePending(r.s)).map((r) => r.s.student))}>
             이름 확인
@@ -388,9 +440,9 @@ export function ScanStep() {
       {act.error && <ErrorNote message={act.error} />}
 
       <Card className="overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-line px-5 py-3">
-          <span className="font-medium">학생 {rows.length}명</span>
-          {waiting > 0 && <Badge tone="bad">입력 대기 {waiting}</Badge>}
+        <div className="flex flex-wrap items-center gap-2 px-5 pt-4 pb-3">
+          <span className="text-[15px] font-medium">학생</span>
+          <span className="text-[13px] text-text-3 tabular-nums">{rows.length}</span>
           <Help>
             문항 번호를 누르면 원본과 판독문을 나란히 보고 고칩니다. [판독불가]가 남은 답안은 "입력 대기" — 채우고 확인하면 그 학생·문항만 채점합니다.
             나머지는 AI가 바로 확정하고(AI 확인) 채점까지 갑니다 — 고쳐 확인하면 다시 채점합니다. 표지 이름을 잘못 읽었으면 이름을 눌러 고칩니다.
@@ -405,12 +457,25 @@ export function ScanStep() {
             {queue.length ? `차례로 확인 (${queue.length})` : "모두 확인함"}
           </Button>
         </div>
-        {rows.length === 0 && <div className="px-5 py-8 text-center text-text-3">아직 판독한 답안이 없습니다. 스캔 PDF를 넣어 시작하세요.</div>}
+        {counts.length > 1 && (
+          <div className="flex flex-wrap gap-1.5 px-5 pb-3">
+            <FilterChip on={filter === null} onClick={() => setFilter(null)}>
+              전체 <span className="tabular-nums text-text-3">{rows.length}</span>
+            </FilterChip>
+            {counts.map(({ st, n }) => (
+              <FilterChip key={st} on={filter === st} onClick={() => setFilter(filter === st ? null : st)}>
+                <span className={cn("size-1.5 rounded-full", DOT[st])} />
+                {st} <span className="tabular-nums text-text-3">{n}</span>
+              </FilterChip>
+            ))}
+          </div>
+        )}
+        {rows.length === 0 && <div className="border-t border-line px-5 py-10 text-center text-text-3">아직 판독한 답안이 없습니다. 위에 스캔 PDF를 넣어 시작하세요.</div>}
         {rows.length > 0 && (
           <table className="w-full border-collapse text-left">
-            <thead className="text-[12px] text-text-3">
+            <thead className="border-t border-line bg-muted/50 text-[12px] text-text-3">
               <tr>
-                <th className="px-5 py-2 font-normal">반</th>
+                <th className="w-20 px-5 py-2 font-normal">반</th>
                 <th className="px-2 py-2 font-normal">이름</th>
                 <th className="px-2 py-2 font-normal">학교</th>
                 <th className="px-2 py-2 font-normal">상태</th>
@@ -418,13 +483,13 @@ export function ScanStep() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(({ s, status, unreadable }) => (
-                <tr key={s.student} className="group border-t border-line hover:bg-muted">
+              {shown.map(({ s, status, unreadable }) => (
+                <tr key={s.student} className="group border-t border-line/70 hover:bg-muted/50">
                   <td className="px-5 py-2.5 text-text-2">{s.record?.class_name ?? "—"}</td>
                   <td className="px-2 py-2.5">
-                    <button type="button" onClick={() => setRenameFor([s.student])} className="cursor-pointer text-left hover:underline" title="이름·반 고치기">
+                    <button type="button" onClick={() => setRenameFor([s.student])} className="inline-flex cursor-pointer items-center gap-1 rounded-md text-left hover:text-accent-text" title="이름·반 고치기">
                       {s.record?.name ?? s.student}
-                      <Pencil className="ml-1 inline size-3.5 text-text-3 opacity-0 group-hover:opacity-100" />
+                      <Pencil className="size-3.5 text-text-3 opacity-0 group-hover:opacity-100" />
                     </button>
                     {s.record?.roster_note && (
                       <span className="ml-2" title={s.record.roster_note}>
@@ -434,31 +499,33 @@ export function ScanStep() {
                   </td>
                   <td className="px-2 py-2.5 text-text-2">{s.record?.school ?? ""}</td>
                   <td className="px-2 py-2.5">
-                    <Badge tone={TONE[status]}>
+                    <span className="inline-flex items-center gap-1.5 text-[13px] text-text-2">
+                      <span className={cn("size-1.5 rounded-full", DOT[status])} />
                       {status}
-                      {unreadable ? ` · [판독불가] ${unreadable}곳` : ""}
-                    </Badge>
+                      {unreadable ? <span className="text-bad"> · [판독불가] {unreadable}곳</span> : null}
+                    </span>
                   </td>
                   <td className="px-5 py-2 text-right">
-                    {detail.exam.questions.map((q) => {
-                      const c = s.cells[q.number];
-                      const t = c?.transcript;
-                      if (!t) return null;
-                      const state = t.unreadable ? `[판독불가] ${t.unreadable}곳` : t.confirmed ? (t.confirmed_by === "AI" ? "AI 확인" : "확인 완료") : "확인 전";
-                      return (
-                        <Button
-                          key={q.number}
-                          size="sm"
-                          variant="ghost"
-                          title={`${q.number}번 판독문 — ${state}`}
-                          className={cellTone(c)}
-                          onClick={() => open({ student: s.student, question: q.number }, false)}
-                        >
-                          {t.confirmed && !t.unreadable && <Check />}
-                          {q.number}번
-                        </Button>
-                      );
-                    })}
+                    <div className="inline-flex flex-wrap justify-end gap-1">
+                      {detail.exam.questions.map((q) => {
+                        const c = s.cells[q.number];
+                        const t = c?.transcript;
+                        if (!t) return null;
+                        const state = t.unreadable ? `[판독불가] ${t.unreadable}곳` : t.confirmed ? (t.confirmed_by === "AI" ? "AI 확인" : "확인 완료") : "확인 전";
+                        return (
+                          <button
+                            key={q.number}
+                            type="button"
+                            title={`${q.number}번 판독문 — ${state}`}
+                            onClick={() => open({ student: s.student, question: q.number }, false)}
+                            className={cn("inline-flex h-7 cursor-pointer items-center gap-1 rounded-full border px-2.5 text-[12px] font-medium transition-[filter] hover:brightness-95 dark:hover:brightness-125", cellChip(c))}
+                          >
+                            {t.confirmed && !t.unreadable && <Check className="size-3" strokeWidth={3} />}
+                            {q.number}번
+                          </button>
+                        );
+                      })}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -489,5 +556,20 @@ export function ScanStep() {
         }}
       />
     </div>
+  );
+}
+
+function FilterChip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "inline-flex h-7 cursor-pointer items-center gap-1.5 rounded-full border px-3 text-[12px] transition-colors",
+        on ? "border-primary bg-primary text-primary-fg [&_span]:text-primary-fg/70" : "border-line text-text-2 hover:bg-muted hover:text-text",
+      )}
+    >
+      {children}
+    </button>
   );
 }

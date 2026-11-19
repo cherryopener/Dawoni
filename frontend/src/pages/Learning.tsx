@@ -1,10 +1,10 @@
-import { BookText, Brain, Check, FileCode2, X } from "lucide-react";
+import { BookText, Brain, Check, FileCode2, FolderOpen, X } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Help } from "@/components/ui/help";
-import { ErrorNote, Input } from "@/components/ui/misc";
+import { ErrorNote, Input, PageTitle } from "@/components/ui/misc";
 import { Switch } from "@/components/ui/switch";
 import { api, jobsChanged, useAction, useApi, waitJob } from "@/lib/api";
 import { useTeacher } from "@/lib/session";
@@ -72,61 +72,69 @@ export function LearningPage() {
   const used = Math.max(0, ...Object.values(memory.data?.usage ?? {}));
 
   return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-8">
-      <h1 className="m-0 text-[20px] font-medium">배우기</h1>
+    <div className="mx-auto flex max-w-3xl flex-col gap-5 px-6 py-8">
+      <PageTitle title="배우기" desc="강사가 고친 것에서 AI가 다음 채점에 쓸 것을 배웁니다. 모두 작업공간의 md 파일이라 직접 고쳐도 됩니다." />
       {act.error && <ErrorNote message={act.error} />}
 
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader
           icon={<Brain />}
+          tone="accent"
           title={
-            <>
-              승인 기다리는 제안 <Badge tone="accent">{proposals.length}</Badge>
-            </>
+            <span className="flex items-center gap-2">
+              승인 기다리는 제안 {proposals.length > 0 && <Badge tone="warn">{proposals.length}</Badge>}
+            </span>
           }
           desc="강사가 고친 것·반복된 오류에서 AI가 제안했습니다. 승인해야 다음 호출부터 들어갑니다."
         />
         <CardBody className="flex flex-col gap-2">
           {proposals.map((p) => (
-            <div key={p.id} className="rounded-lg border border-line p-3">
-              <div className="flex items-center gap-2">
-                <Badge tone={p.kind === "스킬" ? "accent" : "neutral"}>{p.kind}</Badge>
-                <span className="text-[12px] text-text-3">{scopes(p.scope)}</span>
+            <div key={p.id} className="flex items-start gap-3 rounded-xl border border-line p-3.5">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <Badge tone={p.kind === "스킬" ? "accent" : "neutral"}>{p.kind}</Badge>
+                  <span className="text-[12px] text-text-3">{scopes(p.scope)}</span>
+                </div>
+                <div className="mt-2">{p.text}</div>
+                {p.source && <div className="mt-1 text-[12px] text-text-3">{p.source}</div>}
               </div>
-              <div className="mt-2">{p.text}</div>
-              {p.source && <div className="mt-1 text-[12px] text-text-3">{p.source}</div>}
-              <div className="mt-2 flex gap-1">
-                <Button size="sm" variant="outline" disabled={act.busy} onClick={() => void decide(p.kind, p.id, true)}>
-                  <Check /> 승인
-                </Button>
+              <div className="flex shrink-0 gap-1">
                 <Button size="sm" variant="ghost" disabled={act.busy} onClick={() => void decide(p.kind, p.id, false)}>
                   <X /> 버리기
+                </Button>
+                <Button size="sm" variant="primary" disabled={act.busy} onClick={() => void decide(p.kind, p.id, true)}>
+                  <Check /> 승인
                 </Button>
               </div>
             </div>
           ))}
-          {proposals.length === 0 && <div className="text-text-3">기다리는 제안이 없습니다.</div>}
+          {proposals.length === 0 && <div className="rounded-xl border border-dashed border-line-strong px-4 py-5 text-center text-[13px] text-text-3">기다리는 제안이 없습니다.</div>}
         </CardBody>
       </Card>
 
       <CasebookCard />
 
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader
           icon={<BookText />}
           title={
-            <>
+            <span className="flex items-center gap-2">
               전역 규칙 <Help>규칙은 강사가 정합니다. 켜 둔 규칙은 해당 작업의 모든 호출에 들어갑니다.</Help>
-            </>
+            </span>
           }
+          desc="켜 둔 규칙은 그 작업의 모든 AI 호출에 들어갑니다."
         />
-        <CardBody className="flex flex-col">
-          {(rules.data ?? []).map((r) => (
-            <Switch key={r.id} checked={r.enabled} onCheckedChange={(v) => void toggle(r, v)} label={r.text} desc={`${r.title} · ${scopes(r.applies_to)}`} />
-          ))}
-          {rules.data?.length === 0 && <div className="py-2 text-text-3">규칙이 없습니다.</div>}
+        <CardBody className="flex flex-col gap-3">
+          {(rules.data?.length ?? 0) > 0 && (
+            <div className="divide-y divide-line rounded-xl border border-line px-4">
+              {(rules.data ?? []).map((r) => (
+                <Switch key={r.id} checked={r.enabled} onCheckedChange={(v) => void toggle(r, v)} label={r.text} desc={`${r.title} · ${scopes(r.applies_to)}`} />
+              ))}
+            </div>
+          )}
+          {rules.data?.length === 0 && <div className="text-[13px] text-text-3">규칙이 없습니다.</div>}
           <form
-            className="mt-2 flex gap-2"
+            className="flex gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               void refine();
@@ -138,7 +146,7 @@ export function LearningPage() {
             </Button>
           </form>
           {draft && (
-            <div className="mt-3 rounded-lg bg-muted p-3 text-[13px]">
+            <div className="rounded-xl border border-accent/40 bg-accent-soft/40 p-3.5 text-[13px]">
               <div className="font-medium">{draft.title}</div>
               <div className="mt-1">{draft.text}</div>
               <div className="mt-1 text-text-3">{scopes(draft.applies_to)}</div>
@@ -149,7 +157,7 @@ export function LearningPage() {
                 </div>
               ))}
               <div className="mt-2 flex gap-2">
-                <Button size="sm" variant="outline" disabled={act.busy} onClick={() => void saveRule()}>
+                <Button size="sm" variant="primary" disabled={act.busy} onClick={() => void saveRule()}>
                   이대로 저장
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>
@@ -161,14 +169,14 @@ export function LearningPage() {
         </CardBody>
       </Card>
 
-      <Card>
+      <Card className="overflow-hidden">
         <CardHeader
           icon={<FileCode2 />}
           title="메모리 · 스킬 파일"
           desc="작업공간 memory/ · skills/ · rules/ 폴더의 md 파일입니다. 메모장으로 고쳐도 됩니다."
           right={
-            <Button variant="ghost" onClick={() => void reveal()}>
-              폴더 열기
+            <Button variant="ghost" size="sm" className="h-9" onClick={() => void reveal()}>
+              <FolderOpen /> 폴더 열기
             </Button>
           }
         />

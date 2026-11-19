@@ -53,7 +53,7 @@ export function AgentList({ onUsable }: { onUsable?: (names: string[]) => void }
   };
   if (loading && !data) return <div className="py-3 text-text-3">AI 프로그램을 찾는 중…</div>;
   return (
-    <div>
+    <div className="divide-y divide-line rounded-xl border border-line">
       {(data ?? []).map((a) => {
         const t = tests[a.name];
         const ok = a.installed && a.logged_in !== false;
@@ -77,14 +77,14 @@ export function AgentList({ onUsable }: { onUsable?: (names: string[]) => void }
               ? `로그인 필요 · 터미널에서 ${a.name}를 한 번 실행해 로그인하세요`
               : [a.version, a.model, ...a.notes].filter(Boolean).join(" · ");
         return (
-          <div key={a.name} className="flex items-center gap-3 border-t border-line py-3 first:border-t-0">
+          <div key={a.name} className="flex items-center gap-3 px-4 py-3">
             {icon}
             <div className="min-w-0 flex-1">
-              <div>{AGENT_NAMES[a.name] ?? a.name}</div>
+              <div className="font-medium">{AGENT_NAMES[a.name] ?? a.name}</div>
               <div className={"text-[12px] " + (t?.state === "failed" ? "text-bad" : "text-text-2")}>{note}</div>
             </div>
             {a.installed ? (
-              <Button size="sm" variant="ghost" disabled={t?.state === "running"} onClick={() => void test(a.name)}>
+              <Button size="sm" variant="outline" disabled={t?.state === "running"} onClick={() => void test(a.name)}>
                 연결 시험
               </Button>
             ) : (

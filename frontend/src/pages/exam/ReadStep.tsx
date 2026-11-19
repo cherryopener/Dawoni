@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Help } from "@/components/ui/help";
-import { Advanced, ErrorNote, Input } from "@/components/ui/misc";
+import { Advanced, ErrorNote, Input, textareaClass } from "@/components/ui/misc";
 import { Segmented } from "@/components/ui/segmented";
 import { api, enc, useAction, waitJob } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { go } from "@/lib/router";
 import { useTeacher } from "@/lib/session";
 import { pts } from "@/lib/steps";
@@ -24,8 +25,7 @@ const KIND_OPTIONS: { value: PartKind | ""; label: string }[] = [
   { value: "essay", label: "서술형" },
 ];
 
-const textarea =
-  "w-full rounded-lg border border-line bg-card px-3 py-2 text-text outline-none placeholder:text-text-3 focus:border-accent";
+const textarea = textareaClass;
 
 /** 본문 미리 보기: 줄마다 (식은 KaTeX, 그림 자리는 흐리게). */
 function StemPreview({ text }: { text: string }) {
@@ -166,7 +166,7 @@ function QuestionEditor({
   );
 
   return (
-    <div className="flex flex-col gap-4 px-5 py-4">
+    <div className="flex flex-col gap-4 bg-muted/30 px-5 py-4">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-[13px] text-text-2">유형</span>
         {editableType ? (
@@ -192,14 +192,14 @@ function QuestionEditor({
       </div>
 
       {rows.length === 0 && (
-        <div className="rounded-lg border border-line p-3">
-          <div className="mb-2 text-[13px] font-medium">문항 전체 해설</div>
+        <div className="rounded-xl border border-line bg-card p-3.5">
+          <div className="mb-2.5 text-[13px] font-medium">문항 전체 해설</div>
           {keyInputs(whole, (p) => setWhole({ ...whole, ...p }))}
         </div>
       )}
       {rows.map((r) => (
-        <div key={r.id} className="rounded-lg border border-line p-3">
-          <div className="mb-2 flex flex-wrap items-center gap-2">
+        <div key={r.id} className="rounded-xl border border-line bg-card p-3.5">
+          <div className="mb-2.5 flex flex-wrap items-center gap-2">
             <Input value={r.label} onChange={(e) => setRow(r.id, { label: e.target.value })} aria-label="소문항 표시" className="h-8 w-24" />
             <Segmented value={r.kind ?? ""} onChange={(v) => setRow(r.id, { kind: v || null })} options={KIND_OPTIONS} />
             <Input
@@ -222,7 +222,7 @@ function QuestionEditor({
       ))}
       <div>
         <Button size="sm" variant="ghost" onClick={addRow}>
-          <Plus /> 소문항
+          <Plus /> 소문항 더하기
         </Button>
       </div>
 
@@ -235,15 +235,15 @@ function QuestionEditor({
       </div>
 
       {act.error && <ErrorNote message={act.error} />}
-      <div className="flex items-center gap-2">
-        <Button variant="danger" size="sm" disabled={act.busy} onClick={() => setConfirmDelete(true)}>
+      <div className="-mx-5 -mb-4 flex items-center gap-2 border-t border-line bg-card px-5 py-3">
+        <Button variant="ghost" size="sm" className="text-bad hover:bg-bad-soft hover:text-bad" disabled={act.busy} onClick={() => setConfirmDelete(true)}>
           <Trash2 /> 문항 지우기
         </Button>
         <div className="flex-1" />
         <Button variant="ghost" disabled={act.busy} onClick={onCancel}>
           취소
         </Button>
-        <Button disabled={act.busy || !(structureChanged || keyChanged || stemChanged)} onClick={() => void save()}>
+        <Button variant="primary" disabled={act.busy || !(structureChanged || keyChanged || stemChanged)} onClick={() => void save()}>
           <Check /> 저장
         </Button>
       </div>
@@ -319,33 +319,42 @@ function QuestionCard({
   const dirty = Object.keys(points).length > 0;
   return (
     <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3">
-        <span className="text-[15px] font-medium">{q.number}번</span>
-        <span className="text-text-3">{pts(q.points)}점</span>
+      <div className="flex flex-wrap items-center gap-3 px-5 py-3.5">
+        <span className="grid h-8 min-w-8 shrink-0 place-items-center rounded-lg bg-primary px-2 text-[14px] font-medium text-primary-fg tabular-nums" title={`${q.number}번`}>
+          {q.number}
+        </span>
+        <div className="flex items-baseline gap-2">
+          <span className="text-[15px] font-medium">{kindOf(null)}</span>
+          <span className="text-[13px] text-text-3">
+            {pts(q.points)}점{q.parts.length ? ` · 소문항 ${q.parts.length}개` : ""}
+          </span>
+        </div>
         {d?.stem_missing && (
           <Badge tone="warn">
             <AlertTriangle /> 본문 없음
           </Badge>
         )}
+        {key?.confirmed ? (
+          <Badge tone="ok">
+            <Check /> 해설 확인{key.confirmed_by ? ` · ${key.confirmed_by}` : ""}
+          </Badge>
+        ) : !key ? (
+          <Badge>해설 없음</Badge>
+        ) : null}
         <div className="flex-1" />
-        {key?.confirmed && (
-          <span className="inline-flex items-center gap-1 text-[12px] text-ok">
-            <Check className="size-3.5" /> 해설 확인 {key.confirmed_by ?? ""}
-          </span>
-        )}
         {!editing && key && !key.confirmed && key.doubtful.length > 0 && (
-          <Button size="sm" variant="outline" disabled={act.busy} onClick={() => void confirmKey()}>
-            원본과 맞음
+          <Button size="sm" variant="outline" disabled={act.busy} onClick={() => void confirmKey()} title="두 번 읽은 숫자가 다른 곳을 원본과 비교해 맞으면">
+            <Check /> 원본과 맞음
           </Button>
         )}
         {!editing && dirty && (
-          <Button size="sm" variant="outline" disabled={act.busy} onClick={() => void save()}>
+          <Button size="sm" variant="primary" disabled={act.busy} onClick={() => void save()}>
             배점 저장
           </Button>
         )}
         {!editing && (
           <>
-            <Button size="sm" variant="outline" onClick={() => guard(() => setRegion(d?.stem_missing || key ? "question" : "key"))}>
+            <Button size="sm" variant="ghost" onClick={() => guard(() => setRegion(d?.stem_missing || key ? "question" : "key"))} title="시험지 원본에서 이 문항(또는 해설) 부분을 끌어 지정해 다시 읽기">
               <ScanSearch /> 원본에서 읽기
             </Button>
             <Button size="sm" variant="outline" disabled={!d} onClick={() => guard(() => setEditing(true))}>
@@ -355,32 +364,34 @@ function QuestionCard({
         )}
       </div>
       {notes.length > 0 && (
-        <div className="flex flex-col gap-1 border-b border-line bg-warn-soft px-5 py-2 text-[13px]">
+        <div className="flex flex-col gap-1 border-t border-line bg-warn-soft px-5 py-2 text-[13px] text-warn">
           {notes.map((n) => (
             <span key={n}>{n}</span>
           ))}
         </div>
       )}
       {editing && d ? (
-        <QuestionEditor
-          q={q}
-          d={d}
-          reset={reset}
-          onCancel={() => setEditing(false)}
-          onDone={(n) => {
-            setEditing(false);
-            setNotes(n);
-            onSaved();
-          }}
-        />
+        <div className="border-t border-line">
+          <QuestionEditor
+            q={q}
+            d={d}
+            reset={reset}
+            onCancel={() => setEditing(false)}
+            onDone={(n) => {
+              setEditing(false);
+              setNotes(n);
+              onSaved();
+            }}
+          />
+        </div>
       ) : (
         <>
           <table className="w-full border-collapse text-left">
-            <thead className="text-[12px] text-text-3">
+            <thead className="border-t border-line bg-muted/50 text-[12px] text-text-3">
               <tr>
                 <th className="w-24 px-5 py-2 font-normal">소문항</th>
                 <th className="w-20 px-2 py-2 font-normal">유형</th>
-                <th className="w-32 px-2 py-2 font-normal">배점</th>
+                <th className="w-28 px-2 py-2 font-normal">배점</th>
                 <th className="px-5 py-2 font-normal">해설지 답</th>
               </tr>
             </thead>
@@ -389,34 +400,38 @@ function QuestionCard({
                 const kp = key?.parts.find((x) => x.label === p.label);
                 const doubt = key?.doubtful.includes(p.label) && !key.confirmed;
                 return (
-                  <tr key={p.label} className="border-t border-line align-top">
-                    <td className="px-5 py-2.5">{p.label ? `${q.number}-${p.label}` : q.number}</td>
+                  <tr key={p.label} className={cn("border-t border-line/70 align-top", doubt && "bg-warn-soft/40")}>
+                    <td className="px-5 py-2.5 font-medium">{p.label ? `${q.number}-${p.label}` : q.number}</td>
                     <td className="px-2 py-2.5 text-text-2">{kindOf(p.kind)}</td>
-                    <td className="px-2 py-2.5">
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        readOnly={open}
-                        title={open ? "루브릭을 만든 문항 — 눌러서 고치기" : undefined}
-                        onClick={() => open && guard(() => undefined)}
-                        value={points[p.label] ?? String(p.points)}
-                        onChange={(e) => setPoints({ ...points, [p.label]: e.target.value })}
-                        className="h-8 w-16 rounded-md border border-line bg-card px-2 text-right outline-none focus:border-accent read-only:cursor-pointer read-only:opacity-60"
-                      />
-                      <span className="ml-1 text-text-3">점</span>
+                    <td className="px-2 py-2">
+                      <span className="inline-flex items-center gap-1">
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.5}
+                          readOnly={open}
+                          title={open ? "루브릭을 만든 문항 — 눌러서 고치기" : "배점 — 바꾸면 위에 [배점 저장]"}
+                          onClick={() => open && guard(() => undefined)}
+                          value={points[p.label] ?? String(p.points)}
+                          onChange={(e) => setPoints({ ...points, [p.label]: e.target.value })}
+                          aria-label={`${p.label || q.number} 배점`}
+                          className={cn(
+                            "h-8 w-14 rounded-md border bg-card px-2 text-right tabular-nums outline-none transition-[border-color,box-shadow] [appearance:textfield] focus:border-accent focus:ring-2 focus:ring-accent-soft read-only:cursor-pointer read-only:border-transparent read-only:bg-transparent [&::-webkit-inner-spin-button]:appearance-none",
+                            points[p.label] !== undefined ? "border-accent" : "border-line",
+                          )}
+                        />
+                        <span className="text-text-3">점</span>
+                      </span>
                     </td>
                     <td className="px-5 py-2.5">
                       {!key ? (
-                        <span className="text-text-3">해설 없음</span>
+                        <span className="text-text-3">—</span>
                       ) : (
-                        <div className="flex flex-col gap-1">
+                        <div className="flex flex-col gap-1.5">
                           <RichText text={kp?.answer ?? (kp?.solution.slice(0, 120) || "—")} />
                           {doubt && (
-                            <span>
-                              <Badge tone="warn">
-                                <AlertTriangle /> 두 번 읽은 숫자가 다름 · 원본과 비교
-                              </Badge>
+                            <span className="inline-flex items-center gap-1 text-[12px] text-warn">
+                              <AlertTriangle className="size-3.5" /> 두 번 읽은 숫자가 다릅니다 — 원본과 비교하세요
                             </span>
                           )}
                         </div>
@@ -428,9 +443,11 @@ function QuestionCard({
             </tbody>
           </table>
           {d && !d.stem_missing && (
-            <div className="border-t border-line px-5 py-3">
+            <div className="border-t border-line bg-muted/30 px-5 py-3">
               <Advanced label="본문 보기">
-                <StemPreview text={d.stem_text} />
+                <div className="rounded-lg border border-line bg-card px-4 py-3">
+                  <StemPreview text={d.stem_text} />
+                </div>
               </Advanced>
             </div>
           )}
@@ -516,11 +533,13 @@ function AddQuestion({ onAdded }: { onAdded: () => void }) {
     });
   if (!open)
     return (
-      <div>
-        <Button variant="ghost" onClick={() => setOpen(true)}>
-          <Plus /> 문항 더하기
-        </Button>
-      </div>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex h-12 cursor-pointer items-center justify-center gap-1.5 rounded-[var(--radius-card)] border border-dashed border-line-strong text-[13px] text-text-2 transition-colors hover:bg-muted/50 hover:text-text [&_svg]:size-4"
+      >
+        <Plus /> 빠진 문항 더하기
+      </button>
     );
   return (
     <Card className="flex flex-wrap items-center gap-3 px-5 py-3">
@@ -541,10 +560,23 @@ function AddQuestion({ onAdded }: { onAdded: () => void }) {
       <Button variant="ghost" onClick={() => setOpen(false)}>
         취소
       </Button>
-      <Button disabled={act.busy || !number.trim() || !(Number(points) > 0)} onClick={() => void add()}>
+      <Button variant="primary" disabled={act.busy || !number.trim() || !(Number(points) > 0)} onClick={() => void add()}>
         더하기
       </Button>
     </Card>
+  );
+}
+
+/** 위 요약의 숫자 하나. */
+function Num({ label, value, unit }: { label: string; value: string | number; unit?: string }) {
+  return (
+    <div>
+      <div className="text-[12px] text-text-3">{label}</div>
+      <div className="mt-0.5 text-[20px] leading-none font-medium tabular-nums">
+        {value}
+        {unit && <span className="ml-0.5 text-[13px] font-normal text-text-3">{unit}</span>}
+      </div>
+    </div>
   );
 }
 
@@ -573,35 +605,37 @@ export function ReadStep() {
     });
   return (
     <div className="mx-auto max-w-4xl px-6 py-6">
-      <div className="mb-4 flex items-center gap-3">
-        <span className="text-text-2">
-          문항 {numbers.length}개 · 소문항 {parts}개 · {pts(total)}점
-        </span>
-        {doubtful > 0 && (
-          <Badge tone="warn">
-            <AlertTriangle /> 해설 원본 확인 {doubtful}곳
-          </Badge>
-        )}
-        {missing > 0 && (
-          <Badge tone="warn">
-            <AlertTriangle /> 본문 없는 문항 {missing}개
-          </Badge>
-        )}
-        <Help>
-          잘못 읽혔으면 문항마다 '고치기'로 소문항·배점·해설을 직접 고치거나, '원본에서 읽기'로 시험지에서 그 부분을 지정해 다시 읽힙니다. 배점 표시가
-          없는 문항은 100점을 문항 수로 나눈 점수(소수점 버림)로 두고 소문항에 나눴습니다. 루브릭을 만든 뒤에 소문항·배점·본문을 고치면 그 문항의 루브릭은 다시 만듭니다.
-        </Help>
+      <Card className="mb-5 flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-4">
+        <Num label="문항" value={numbers.length} />
+        <Num label="소문항" value={parts} />
+        <Num label="총점" value={pts(total)} unit="점" />
+        <div className="flex flex-wrap items-center gap-2">
+          {doubtful > 0 && (
+            <Badge tone="warn">
+              <AlertTriangle /> 해설 원본 확인 {doubtful}곳
+            </Badge>
+          )}
+          {missing > 0 && (
+            <Badge tone="warn">
+              <AlertTriangle /> 본문 없는 문항 {missing}개
+            </Badge>
+          )}
+          <Help>
+            잘못 읽혔으면 문항마다 '고치기'로 소문항·배점·해설을 직접 고치거나, '원본에서 읽기'로 시험지에서 그 부분을 지정해 다시 읽힙니다. 배점 표시가
+            없는 문항은 100점을 문항 수로 나눈 점수(소수점 버림)로 두고 소문항에 나눴습니다. 루브릭을 만든 뒤에 소문항·배점·본문을 고치면 그 문항의 루브릭은 다시 만듭니다.
+          </Help>
+        </div>
         <div className="flex-1" />
         {noRubric ? (
-          <Button variant="primary" disabled={act.busy} onClick={() => void makeRubrics()}>
+          <Button variant="primary" className="h-10 px-5" disabled={act.busy} onClick={() => void makeRubrics()}>
             {act.busy ? msg || "루브릭 만드는 중…" : "확인하고 루브릭 만들기"} <ArrowRight />
           </Button>
         ) : (
-          <Button variant="primary" onClick={() => go("exams", id, "rubric")}>
+          <Button variant="primary" className="h-10 px-5" onClick={() => go("exams", id, "rubric")}>
             루브릭으로 <ArrowRight />
           </Button>
         )}
-      </div>
+      </Card>
       {(error || act.error) && (
         <div className="mb-3">
           <ErrorNote message={(act.error ?? error)!} />

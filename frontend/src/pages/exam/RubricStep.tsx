@@ -1,12 +1,13 @@
-import { Check, Lock, Pencil, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
+import { Check, CornerDownRight, Lock, Pencil, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { RichText } from "@/components/Math";
-import { Badge, type Tone } from "@/components/ui/badge";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
 import { Help } from "@/components/ui/help";
-import { ErrorNote, Input, Progress } from "@/components/ui/misc";
+import { ErrorNote, Input, Progress, textareaClass } from "@/components/ui/misc";
+import { Select } from "@/components/ui/select";
 import { api, enc, useAction, useApi, waitJob } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useTeacher } from "@/lib/session";
@@ -16,7 +17,31 @@ import { useExam } from "../Exam";
 import { partLabel, useQuestionDetails } from "./shared";
 
 type State = "없음" | "초안" | "승인" | "확정";
-const TONE: Record<State, Tone> = { 없음: "neutral", 초안: "warn", 승인: "accent", 확정: "ok" };
+const DOT: Record<State, string> = { 없음: "bg-line-strong", 초안: "bg-warn", 승인: "bg-accent", 확정: "bg-ok" };
+const STAGES: State[] = ["초안", "승인", "확정"];
+
+/** 초안 → 승인 → 확정: 지금 어디인지 (끝난 단계는 ✓). */
+function StageTrail({ state }: { state: State }) {
+  const at = STAGES.indexOf(state);
+  return (
+    <div className="mt-1.5 flex items-center gap-1.5 text-[12px]">
+      {STAGES.map((st, i) => (
+        <span key={st} className="flex items-center gap-1.5">
+          {i > 0 && <span className={cn("h-px w-4", i <= at ? "bg-text-3" : "bg-line-strong")} />}
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5",
+              i === at ? "bg-primary text-primary-fg" : i < at ? "text-ok" : "text-text-3",
+            )}
+          >
+            {i < at && <Check className="size-3" strokeWidth={3} />}
+            {st}
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function stateOf(r: Rubric | null | undefined): State {
   if (!r) return "없음";
@@ -28,14 +53,32 @@ type MarksRow = { student_id: string; marks: Record<string, Record<string, numbe
 type Suggestion = { changes: { item_id: string | null; kind: string; summary: string; evidence: string[] }[]; revised: unknown; no_change_reason: string | null };
 
 function Decide({ status, onDecide, busy }: { status: Decision; onDecide: (v: "accept" | "reject") => void; busy: boolean }) {
+  const base = "inline-flex h-7 cursor-pointer items-center gap-1 rounded-md px-2.5 text-[12px] font-medium disabled:cursor-default disabled:opacity-50 [&_svg]:size-3.5";
   return (
-    <div className="flex shrink-0 gap-1">
-      <Button size="sm" variant="ghost" disabled={busy} className={cn(status === "accepted" && "bg-ok-soft text-ok")} onClick={() => onDecide("accept")}>
+    <div className="inline-flex shrink-0 rounded-lg border border-line bg-card p-0.5">
+      <button type="button" disabled={busy} aria-pressed={status === "accepted"} className={cn(base, status === "accepted" ? "bg-ok-soft text-ok" : "text-text-2 hover:bg-muted")} onClick={() => onDecide("accept")}>
         <Check /> 인정
-      </Button>
-      <Button size="sm" variant="ghost" disabled={busy} className={cn(status === "rejected" && "bg-bad-soft text-bad")} onClick={() => onDecide("reject")}>
+      </button>
+      <button type="button" disabled={busy} aria-pressed={status === "rejected"} className={cn(base, status === "rejected" ? "bg-bad-soft text-bad" : "text-text-2 hover:bg-muted")} onClick={() => onDecide("reject")}>
         <X /> 빼기
-      </Button>
+      </button>
+    </div>
+  );
+}
+
+/** 루브릭 화면의 카드 머리: 제목 · (남은 확인 수) · 설명 · 오른쪽 단추. */
+function SectionHead({ title, help, desc, pending, right }: { title: string; help?: React.ReactNode; desc?: React.ReactNode; pending?: number; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3 px-5 pt-4 pb-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <h3 className="m-0 text-[15px] font-medium">{title}</h3>
+          {help && <Help>{help}</Help>}
+          {pending ? <Badge tone="warn">남은 확인 {pending}</Badge> : null}
+        </div>
+        {desc && <p className="m-0 mt-1 text-[13px] text-text-2">{desc}</p>}
+      </div>
+      {right}
     </div>
   );
 }
@@ -50,11 +93,11 @@ function KeyConflicts({ r, busy, onChoose }: { r: Rubric; busy: boolean; onChoos
       aria-pressed={on}
       onClick={() => onChoose(id, v)}
       className={cn(
-        "flex cursor-pointer flex-col gap-1 rounded-lg border px-3 py-2 text-left disabled:cursor-default",
-        on ? "border-accent bg-accent-soft" : "border-line hover:bg-muted",
+        "flex cursor-pointer flex-col gap-1 rounded-xl border px-3.5 py-2.5 text-left transition-colors disabled:cursor-default",
+        on ? "border-accent bg-accent-soft ring-1 ring-accent" : "border-line hover:border-line-strong hover:bg-muted/50",
       )}
     >
-      <span className={cn("inline-flex items-center gap-1 text-[12px] font-medium", on ? "text-accent" : "text-text-2")}>
+      <span className={cn("inline-flex items-center gap-1 text-[12px] font-medium", on ? "text-accent-text" : "text-text-2")}>
         {on && <Check className="size-3.5" />} {label}
       </span>
       <span className="text-[13px]">
@@ -63,23 +106,20 @@ function KeyConflicts({ r, busy, onChoose }: { r: Rubric; busy: boolean; onChoos
     </button>
   );
   return (
-    <Card>
-      <CardHeader
-        title={
-          <>
-            해설지와 다른 기준{" "}
-            <Help>해설지가 문제에서 요구하지 않은 것을 0점 조건으로 건 곳입니다. AI는 먼저 문제가 요구한 것으로 기준을 썼습니다.</Help>
-          </>
-        }
+    <Card className="overflow-hidden">
+      <SectionHead
+        title="해설지와 다른 기준"
+        help="해설지가 문제에서 요구하지 않은 것을 0점 조건으로 건 곳입니다. AI는 먼저 문제가 요구한 것으로 기준을 썼습니다."
         desc="어느 쪽으로 채점할지 고르면 그 기준이 채점 항목에 들어갑니다. 모두 정해야 승인할 수 있습니다."
+        pending={r.key_conflicts.filter((k) => k.choice === null).length}
       />
-      <CardBody className="pt-3">
+      <div className="divide-y divide-line border-t border-line">
         {r.key_conflicts.map((k) => {
           const switchable = Boolean(k.item_id && k.key_criterion && k.question_criterion);
           return (
-            <div key={k.id} className="flex flex-col gap-2 border-t border-line py-3 first:border-t-0">
+            <div key={k.id} className="flex flex-col gap-2.5 px-5 py-3.5">
               <div className="flex items-start gap-3">
-                <span className="w-8 shrink-0 text-text-3">{k.id}</span>
+                <IdTag>{k.id}</IdTag>
                 <span className="flex-1 text-[13px]">
                   <RichText text={k.note} />
                   {k.item_id && <span className="text-[12px] text-text-3"> → {k.item_id}</span>}
@@ -87,12 +127,12 @@ function KeyConflicts({ r, busy, onChoose }: { r: Rubric; busy: boolean; onChoos
                 {k.choice === null ? <Badge tone="warn">정하기 전</Badge> : k.choice === "edited" && <Badge tone="ok">직접 고침</Badge>}
               </div>
               {switchable ? (
-                <div className="ml-11 grid gap-2 sm:grid-cols-2">
+                <div className="ml-12 grid gap-2 sm:grid-cols-2">
                   {option(k.id, "question", "문제 기준", k.question_criterion!, k.choice === "question")}
                   {option(k.id, "key", "해설지 기준", k.key_criterion!, k.choice === "key")}
                 </div>
               ) : (
-                <div className="ml-11 flex items-center gap-2">
+                <div className="ml-12 flex items-center gap-2">
                   <Button size="sm" variant="ghost" disabled={busy} className={cn(k.choice !== null && "bg-ok-soft text-ok")} onClick={() => onChoose(k.id, "question")}>
                     <Check /> 확인
                   </Button>
@@ -102,9 +142,14 @@ function KeyConflicts({ r, busy, onChoose }: { r: Rubric; busy: boolean; onChoos
             </div>
           );
         })}
-      </CardBody>
+      </div>
     </Card>
   );
+}
+
+/** 항목·후보의 ID (R1, E2, A1, K1) — 작은 회색 꼬리표. */
+function IdTag({ children }: { children: React.ReactNode }) {
+  return <span className="mt-0.5 inline-flex h-5 w-9 shrink-0 items-center justify-center rounded-md bg-muted font-mono text-[11px] text-text-3">{children}</span>;
 }
 
 /** 강사 손채점과 맞춰 보기 (PLAN §6): 빨간 펜 점수 읽기 → 확인 → 소문항 일치도 → 보정 제안 → 확정. */
@@ -165,8 +210,8 @@ function Calibration({ q, rubric, onChanged }: { q: ExamQuestion; rubric: Rubric
     });
 
   return (
-    <Card>
-      <CardHeader
+    <Card className="overflow-hidden">
+      <SectionHead
         title="강사 손채점과 맞춰 보기"
         desc="손으로 채점한 답안 3~5장을 답안 판독에서 함께 넣으면, 빨간 펜 소문항 점수를 읽어 AI 채점과 비교합니다. 표지에 강사 점수가 적힌 답안지만 읽습니다."
         right={
@@ -175,14 +220,14 @@ function Calibration({ q, rubric, onChanged }: { q: ExamQuestion; rubric: Rubric
           </Button>
         }
       />
-      <CardBody className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 px-5 pb-5">
         {readNote && <div className="rounded-lg bg-muted px-3 py-2 text-[13px] text-text-2">{readNote}</div>}
-        <div className="flex items-center gap-3">
-          <span className="w-24 text-[13px] text-text-2">소문항 일치</span>
+        <div className="flex items-center gap-4 rounded-xl bg-muted px-4 py-3">
+          <span className="text-[13px] text-text-2">소문항 일치</span>
           <div className="flex-1">
             <Progress value={(agree?.rate ?? 0) * 100} tone="ok" />
           </div>
-          <span className="w-32 text-right font-medium">
+          <span className="w-32 text-right text-[18px] font-medium tabular-nums">
             {agree?.parts ? `${Math.round((agree.rate ?? 0) * 100)}%` : "—"}{" "}
             <span className="text-[12px] font-normal text-text-3">{agree?.parts ? `(${agree.same}/${agree.parts})` : "비교 전"}</span>
           </span>
@@ -211,7 +256,7 @@ function Calibration({ q, rubric, onChanged }: { q: ExamQuestion; rubric: Rubric
                         onChange={(e) => setEdits({ ...edits, [`${r.student_id}|${l}`]: e.target.value })}
                         onBlur={() => Object.keys(edits).length > 0 && void saveMark(r.student_id)}
                         className={cn(
-                          "h-7 w-12 rounded-md border border-line bg-card px-1.5 text-right outline-none focus:border-accent",
+                          "h-7 w-12 rounded-md border border-line bg-card px-1.5 text-right tabular-nums outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft",
                           r.marks[q.number]?.[l] == null && "border-warn",
                         )}
                       />
@@ -265,7 +310,7 @@ function Calibration({ q, rubric, onChanged }: { q: ExamQuestion; rubric: Rubric
         )}
         {act.busy && <div className="text-[12px] text-text-3">AI 작업 중… 몇 분 걸릴 수 있습니다.</div>}
         {act.error && <ErrorNote message={act.error} />}
-      </CardBody>
+      </div>
     </Card>
   );
 }
@@ -276,8 +321,7 @@ type ItemRow = { key: number; id: string; part: string | null; points: string; c
 type PartialRow = { key: number; item_id: string; condition: string; points: string };
 let nextKey = 1;
 
-const textarea =
-  "w-full rounded-lg border border-line bg-card px-3 py-2 text-text outline-none placeholder:text-text-3 focus:border-accent";
+const textarea = textareaClass;
 
 /** 채점 항목(기준·배점·소문항)과 부분 점수를 고친다. 승인·확정한 루브릭이면 새 판(초안)이 된다.
  * 넓힌 표현·정답 후보는 아래 인정·제외로 정한다 (지운 항목을 가리키던 연결은 서버가 뗀다). */
@@ -321,8 +365,8 @@ function RubricEditor({ q, r, onDone, onCancel }: { q: ExamQuestion; r: Rubric; 
 
   const groups: (string | null)[] = labels.length ? labels : [null];
   return (
-    <Card>
-      <CardHeader
+    <Card className="overflow-hidden">
+      <SectionHead
         title="채점 항목 고치기"
         desc={
           approved
@@ -330,7 +374,7 @@ function RubricEditor({ q, r, onDone, onCancel }: { q: ExamQuestion; r: Rubric; 
             : "항목 배점의 합이 문항 배점과 같아야 저장할 수 있습니다."
         }
       />
-      <CardBody className="flex flex-col gap-4 pt-3">
+      <div className="flex flex-col gap-5 border-t border-line bg-muted/30 px-5 py-4">
         {groups.map((label) => {
           const part = label === null ? undefined : q.parts.find((p) => p.label === label);
           const rows = items.filter((i) => (i.part ?? null) === label);
@@ -345,22 +389,11 @@ function RubricEditor({ q, r, onDone, onCancel }: { q: ExamQuestion; r: Rubric; 
                 </div>
               )}
               {rows.map((it) => (
-                <div key={it.key} className="rounded-lg border border-line p-3">
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <span className="w-10 text-text-3">{it.id}</span>
+                <div key={it.key} className="rounded-xl border border-line bg-card p-3.5">
+                  <div className="mb-2.5 flex flex-wrap items-center gap-2">
+                    <IdTag>{it.id}</IdTag>
                     {labels.length > 1 && (
-                      <select
-                        aria-label={`${it.id} 소문항`}
-                        value={it.part ?? ""}
-                        onChange={(e) => setItem(it.key, { part: e.target.value })}
-                        className="h-8 rounded-md border border-line bg-card px-2 outline-none focus:border-accent"
-                      >
-                        {labels.map((l) => (
-                          <option key={l} value={l}>
-                            {l}
-                          </option>
-                        ))}
-                      </select>
+                      <Select value={it.part ?? ""} onChange={(v) => setItem(it.key, { part: v })} options={labels.map((l) => ({ value: l, label: partLabel(q.number, l) }))} className="h-8 w-28 min-w-0 text-[13px]" />
                     )}
                     <Input
                       type="number"
@@ -431,7 +464,7 @@ function RubricEditor({ q, r, onDone, onCancel }: { q: ExamQuestion; r: Rubric; 
               ))}
               <div>
                 <Button size="sm" variant="ghost" onClick={() => addItem(label)}>
-                  <Plus /> 항목{part ? ` (${label})` : ""}
+                  <Plus /> {part ? `${partLabel(q.number, label)}에 항목 더하기` : "항목 더하기"}
                 </Button>
               </div>
             </div>
@@ -443,15 +476,15 @@ function RubricEditor({ q, r, onDone, onCancel }: { q: ExamQuestion; r: Rubric; 
           {partsOff.length > 0 && ` · 소문항 합이 다름: ${partsOff.map((p) => p.label).join(", ")} (저장은 됩니다)`}
         </div>
         {act.error && <ErrorNote message={act.error} />}
-        <div className="flex items-center justify-end gap-2">
-          <Button variant="ghost" disabled={act.busy} onClick={onCancel}>
-            취소
-          </Button>
-          <Button variant="primary" disabled={act.busy || !totalOk || !filled} onClick={() => void save()}>
-            <Check /> 저장
-          </Button>
-        </div>
-      </CardBody>
+      </div>
+      <div className="flex items-center justify-end gap-2 border-t border-line px-5 py-3">
+        <Button variant="ghost" disabled={act.busy} onClick={onCancel}>
+          취소
+        </Button>
+        <Button variant="primary" disabled={act.busy || !totalOk || !filled} onClick={() => void save()}>
+          <Check /> 저장
+        </Button>
+      </div>
     </Card>
   );
 }
@@ -493,66 +526,103 @@ export function RubricStep() {
       r.key_conflicts.filter((k) => k.choice === null).length
     : 0;
 
+  const finalized = numbers.filter((n) => stateOf(details[n]?.rubric) === "확정").length;
+  const groups: (string | null)[] = q.parts.length ? q.parts.map((p) => p.label) : [null];
+  const itemsOf = (label: string | null) => (r?.items ?? []).filter((it) => (label === null ? true : it.part === label));
+  const stray = r && q.parts.length ? r.items.filter((it) => !q.parts.some((p) => p.label === it.part)) : [];
+  const altPending = r ? r.accepted_alternatives.filter((x) => x.status === "proposed").length + r.candidates.filter((c) => c.status === "proposed").length : 0;
+
   return (
     <div className="flex h-full">
-      <aside className="w-56 shrink-0 border-r border-line p-3">
-        {numbers.map((n) => {
-          const s = stateOf(details[n]?.rubric);
-          return (
-            <button
-              key={n}
-              type="button"
-              onClick={() => {
-                setPicked(n);
-                setEditing(false);
-              }}
-              className={cn("flex w-full cursor-pointer items-center rounded-lg px-3 py-2.5 text-left hover:bg-muted", sel === n && "bg-muted")}
-            >
-              <span className="flex-1">{n}번</span>
-              <Badge tone={TONE[s]}>{s}</Badge>
-            </button>
-          );
-        })}
+      <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-card">
+        <div className="shrink-0 border-b border-line px-4 py-3">
+          <div className="flex items-baseline justify-between text-[12px] text-text-2">
+            <span>확정</span>
+            <span className="tabular-nums">
+              <span className="font-medium text-text">{finalized}</span> / {numbers.length}
+            </span>
+          </div>
+          <div className="mt-2">
+            <Progress value={numbers.length ? (finalized / numbers.length) * 100 : 0} tone={finalized === numbers.length ? "ok" : "accent"} />
+          </div>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto p-2">
+          {numbers.map((n) => {
+            const st = stateOf(details[n]?.rubric);
+            const qq = detail.exam.questions.find((x) => x.number === n);
+            const here = sel === n;
+            return (
+              <button
+                key={n}
+                type="button"
+                onClick={() => {
+                  setPicked(n);
+                  setEditing(false);
+                }}
+                className={cn(
+                  "relative flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-muted",
+                  here && "bg-muted before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-primary",
+                )}
+              >
+                <span className={cn("size-1.5 shrink-0 rounded-full", DOT[st])} />
+                <span className={cn("flex-1", here && "font-medium")}>{n}번</span>
+                <span className="text-[12px] text-text-3">{st}</span>
+                {qq && <span className="w-8 text-right text-[12px] text-text-3 tabular-nums">{pts(qq.points)}점</span>}
+              </button>
+            );
+          })}
+        </div>
       </aside>
-      <div className="min-w-0 flex-1 overflow-auto px-6 py-5">
-        <div className="mx-auto flex max-w-3xl flex-col gap-4">
-          <div className="flex items-center gap-3">
-            <h2 className="m-0 text-[17px]">{sel}번 루브릭</h2>
-            <Badge tone={TONE[state]}>{state}</Badge>
-            {r && <span className="text-[12px] text-text-3">{r.version}판</span>}
+      <div className="min-w-0 flex-1 overflow-auto px-6 py-6">
+        <div className="mx-auto flex max-w-3xl flex-col gap-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-2">
+                <h2 className="m-0 text-[19px] font-medium">{sel}번 루브릭</h2>
+                <span className="text-[13px] text-text-3">
+                  {pts(q.points)}점{r ? ` · ${r.version}판` : ""}
+                </span>
+              </div>
+              <StageTrail state={state} />
+            </div>
             <div className="flex-1" />
             {r && !editing && (
               <>
-                <Button variant="outline" disabled={act.busy} onClick={() => setEditing(true)}>
-                  <Pencil /> 고치기
-                </Button>
-                <Button variant="ghost" disabled={act.busy} onClick={() => setAskRemake(true)}>
+                <Button variant="ghost" size="sm" className="h-9" disabled={act.busy} onClick={() => setAskRemake(true)}>
                   <RefreshCw /> 다시 만들기
+                </Button>
+                <Button variant="outline" size="sm" className="h-9" disabled={act.busy} onClick={() => setEditing(true)}>
+                  <Pencil /> 고치기
                 </Button>
               </>
             )}
             {state === "없음" && (
-              <Button variant="primary" disabled={act.busy} onClick={() => void make()}>
-                {act.busy ? "만드는 중…" : "루브릭 만들기"}
+              <Button variant="primary" className="h-10 px-5" disabled={act.busy} onClick={() => void make()}>
+                <Sparkles /> {act.busy ? "만드는 중…" : "루브릭 만들기"}
               </Button>
             )}
             {state === "초안" && !editing && (
-              <Button variant="primary" disabled={act.busy || proposed > 0} onClick={() => void approve()}>
-                <Check /> 승인 {proposed > 0 && `(남은 확인 ${proposed})`}
+              <Button variant="primary" className="h-10 px-5" disabled={act.busy || proposed > 0} onClick={() => void approve()} title={proposed > 0 ? "아래에서 남은 것을 모두 정하면 승인할 수 있습니다" : undefined}>
+                <Check /> 승인{proposed > 0 && ` (남은 확인 ${proposed})`}
               </Button>
             )}
             {state === "승인" && !editing && (
-              <Button variant="primary" disabled={act.busy} onClick={() => void finalize()}>
+              <Button variant="primary" className="h-10 px-5" disabled={act.busy} onClick={() => void finalize()}>
                 <ShieldCheck /> 확정
               </Button>
             )}
             {state === "확정" && r && (
-              <span className="inline-flex items-center gap-1 text-[13px] text-text-2">
-                <Lock className="size-4" /> {r.finalized_by} 확정 · {r.finalized_at?.slice(5, 10)}
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-ok-soft px-3 py-1 text-[13px] text-ok">
+                <Lock className="size-3.5" /> {r.finalized_by} 확정 · {r.finalized_at?.slice(5, 10)}
               </span>
             )}
           </div>
           {(error || act.error) && <ErrorNote message={(act.error ?? error)!} />}
+          {state === "없음" && !act.busy && (
+            <div className="rounded-[var(--radius-card)] border border-dashed border-line-strong px-6 py-10 text-center text-[13px] text-text-3">
+              아직 루브릭이 없습니다. [루브릭 만들기]를 누르면 해설지(없으면 AI 풀이)로 채점 항목을 만듭니다.
+            </div>
+          )}
 
           {r && editing && (
             <RubricEditor
@@ -567,68 +637,92 @@ export function RubricStep() {
           )}
 
           {r && !editing && (
-            <Card>
-              <CardHeader title="채점 항목" desc={r.based_on_key ? "해설지의 부분 점수를 옮겼습니다." : "AI 풀이로 만든 항목입니다."} />
-              <CardBody className="pt-3">
-                {r.items.map((it) => (
-                  <div key={it.id} className="flex items-start gap-3 border-t border-line py-2.5 first:border-t-0">
-                    <span className="w-14 shrink-0 text-text-3">{it.part ?? it.id}</span>
-                    <span className="flex-1">
-                      <RichText text={it.criterion} />
-                      {r.answer_rules.filter((a) => a.item_id === it.id).map((a) => (
-                        <span key={a.item_id} className="ml-2 text-[12px] text-text-2">
-                          정답: {a.all_correct ? "전원 정답" : a.answers.join(" 또는 ")}
-                        </span>
+            <Card className="overflow-hidden">
+              <SectionHead title="채점 항목" desc={r.based_on_key ? "해설지의 부분 점수를 옮겼습니다." : "AI 풀이로 만든 항목입니다 — 정답을 꼭 확인하세요."} />
+              <div className="border-t border-line">
+                {[...groups, ...(stray.length ? ["__stray"] : [])].map((label) => {
+                  const part = label === null || label === "__stray" ? undefined : q.parts.find((p) => p.label === label);
+                  const list = label === "__stray" ? stray : itemsOf(label);
+                  if (list.length === 0 && !part) return null;
+                  return (
+                    <div key={label ?? ""} className="border-t border-line first:border-t-0">
+                      {part && (
+                        <div className="flex items-baseline gap-2 bg-muted/50 px-5 py-2 text-[12px]">
+                          <span className="font-medium text-text">{partLabel(q.number, part.label)}</span>
+                          <span className="text-text-3">{pts(part.points)}점</span>
+                        </div>
+                      )}
+                      {label === "__stray" && <div className="bg-muted/50 px-5 py-2 text-[12px] text-text-3">소문항 모름</div>}
+                      {list.map((it) => (
+                        <div key={it.id} className="flex items-start gap-3 border-t border-line/60 px-5 py-3 first:border-t-0">
+                          <IdTag>{it.id}</IdTag>
+                          <div className="min-w-0 flex-1">
+                            <RichText text={it.criterion} />
+                            {r.answer_rules
+                              .filter((a) => a.item_id === it.id)
+                              .map((a) => (
+                                <span key={a.item_id} className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[12px] text-text-2">
+                                  정답: {a.all_correct ? "전원 정답" : a.answers.join(" 또는 ")}
+                                </span>
+                              ))}
+                            {r.partial
+                              .filter((x) => x.item_id === it.id)
+                              .map((x) => (
+                                <div key={x.condition} className="mt-1.5 flex items-start gap-2 text-[13px] text-text-2">
+                                  <CornerDownRight className="mt-[3px] size-3.5 shrink-0 text-text-3" />
+                                  <span className="flex-1">
+                                    부분 점수 · <RichText text={x.condition} />
+                                  </span>
+                                  <span className="shrink-0 tabular-nums text-text-2">{pts(x.points)}점</span>
+                                </div>
+                              ))}
+                          </div>
+                          <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-[13px] font-medium tabular-nums">{pts(it.points)}점</span>
+                        </div>
                       ))}
-                      {r.partial
-                        .filter((x) => x.item_id === it.id)
-                        .map((x) => (
-                          <span key={x.condition} className="block text-[12px] text-text-2">
-                            부분 점수: <RichText text={x.condition} /> → {pts(x.points)}점
-                          </span>
-                        ))}
-                    </span>
-                    <span className="font-medium">{pts(it.points)}점</span>
-                  </div>
-                ))}
-              </CardBody>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex items-center justify-end gap-2 border-t border-line bg-muted/50 px-5 py-2.5 text-[13px] text-text-2">
+                합계 <span className="font-medium text-text tabular-nums">{pts(r.items.reduce((x, it) => x + it.points, 0))}점</span>
+                <span className="text-text-3">/ 문항 {pts(q.points)}점</span>
+              </div>
             </Card>
           )}
 
           {r && !editing && r.key_conflicts.length > 0 && <KeyConflicts r={r} busy={act.busy} onChoose={(id, v) => void chooseBasis(id, v)} />}
 
           {r && (r.accepted_alternatives.length > 0 || r.candidates.length > 0) && (
-            <Card>
-              <CardHeader
-                title={
-                  <>
-                    AI가 넓힌 표현 · 다른 정답 후보{" "}
-                    <Help>같은 근거·같은 결론을 다르게 쓴 말만 넣었습니다. 해설지에 없는 개념은 범위 검사에서 이미 걸렀습니다.</Help>
-                  </>
-                }
+            <Card className="overflow-hidden">
+              <SectionHead
+                title="AI가 넓힌 표현 · 다른 정답 후보"
+                help="같은 근거·같은 결론을 다르게 쓴 말만 넣었습니다. 해설지에 없는 개념은 범위 검사에서 이미 걸렀습니다."
                 desc="인정하면 채점에서 같은 답으로 봅니다. 모두 정해야 승인할 수 있습니다."
+                pending={altPending}
               />
-              <CardBody className="pt-3">
+              <div className="divide-y divide-line border-t border-line">
                 {r.accepted_alternatives.map((a, i) => (
-                  <div key={a.id ?? i} className="flex items-center gap-3 border-t border-line py-2.5 first:border-t-0">
-                    <span className="w-8 text-text-3">{a.id}</span>
-                    <span className={cn("flex-1", a.status === "rejected" && "text-text-3 line-through")}>
+                  <div key={a.id ?? i} className="flex items-center gap-3 px-5 py-3">
+                    <IdTag>{a.id ?? "—"}</IdTag>
+                    <span className={cn("min-w-0 flex-1", a.status === "rejected" && "text-text-3 line-through")}>
                       <RichText text={a.description} /> <span className="text-[12px] text-text-3">→ {a.item_ids.join(", ")}</span>
                     </span>
                     {a.id && <Decide status={a.status} busy={act.busy} onDecide={(v) => void decide(a.id!, v)} />}
                   </div>
                 ))}
                 {r.candidates.map((c) => (
-                  <div key={c.id} className="flex items-center gap-3 border-t border-line py-2.5">
-                    <span className="w-8 text-text-3">{c.id}</span>
-                    <span className={cn("flex-1", c.status === "rejected" && "text-text-3 line-through")}>
+                  <div key={c.id} className="flex items-center gap-3 px-5 py-3">
+                    <IdTag>{c.id}</IdTag>
+                    <span className={cn("min-w-0 flex-1", c.status === "rejected" && "text-text-3 line-through")}>
+                      <span className="mr-1.5 inline-flex rounded bg-accent-soft px-1.5 text-[11px] font-medium text-accent-text">정답 후보</span>
                       {c.part && <span className="text-text-3">{c.part} </span>}
-                      <RichText text={c.answer} /> <span className="block text-[12px] text-text-2">{c.argument}</span>
+                      <RichText text={c.answer} /> <span className="mt-0.5 block text-[12px] text-text-2">{c.argument}</span>
                     </span>
                     <Decide status={c.status} busy={act.busy} onDecide={(v) => void decide(c.id, v)} />
                   </div>
                 ))}
-              </CardBody>
+              </div>
             </Card>
           )}
 

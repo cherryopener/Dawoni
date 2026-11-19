@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Check, LayoutGrid } from "lucide-react";
 import { createContext, useContext } from "react";
 import { Count } from "@/components/ui/count";
 import { ErrorNote } from "@/components/ui/misc";
@@ -46,16 +46,25 @@ export function ExamPage({ examId, step, focus = [] }: { examId: string; step?: 
   return (
     <Ctx value={{ id: examId, base, detail: data, reload, focus }}>
       <div className="flex h-full flex-col">
-        <div className="shrink-0 border-b border-line bg-card px-6 pt-4">
+        <div className="shrink-0 border-b border-line bg-card px-6 pt-5">
           <div className="flex items-baseline gap-3">
-            <h1 className="m-0 text-[18px] font-medium">{data.exam.title}</h1>
+            <h1 className="m-0 text-[19px] font-medium tracking-[-0.01em]">{data.exam.title}</h1>
             <span className="text-[13px] text-text-3">
               {data.scope.level ?? data.scope.title} · 문항 {s.questions}개 · {s.students}명
             </span>
           </div>
-          <nav className="flex gap-2 py-3">
+          {/* 단계: 밑줄 탭 + 번호 (끝난 단계는 초록 ✓). 2026-11-19 — 초록 알약 줄에서 */}
+          <nav className="-mb-px mt-3 flex gap-1 overflow-x-auto">
             {STEPS.map((x, i) => {
-              const done = x.key !== "result" && (i < progressIdx || (s.step === "export" && i < STEPS.length - 1));
+              // 한 번에 채점한 시험은 단계가 '결과'에 머무르므로 단계마다 끝났는지를 숫자로 본다 (2026-11-20)
+              const done =
+                x.key !== "result" &&
+                (s.step === "result"
+                  ? (x.key === "read" && s.questions > 0) ||
+                    (x.key === "rubric" && s.questions > 0 && s.approved >= s.questions) ||
+                    (x.key === "scan" && s.students > 0 && s.needs_input === 0 && s.pending_transcripts === 0) ||
+                    (x.key === "grade" && cells > 0 && s.graded >= cells && s.needs_review === 0)
+                  : i < progressIdx || (s.step === "export" && i < STEPS.length - 1));
               const here = x.key === current;
               const label = x.key === "grade" && cells > 0 && s.graded > 0 ? `${x.label} ${s.graded}/${cells}` : x.label;
               return (
@@ -63,15 +72,23 @@ export function ExamPage({ examId, step, focus = [] }: { examId: string; step?: 
                   key={x.key}
                   href={href("exams", examId, x.key)}
                   className={cn(
-                    "flex h-9 items-center gap-1.5 rounded-full border px-4 text-[13px] no-underline",
-                    here
-                      ? "border-accent bg-accent-soft font-medium text-accent-text"
-                      : done
-                        ? "border-transparent bg-ok-soft text-ok"
-                        : "border-line text-text-2 hover:bg-muted",
+                    "flex h-11 shrink-0 items-center gap-2 border-b-2 px-3 text-[13px] no-underline transition-colors",
+                    here ? "border-primary font-medium text-text" : "border-transparent text-text-2 hover:text-text",
+                    x.key === "result" && "mr-3",
                   )}
                 >
-                  {done && !here && <Check className="size-4" />}
+                  {x.key === "result" ? (
+                    <LayoutGrid className={cn("size-4", here ? "text-text" : "text-text-3")} />
+                  ) : (
+                    <span
+                      className={cn(
+                        "grid size-5 place-items-center rounded-full text-[11px] tabular-nums",
+                        here ? "bg-primary text-primary-fg" : done ? "bg-ok-soft text-ok" : "border border-line-strong text-text-3",
+                      )}
+                    >
+                      {done && !here ? <Check className="size-3" strokeWidth={3} /> : i}
+                    </span>
+                  )}
                   {label}
                   <Count n={counts[x.key] ?? 0} tone={x.key === "scan" ? "bad" : "warn"} />
                 </a>
