@@ -6,6 +6,7 @@ AI 출력 모델(`*Draft`, `GradeOutput`)과 저장 모델을 나눈다. 승인�
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 
@@ -665,6 +666,16 @@ class StudentRecord(DawoniModel):
 UNREADABLE = "[판독불가]"
 """판독문에서 끝내 읽지 못한 자리. AI가 남기고 강사가 채운다 (ocr/review.py)."""
 
+ERASED = "[지움]"
+"""학생이 지운 자리 (지우개·연필로 지워 읽을 것이 없음). 강사가 원본을 보고 `[판독불가]`를 이것으로
+바꾼다 — 확정할 수 있고, 채점에서 뺀다 (2026-11-19 사용자 요청: 지운 부분만 지운 것으로)."""
+
+ILLEGIBLE = "[못 읽음]"
+"""강사도 원본에서 못 읽은 자리. 확정할 수 있고, 채점은 그 자리를 읽지 못한 것으로 한다."""
+
+STRUCK_PART = re.compile(r"~~(.+?)~~")
+"""줄 안에서 학생이 줄 그어 지운 부분 (`~~…~~`). 줄 전체를 지웠으면 `TranscriptLine.struck`."""
+
 GRAPH = "[그래프]"
 """학생이 좌표평면에 그린 그래프를 글로 옮긴 판독문 줄의 머리 (`GraphSketch.text`).
 판독문에서는 보통 글 줄이라 강사 수정·채점 인용이 다른 줄과 같게 돈다 (2026-11-17)."""
@@ -768,6 +779,16 @@ class TranscriptLine(DawoniModel):
         return " ".join(x for x in (self.text, self.math or "") if x)
 
     @property
+    def kept(self) -> str:
+        """채점·답 맞추기에 쓰는 글: 줄 안에서 지운 부분(`~~…~~`)과 지운 자리(`[지움]`)를 뺀 것."""
+        s = STRUCK_PART.sub(" ", self.joined).replace(ERASED, " ")
+        return " ".join(s.split())
+
+    def content(self) -> tuple[str, str | None, str | None, bool]:
+        """학생 답안 내용 (판독 확신도·애매한 곳 표시는 빼고) — 확정할 때 다시 채점할지 견준다."""
+        return (self.text, self.math, self.part, self.struck)
+
+    @property
     def is_graph(self) -> bool:
         """학생이 그린 그래프를 글로 옮긴 줄 (`GRAPH`)."""
         return self.text.startswith(GRAPH)
@@ -790,7 +811,7 @@ class Transcript(DawoniModel):
 
     @property
     def is_blank(self) -> bool:
-        return not any(line.joined.strip() for line in self.lines if not line.struck)
+        return not any(line.kept for line in self.lines if not line.struck)
 
     @property
     def unreadable(self) -> int:

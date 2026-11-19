@@ -9,6 +9,7 @@ import { ErrorNote, Input } from "@/components/ui/misc";
 import { Switch } from "@/components/ui/switch";
 import { api, useAction, useApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { fromDollars, toDollars } from "@/lib/transcript";
 import type { Case } from "@/lib/types";
 
 const textarea = "w-full rounded-lg border border-line bg-card px-3 py-2 text-text outline-none placeholder:text-text-3 focus:border-accent";
@@ -107,7 +108,7 @@ function CaseRow({ c, busy, onSave, onDelete }: { c: Case; busy: boolean; onSave
               </span>
             ))}
             <div className="flex-1" />
-            <Button size="sm" variant="ghost" onClick={() => setEdit({ title: c.title, body: c.body, keywords: c.keywords.join(", ") })}>
+            <Button size="sm" variant="ghost" onClick={() => setEdit({ title: toDollars(c.title), body: toDollars(c.body), keywords: c.keywords.join(", ") })}>
               <Pencil /> 고치기
             </Button>
             <Button size="sm" variant="ghost" disabled={busy} onClick={onDelete} aria-label="지우기">
@@ -132,7 +133,7 @@ function CaseRow({ c, busy, onSave, onDelete }: { c: Case; busy: boolean; onSave
               variant="primary"
               disabled={busy || !edit.title.trim() || !edit.body.trim()}
               onClick={() => {
-                onSave({ title: edit.title.trim(), body: edit.body.trim(), keywords: edit.keywords.split(/[,，]/).map((k) => k.trim()).filter(Boolean) });
+                onSave({ title: fromDollars(edit.title.trim()), body: fromDollars(edit.body.trim()), keywords: edit.keywords.split(/[,，]/).map((k) => k.trim()).filter(Boolean) });
                 setEdit(null);
               }}
             >

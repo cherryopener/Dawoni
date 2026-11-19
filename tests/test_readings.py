@@ -215,6 +215,52 @@ def test_screen_fills_unreadable_then_confirms(app_paths: AppPaths, tmp_path: Pa
     assert not list(exports.rglob("*.hwpx")), "HWPX는 쓰지 않는다"
 
 
+def test_erased_and_illegible_spots_confirm_without_new_grading(
+    app_paths: AppPaths, tmp_path: Path
+) -> None:
+    """[판독불가]를 '학생이 지운 자리'·'원본도 못 읽음'으로 바꾸면 확인할 수 있고, 줄 안의 지운
+    부분(~~…~~)만 지운 것으로 본다 (2026-11-19 사용자: 지운 부분만 지웠는데 줄 전체가 지운 줄이 됨).
+    '맞음'으로 애매한 곳 표시만 지운 확인은 다시 채점하지 않는다."""
+    from test_grading import approved_rubric
+
+    from dawoni.grading.render import transcript_text
+    from dawoni.models.grading import GradeResult, ItemJudgement
+
+    svc = _services(app_paths, tmp_path)
+    store = _exam(svc)
+    _student(store, "김다원", "김다원")
+    c = _client_for(app_paths, svc)
+    url = f"/api/exams/{store.exam_id}/students/김다원/transcripts/1"
+    lines = [ln.model_dump(mode="json") for ln in LINES]
+    lines[1] |= {"text": "저항이 ~~적은~~ 작은 ㉠이 [지움] 밝아 [못 읽음]"}
+    r = c.put(url, json={"lines": lines, "confirm": True, "by": "김선생"})
+    assert r.status_code == 200, r.text
+    t = store.transcript("김다원", "1")
+    assert t is not None and t.confirmed and t.unreadable == 0 and not t.lines[1].struck
+    assert t.lines[1].kept == "저항이 작은 ㉠이 밝아 [못 읽음]", (
+        "지운 부분·지운 자리는 채점에서 뺀다"
+    )
+    text = transcript_text(t)
+    assert "(지운 흔적: 적은)" in text and "(지운 자리)" in text and "(강사도 못 읽음)" in text
+    erased = TranscriptLine(text="~~다 지움~~ [지움]")
+    assert Transcript(student_id="x", question_number="1", lines=[erased]).is_blank
+
+    # 채점이 있는 답안: 애매한 곳 표시만 지우고 확인하면 AI를 부르지 않는다 (내용이 같다)
+    store.save_rubric(approved_rubric())
+    j = ItemJudgement(rubric_item_id="R1", awarded=1, reason="r", confidence=0.9)
+    store.save_grade(GradeResult(student_id="김다원", question_number="1", rubric_version=1,
+                                 judgements=[j], comment="", total=1, max_points=1,
+                                 item_points={"R1": 1}))  # fmt: skip
+    before = t.model_copy(update={"confirmed": False})
+    flagged = t.model_copy(update={"lines": [ln.model_copy(update={"uncertain": ["?"],
+                                                                    "confidence": 0.5})
+                                             for ln in t.lines]})  # fmt: skip
+    assert not workflow.wants_grading(store, flagged.model_copy(update={"confirmed": False}), t)
+    changed = t.model_copy(update={"lines": [*t.lines[:1], t.lines[1].model_copy(
+        update={"text": "저항이 작은 ㉠이 더 밝아"}), *t.lines[2:]]})  # fmt: skip
+    assert workflow.wants_grading(store, before, changed), "글을 고쳤으면 다시 채점"
+
+
 # ---------------------------------------------------------------- 묶음 판독 + 명부 + 동명이인
 
 

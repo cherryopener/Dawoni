@@ -132,7 +132,7 @@ _HANGUL_OR_WORD = re.compile(r"[가-힣]|[A-Za-z]+|\d+|[=+\-*/^()]")
 
 
 def _shingles(t: Transcript) -> set[str]:
-    toks = _HANGUL_OR_WORD.findall(" ".join(x.joined for x in t.lines if not x.struck))
+    toks = _HANGUL_OR_WORD.findall(" ".join(x.kept for x in t.lines if not x.struck))
     return {a + b for a, b in itertools.pairwise(toks)} or set(toks)
 
 

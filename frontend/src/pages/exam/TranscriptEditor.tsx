@@ -1,4 +1,4 @@
-import { ArrowRight, Check, Minus, Plus, Strikethrough, Trash2, ZoomIn } from "lucide-react";
+import { ArrowRight, Check, Minus, Pencil, Plus, Strikethrough, Trash2, ZoomIn } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { TeX } from "@/components/Math";
 import { Badge } from "@/components/ui/badge";
@@ -9,16 +9,30 @@ import { api, enc, examFileUrl, useAction, useApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useTeacher } from "@/lib/session";
 import type { Transcript, TranscriptLine, TranscriptView } from "@/lib/types";
+import { fixWon, fromDollars, insideMath, shown, SNIPPETS, tidy, tidyMath } from "@/lib/transcript";
 import { useExam } from "../Exam";
 
 /** 고칠 답안 하나: 학생 × 문항. */
 export type EditTarget = { student: string; question: string };
 
 const UNREADABLE = "[판독불가]";
+/** 강사가 [판독불가]를 바꿔 다는 표시 (서버 `ERASED`·`ILLEGIBLE`): 학생이 지운 자리 / 강사도 못 읽음. 둘 다 확인할 수 있다. */
+const ERASED = "[지움]";
+const ILLEGIBLE = "[못 읽음]";
 const INLINE = /\\\((.+?)\\\)/g;
 const ZOOMS = [1, 1.5, 2, 3];
 
+
 type Row = { id: number; line: TranscriptLine };
+
+/** 칸에 새 값과 커서를 바로 넣는다. React가 나중에 같은 값을 넣으면 커서를 건드리지 않는다 — 커서를
+ * 나중에(다음 프레임에) 옮기면 그 사이에 친 글자가 '$ $' 밖에 써졌다 (2026-11-19 화면 확인). */
+function placeCaret(el: HTMLTextAreaElement, value: string, from: number, to = from) {
+  const v = fixWon(value); // 줄에 저장되는 값과 같게 (`onText`가 ₩를 바꾼다)
+  if (el.value !== v) el.value = v;
+  el.focus();
+  el.setSelectionRange(from, to);
+}
 
 const countUnreadable = (rows: Row[]) => rows.reduce((n, r) => n + `${r.line.text}${r.line.math ?? ""}`.split(UNREADABLE).length - 1, 0);
 const same = (a: TranscriptLine[], b: TranscriptLine[]) => JSON.stringify(a) === JSON.stringify(b);
@@ -87,12 +101,13 @@ function Body({
   const act = useAction();
 
   useEffect(() => {
-    if (v && rows === null) setRows(v.transcript.lines.map((line) => ({ id: seq.current++, line })));
+    // 칸에는 식이 `$수식$`으로 보인다 (저장할 때 `\( \)`로 — `tidy`)
+    if (v && rows === null) setRows(v.transcript.lines.map((line) => ({ id: seq.current++, line: shown(line) })));
   }, [v, rows]);
 
   const original = v?.transcript.lines ?? [];
   const lines = (rows ?? []).map((r) => r.line);
-  const dirty = rows !== null && !same(lines, original);
+  const dirty = rows !== null && !same(lines.map(tidy), original);
   const unreadable = countUnreadable(rows ?? []);
   const q = v?.question;
 
@@ -104,6 +119,24 @@ function Body({
   }, [q, rows]);
   const partLabel = (p: string | null) => (p === null ? (q?.parts.length ? "소문항 모름" : `${target.question}번`) : `${target.question}-${p}`);
 
+  /** 식 단추가 넣을 칸: 마지막으로 누른 줄 (단추를 눌러도 바뀌지 않게 — 칸이 사라지거나 밀리지 않는다). */
+  const [active, setActive] = useState<{ rid: number; el: HTMLTextAreaElement } | null>(null);
+  const insert = (tex: string) => {
+    const row = active && rows?.find((r) => r.id === active.rid);
+    if (!active || !row) return;
+    const isMath = row.line.math !== null;
+    const value = isMath ? (row.line.math ?? "") : row.line.text;
+    const el = active.el;
+    const a = el.selectionStart ?? value.length;
+    const b = el.selectionEnd ?? value.length;
+    const wrap = !isMath && !insideMath(value, a);
+    const [pre, post] = tex.split("|") as [string, string];
+    const head = (wrap ? "$" : "") + pre;
+    const picked = value.slice(a, b);
+    const next = value.slice(0, a) + head + picked + post + (wrap ? "$" : "") + value.slice(b);
+    update(row.id, isMath ? { math: next } : { text: next });
+    placeCaret(el, next, a + head.length, a + head.length + picked.length);
+  };
   const update = (rid: number, patch: Partial<TranscriptLine>, edited = true) =>
     setRows((rs) => (rs ?? []).map((r) => (r.id === rid ? { ...r, line: { ...r.line, ...patch, ...(edited ? { confidence: 1, uncertain: [] } : {}) } } : r)));
   const remove = (rid: number) => setRows((rs) => (rs ?? []).filter((r) => r.id !== rid));
@@ -116,16 +149,20 @@ function Body({
     });
   const toggleMath = (r: Row) => {
     const l = r.line;
-    if (l.math !== null) update(r.id, { math: null, text: l.math ? `\\(${l.math}\\)` : "" });
-    else update(r.id, { math: l.text.replace(INLINE, "$1"), text: "" });
+    if (l.math !== null) update(r.id, { math: null, text: l.math ? `$${l.math}$` : "" });
+    else update(r.id, { math: tidyMath(fromDollars(l.text).replace(INLINE, "$1")), text: "" });
   };
 
   const save = (confirm: boolean) =>
     act.run(async () => {
-      const kept = lines.filter((l) => l.text.trim() || (l.math ?? "").trim());
+      // 확인하면 강사가 본 판독문 — 애매한 곳 표시를 지운다 (내용이 같으면 다시 채점하지 않는다)
+      const kept = lines
+        .map(tidy)
+        .filter((l) => l.text.trim() || (l.math ?? "").trim())
+        .map((l) => (confirm ? { ...l, confidence: 1, uncertain: [] } : l));
       await api.put<Transcript>(`${base}/students/${enc(target.student)}/transcripts/${enc(target.question)}`, { lines: kept, confirm, by, learn: learn && dirty });
       if (!confirm) {
-        setRows(kept.map((line) => ({ id: seq.current++, line })));
+        setRows(kept.map((line) => ({ id: seq.current++, line: shown(line) })));
         view.reload();
       }
       onSaved(confirm);
@@ -157,7 +194,7 @@ function Body({
           {left > 1 && <span className="text-[13px] font-normal text-text-3">남은 답안 {left}</span>}
         </span>
       }
-      desc="원본을 보고 학생이 쓴 그대로 고칩니다. 식은 \( \) 안에 LaTeX로 씁니다. 확인하면 확정 판독문이 되고, 고친 답안은 다시 채점합니다."
+      desc="회색 칸을 눌러 원본과 다른 곳만 고칩니다. 노란 줄은 AI가 애매하다고 본 줄 — 맞으면 [맞음]. 식은 $수식$처럼 $로 감쌉니다 (예: $\frac{1}{2}mv^2$ — 한국어 윈도우에서 \는 ₩로 보여도 같은 글자). 위 '식 넣기' 단추로도 넣을 수 있습니다. 확인하면 확정 판독문이 되고, 고친 답안만 다시 채점합니다."
       footer={
         leaving ? (
           <>
@@ -172,7 +209,7 @@ function Body({
         ) : (
           <>
             <span className={cn("text-[13px]", unreadable ? "text-bad" : "text-text-3")}>
-              {unreadable ? `${UNREADABLE} ${unreadable}곳을 원본을 보고 채우거나 지워야 확인할 수 있습니다.` : "⌘/Ctrl + Enter: 확인"}
+              {unreadable ? `${UNREADABLE} ${unreadable}곳 — 줄 아래에서 채우기·학생이 지운 자리·원본도 못 읽음을 골라야 확인할 수 있습니다.` : "⌘/Ctrl + Enter: 확인"}
             </span>
             <label className="mr-auto ml-4 flex cursor-pointer items-center gap-1.5 text-[13px] text-text-2" title="고친 줄을 AI가 보고 다음 판독에 쓸 규칙을 제안합니다 (고칠 때마다 AI 호출 1번)">
               <input type="checkbox" checked={learn} onChange={(e) => setLearn(e.target.checked)} />
@@ -216,6 +253,23 @@ function Body({
             </div>
           </div>
           <div className="min-h-0 overflow-auto pr-1">
+            <div className="sticky top-0 z-10 mb-3 flex flex-wrap items-center gap-1 rounded-lg border border-line bg-card px-2 py-1.5">
+              <span className="mr-1 text-[12px] text-text-2">식 넣기</span>
+              {SNIPPETS.map((x) => (
+                <button
+                  key={x.label}
+                  type="button"
+                  title={active ? x.title : "먼저 고칠 칸을 누르세요"}
+                  disabled={!active}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => insert(x.tex)}
+                  className="h-7 min-w-8 cursor-pointer rounded border border-line bg-card px-1.5 text-[13px] text-text-2 hover:border-accent hover:text-accent-text disabled:cursor-default disabled:opacity-40"
+                >
+                  {x.label}
+                </button>
+              ))}
+              <span className="ml-1 text-[11px] leading-tight text-text-3">칸을 누른 뒤 단추 · 식은 $수식$처럼 $로 감싸기</span>
+            </div>
             {t && t.notes.length > 0 && <div className="mb-3 text-[12px] text-text-3">{t.notes.join(" · ")}</div>}
             {sections.map((part) => {
               const mine = rows.filter((r) => r.line.part === part);
@@ -234,9 +288,12 @@ function Body({
                         row={r}
                         parts={sections}
                         partLabel={partLabel}
-                        onText={(text) => update(r.id, r.line.math !== null ? { math: text } : { text })}
+                        onText={(text) => update(r.id, r.line.math !== null ? { math: fixWon(text) } : { text: fixWon(text) })}
                         onMath={() => toggleMath(r)}
                         onStruck={() => update(r.id, { struck: !r.line.struck }, false)}
+                        onOk={() => update(r.id, {})}
+                        active={active?.rid === r.id}
+                        onFocusBox={(el) => setActive({ rid: r.id, el })}
                         onPart={(p) => update(r.id, { part: p }, false)}
                         onRemove={() => remove(r.id)}
                       />
@@ -263,8 +320,11 @@ function LineRow({
   onText,
   onMath,
   onStruck,
+  onOk,
   onPart,
   onRemove,
+  active,
+  onFocusBox,
 }: {
   row: Row;
   parts: (string | null)[];
@@ -272,28 +332,59 @@ function LineRow({
   onText: (v: string) => void;
   onMath: () => void;
   onStruck: () => void;
+  onOk: () => void;
   onPart: (p: string | null) => void;
   onRemove: () => void;
+  active: boolean;
+  onFocusBox: (el: HTMLTextAreaElement) => void;
 }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
   const l = row.line;
   const isMath = l.math !== null;
   const value = isMath ? (l.math ?? "") : l.text;
-  const unreadable = value.includes(UNREADABLE);
+  const holes = value.split(UNREADABLE).length - 1;
   const shaky = l.confidence < 0.7 || l.uncertain.length > 0;
-  const showPreview = isMath || /\\\(/.test(l.text) || unreadable;
+  const showPreview = isMath || /\\\(|\$|~~|\[(판독불가|지움|못 읽음)\]/.test(l.text);
+
+  /** 바꾼 뒤 커서를 `from`~`to`에 (React가 값을 넣은 다음에). */
+  const setAndPlace = (next: string, from: number, to = from) => {
+    onText(next);
+    if (ref.current) placeCaret(ref.current, next, from, to);
+  };
+  /** 지운 글씨: 고른 부분이 있으면 그 부분만 `~~…~~`, 없으면 줄 전체. */
+  const strike = () => {
+    const el = ref.current;
+    if (!isMath && el && document.activeElement === el && el.selectionStart !== el.selectionEnd) {
+      const [a, b] = [el.selectionStart, el.selectionEnd];
+      setAndPlace(`${value.slice(0, a)}~~${value.slice(a, b)}~~${value.slice(b)}`, b + 4);
+    } else onStruck();
+  };
+  /** 첫 [판독불가]: 고르기(원본 보고 채우기) 또는 다른 표시로. */
+  const fillHole = () => {
+    const at = value.indexOf(UNREADABLE);
+    if (at >= 0) setAndPlace(value, at, at + UNREADABLE.length);
+  };
+  const markHole = (mark: string) => {
+    const at = value.indexOf(UNREADABLE);
+    if (at >= 0) onText(value.slice(0, at) + mark + value.slice(at + UNREADABLE.length));
+  };
+  const keep = (e: React.MouseEvent) => e.preventDefault(); // 단추를 눌러도 칸의 커서·고른 글을 지킨다
+
   return (
-    <div className={cn("rounded-lg border bg-card px-3 py-2", unreadable ? "border-bad" : shaky ? "border-warn" : "border-line")}>
+    <div className={cn("group rounded-lg border bg-card px-3 py-2", holes ? "border-bad" : shaky ? "border-warn" : "border-line")}>
       <div className="flex items-start gap-2">
         <button
           type="button"
           onClick={onMath}
           title={isMath ? "글 줄로 바꾸기" : "식 줄로 바꾸기 (줄 전체가 식)"}
-          className={cn("mt-1 h-6 shrink-0 cursor-pointer rounded px-1.5 text-[12px]", isMath ? "bg-accent-soft text-accent-text" : "bg-muted text-text-3")}
+          className={cn("mt-1.5 h-6 shrink-0 cursor-pointer rounded border px-1.5 text-[12px]", isMath ? "border-accent bg-accent-soft text-accent-text" : "border-line bg-card text-text-2 hover:border-text-3")}
         >
           {isMath ? "식" : "글"}
         </button>
-        <AutoText value={value} onChange={onText} struck={l.struck} mono={isMath} />
-        <div className="flex shrink-0 items-center">
+        <div className="min-w-0 flex-1">
+          <AutoText ref={ref} value={value} onChange={onText} onFocus={() => ref.current && onFocusBox(ref.current)} struck={l.struck} mono={isMath} active={active} />
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
           {parts.length > 1 && (
             <select value={l.part ?? ""} onChange={(e) => onPart(e.target.value === "" ? null : e.target.value)} className="h-7 cursor-pointer rounded border border-line bg-card px-1 text-[12px] text-text-2" aria-label="소문항">
               {parts.map((p) => (
@@ -303,7 +394,20 @@ function LineRow({
               ))}
             </select>
           )}
-          <Button size="icon" variant="ghost" className="size-7" title={l.struck ? "지운 줄 아님" : "학생이 지운 줄"} aria-label="지운 줄" onClick={onStruck}>
+          {shaky && !holes && (
+            <Button size="sm" variant="outline" className="h-7 px-2 text-[12px]" title="AI가 읽은 그대로 맞습니다 — 노란 표시를 지웁니다" onClick={onOk}>
+              <Check /> 맞음
+            </Button>
+          )}
+          <Button
+            size="icon"
+            variant="ghost"
+            className={cn("size-7", l.struck && "bg-muted")}
+            title={l.struck ? "줄 전체 지운 표시 풀기" : "학생이 지운 글씨 — 글을 끌어 고르고 누르면 그 부분만, 고르지 않으면 줄 전체"}
+            aria-label="지운 글씨"
+            onMouseDown={keep}
+            onClick={strike}
+          >
             {l.struck ? <Minus /> : <Strikethrough />}
           </Button>
           <Button size="icon" variant="ghost" className="size-7" title="줄 빼기" aria-label="줄 빼기" onClick={onRemove}>
@@ -311,9 +415,24 @@ function LineRow({
           </Button>
         </div>
       </div>
+      {holes > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-9 text-[12px]">
+          <span className="unreadable">{UNREADABLE}</span>
+          <span className="text-text-2">{holes > 1 ? `${holes}곳 — 앞에서부터:` : "원본을 보고:"}</span>
+          <Button size="sm" variant="outline" className="h-7 px-2 text-[12px]" title="칸에서 [판독불가]를 골라 둡니다 — 바로 고쳐 쓰세요" onClick={fillHole}>
+            <Pencil /> 채우기
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 px-2 text-[12px]" title="학생이 지워서 읽을 것이 없는 자리 — 채점에서 뺍니다" onClick={() => markHole(ERASED)}>
+            학생이 지운 자리
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 px-2 text-[12px]" title="원본을 봐도 읽을 수 없음 — 그대로 확인하고, 채점은 못 읽은 자리로 합니다" onClick={() => markHole(ILLEGIBLE)}>
+            원본도 못 읽음
+          </Button>
+        </div>
+      )}
       {showPreview && value.trim() && (
-        <div className={cn("mt-1.5 pl-9 text-[14px] leading-[1.9]", l.struck && "text-text-3 line-through")}>
-          {isMath ? <TeX latex={value} /> : <Inline text={value} />}
+        <div className={cn("mt-1.5 ml-9 border-l-2 border-line pl-2.5 text-[14px] leading-[1.9]", l.struck && "text-text-3 line-through")} title="보이는 모양 (미리보기)">
+          {isMath ? <TeX latex={tidyMath(value)} /> : <Inline text={fromDollars(value)} />}
         </div>
       )}
       {l.uncertain.length > 0 && <div className="mt-1 pl-9 text-[12px] text-warn">애매한 곳: {l.uncertain.join(" · ")}</div>}
@@ -321,7 +440,7 @@ function LineRow({
   );
 }
 
-/** 글 줄: `\( \)` 식은 그리고, [판독불가]는 분홍. */
+/** 글 줄: `\( \)` 식은 그리고, [판독불가]는 분홍, 지운 자리·못 읽음은 회색, `~~…~~`는 줄 그음. */
 function Inline({ text }: { text: string }) {
   const parts = text.split(INLINE);
   return (
@@ -330,38 +449,71 @@ function Inline({ text }: { text: string }) {
         i % 2 === 1 ? (
           <TeX key={i} latex={p} />
         ) : (
-          p.split(/(\[판독불가\])/).map((s, j) =>
-            s === UNREADABLE ? (
-              <span key={`${i}-${j}`} className="unreadable">
-                {s}
-              </span>
-            ) : (
-              <span key={`${i}-${j}`}>{s}</span>
-            ),
-          )
+          p.split(/(\[판독불가\]|\[지움\]|\[못 읽음\]|~~.+?~~)/).map((s, j) => {
+            const k = `${i}-${j}`;
+            if (s === UNREADABLE) return <span key={k} className="unreadable">{s}</span>;
+            if (s === ERASED || s === ILLEGIBLE)
+              return (
+                <span key={k} className="rounded bg-muted px-1 text-[12px] text-text-3">
+                  {s === ERASED ? "학생이 지운 자리" : "못 읽음"}
+                </span>
+              );
+            if (s.startsWith("~~") && s.endsWith("~~") && s.length > 4)
+              return (
+                <span key={k} className="text-text-3 line-through" title="학생이 지운 글씨">
+                  {s.slice(2, -2)}
+                </span>
+              );
+            return <span key={k}>{s}</span>;
+          })
         ),
       )}
     </>
   );
 }
 
-/** 내용만큼 늘어나는 입력 칸. */
-function AutoText({ value, onChange, struck, mono }: { value: string; onChange: (v: string) => void; struck: boolean; mono: boolean }) {
-  const ref = useRef<HTMLTextAreaElement>(null);
+/** 내용만큼 늘어나는 입력 칸 — 고칠 수 있는 칸임이 보이게 테두리·바탕을 둔다. */
+function AutoText({
+  value,
+  onChange,
+  onFocus,
+  struck,
+  mono,
+  active,
+  ref,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onFocus: () => void;
+  struck: boolean;
+  mono: boolean;
+  active: boolean;
+  ref: React.RefObject<HTMLTextAreaElement | null>;
+}) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [value]);
+    const fit = () => {
+      el.style.height = "auto";
+      el.style.height = `${el.scrollHeight}px`;
+    };
+    fit();
+    const ro = new ResizeObserver(fit); // 폭이 바뀌면(맞음 단추가 사라지면) 줄 수도 바뀐다
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [value, ref]);
   return (
     <textarea
       ref={ref}
       rows={1}
       value={value}
       onChange={(e) => onChange(e.target.value)}
+      onFocus={onFocus}
+      placeholder="눌러서 쓰기"
+      title="눌러서 고치기"
       className={cn(
-        "min-w-0 flex-1 resize-none bg-transparent py-1 text-[14px] leading-[1.6] text-text outline-none",
+        "block w-full cursor-text resize-none rounded-md border border-line bg-muted px-2 py-1 text-[14px] leading-[1.6] text-text outline-none placeholder:text-text-3 hover:border-text-3 focus:border-accent focus:bg-card",
+        active && "border-accent",
         struck && "text-text-3 line-through",
         mono && "font-mono text-[13px]",
       )}

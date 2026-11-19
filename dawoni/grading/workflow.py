@@ -954,8 +954,9 @@ def wants_grading(store: ExamStore, before: Transcript | None, t: Transcript) ->
     rubric = store.rubric(t.question_number)
     if not t.confirmed or t.unreadable or rubric is None or rubric.status != "approved":
         return False
+    # 내용만 견준다 — 강사가 '맞음'으로 애매한 곳 표시만 지웠으면 다시 채점하지 않는다
     return store.grade(t.student_id, t.question_number) is None or (
-        before is None or before.lines != t.lines
+        before is None or [x.content() for x in before.lines] != [x.content() for x in t.lines]
     )
 
 

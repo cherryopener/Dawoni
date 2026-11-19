@@ -828,10 +828,10 @@ def prematch_side(
     """결론(마지막 줄)에 해설지 답이나 후보 **하나만** 그대로 있으면 AI 없이 정한다.
 
     둘 이상이 보이거나 아무것도 없으면 None — AI(가벼운 도우미)에게 묻는다."""
-    lines = [x for x in t.lines if not x.struck and x.joined.strip()]
+    lines = [x for x in t.lines if not x.struck and x.kept]
     if not lines:
         return None
-    last = lines[-1].joined
+    last = lines[-1].kept
     hits: list[tuple[AnswerSide, str | None]] = []
     if key_answer and _has_answer(last, key_answer):
         hits.append(("key", None))

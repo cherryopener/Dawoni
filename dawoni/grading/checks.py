@@ -516,7 +516,10 @@ def normalize_for_compare(s: str) -> str:
 
 def quote_in_transcript(quote: str, transcript: Transcript) -> bool:
     """인용이 판독문에 실제로 있는가. `…`로 이은 조각은 순서대로 모두 있어야 한다."""
-    haystack = normalize_for_compare(" ".join(line.joined for line in transcript.lines))
+    # 줄 안의 지운 부분 표시(~~)는 빼고 견준다 — AI에게는 "(지운 흔적: …)"으로 보였다
+    haystack = normalize_for_compare(
+        " ".join(line.joined.replace("~~", "") for line in transcript.lines)
+    )
     # 판독문을 보여 줄 때 줄 앞에 소문항 표시를 붙이므로, 인용에 그 표시가 들어가도 된다.
     # (표시를 판독문 쪽에 끼워 넣으면 여러 줄에 걸친 인용이 깨진다 — 실측)
     # 표시는 낱말로 떨어져 있을 때만 뺀다 — 소문항 표시가 A·B면 학생이 쓴 "B가 더 높아"의 B까지 지워

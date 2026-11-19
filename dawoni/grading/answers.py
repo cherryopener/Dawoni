@@ -405,8 +405,8 @@ class _Mark:
 
 
 def _mark(rule: AnswerRule, points: float, q: ExamQuestion, t: Transcript) -> _Mark:
-    lines = [x for x in part_lines(t, rule.part) if x.joined.strip()]
-    text = " ".join(x.joined for x in lines).strip()
+    lines = [x for x in part_lines(t, rule.part) if x.kept]
+    text = " ".join(x.kept for x in lines).strip()
     if rule.all_correct:
         return _Mark(points, text or None, "전원 정답 처리")
     if not text:
@@ -421,7 +421,7 @@ def _mark(rule: AnswerRule, points: float, q: ExamQuestion, t: Transcript) -> _M
         if got in accepted:
             return _Mark(points, text, f"정답 {_choice_text(got)}")
         return _Mark(0, text, f"{_choice_text(got)}을(를) 고름", deduction=f"정답은 {right}")
-    final = lines[-1].joined.strip()
+    final = lines[-1].kept
     notes: list[str] = []
     for n, a in enumerate(rule.answers):
         verdict, note = judge_value(final, a, rule.expr if n == 0 else None)
@@ -589,7 +589,7 @@ def pre_grade(q: ExamQuestion, rubric: Rubric, t: Transcript) -> PreGraded:
         if item.part:
             by_part.setdefault(item.part, []).append(item)
     for part, items in by_part.items():
-        lines = [x for x in part_lines(t, part) if x.joined.strip()]
+        lines = [x for x in part_lines(t, part) if x.kept]
         if labelled and not lines:
             for item in items:
                 out.judgements[item.id] = ItemJudgement(
@@ -608,7 +608,7 @@ def pre_grade(q: ExamQuestion, rubric: Rubric, t: Transcript) -> PreGraded:
         ):  # fmt: skip
             continue
         item = items[0]
-        final = lines[-1].joined.strip()
+        final = lines[-1].kept
         verdicts = [judge_value(final, a) for a in [key, *accepted.get(part, [])]]
         if any(v == "same" and note is None for v, note in verdicts):
             j = ItemJudgement(

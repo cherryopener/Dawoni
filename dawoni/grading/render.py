@@ -20,6 +20,9 @@ from dawoni.models.content import (
     TextRun,
 )
 from dawoni.models.grading import (
+    ERASED,
+    ILLEGIBLE,
+    STRUCK_PART,
     ExamPart,
     ExamQuestion,
     Rubric,
@@ -249,12 +252,18 @@ def rubric_text(
     return "\n".join(lines)
 
 
+def marked(s: str) -> str:
+    """강사가 판독문에 단 표시를 채점 AI가 읽을 말로: `~~…~~` 지운 부분, `[지움]`, `[못 읽음]`."""
+    s = STRUCK_PART.sub(lambda m: f"(지운 흔적: {m.group(1)})", s)
+    return s.replace(ERASED, "(지운 자리)").replace(ILLEGIBLE, "(강사도 못 읽음)")
+
+
 def transcript_text(t: Transcript) -> str:
     if t.is_blank:
         return "(학생 답안이 비어 있음)"
     lines = ["[학생 답안] (줄 번호는 참고용 — 인용할 때는 빼고 적힌 그대로)"]
     for n, line in enumerate(t.lines, start=1):
-        body = (f"{line.part} " if line.part else "") + line.joined
+        body = (f"{line.part} " if line.part else "") + marked(line.joined)
         if line.struck:
             body = f"(지운 흔적) {body}"
         if line.uncertain:

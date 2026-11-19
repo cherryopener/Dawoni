@@ -12,6 +12,7 @@ import { cn } from "@/lib/cn";
 import { handExam } from "@/lib/handoff";
 import { go, href } from "@/lib/router";
 import { useTeacher } from "@/lib/session";
+import { fromDollars, toDollars } from "@/lib/transcript";
 import type { Job, KeyPrep, LineKind, LineSource, PrepExport, PrepLine, PrepPart, PrepQuestion } from "@/lib/types";
 
 const SOURCE: Record<LineSource, { label: string; tone: Tone }> = {
@@ -465,7 +466,7 @@ function Explanation({ q, onChange }: { q: PrepQuestion; onChange: (q: PrepQuest
         <span className="flex-1 text-[12px] text-text-3">{q.has_key ? "해설지에 풀이가 없어 AI가 썼습니다" : "해설지가 없어 AI가 풀어 썼습니다"}</span>
         {edit === null && (
           <>
-            <Button size="sm" variant="ghost" onClick={() => setEdit(q.explanation ?? "")}>
+            <Button size="sm" variant="ghost" onClick={() => setEdit(toDollars(q.explanation ?? ""))}>
               <Pencil /> 고치기
             </Button>
             <Button size="sm" variant="ghost" onClick={() => onChange({ ...q, explanation_in: !q.explanation_in })}>
@@ -501,7 +502,7 @@ function Explanation({ q, onChange }: { q: PrepQuestion; onChange: (q: PrepQuest
               size="sm"
               variant="primary"
               onClick={() => {
-                onChange({ ...q, explanation: edit });
+                onChange({ ...q, explanation: fromDollars(edit) });
                 setEdit(null);
               }}
             >
@@ -662,7 +663,7 @@ function LineRow({ line, onDecide, onEdit, onDelete }: { line: PrepLine; onDecid
 
 function LineEditor({ line, noPartial, onSave, onCancel }: { line: PrepLine; noPartial: boolean; onSave: (l: Partial<PrepLine>) => void; onCancel: () => void }) {
   const [kind, setKind] = useState<LineKind>(line.kind);
-  const [text, setText] = useState(line.text);
+  const [text, setText] = useState(toDollars(line.text)); // 칸에서는 식이 $수식$ (저장은 \( \))
   const [points, setPoints] = useState(line.points !== null ? String(line.points) : "1");
   const kinds = noPartial ? KINDS.filter((k) => k.value === "accept" || k.value === "note" || k.value === "item") : KINDS;
   const pointed = POINTED.has(kind);
@@ -670,7 +671,7 @@ function LineEditor({ line, noPartial, onSave, onCancel }: { line: PrepLine; noP
     const n = Number(points);
     // 고친 질문은 강사가 쓴 것이니 넣는다 (빼려면 [빼기])
     const decision = line.source === "ask" && line.decision === null ? "in" : line.decision;
-    onSave({ kind, text: text.trim(), points: pointed && n > 0 ? n : pointed ? 1 : null, decision });
+    onSave({ kind, text: fromDollars(text.trim()), points: pointed && n > 0 ? n : pointed ? 1 : null, decision });
   };
   return (
     <div className="my-1 flex flex-col gap-2 rounded-lg border border-accent bg-card p-3">
@@ -697,7 +698,7 @@ function LineEditor({ line, noPartial, onSave, onCancel }: { line: PrepLine; noP
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && text.trim()) save();
           if (e.key === "Escape") onCancel();
         }}
-        placeholder="해설지에 들어갈 문장 (점수는 앞에 저절로 붙습니다, 식은 \( \)로)"
+        placeholder="해설지에 들어갈 문장 (점수는 앞에 저절로 붙습니다, 식은 $수식$처럼 $로 감싸기 — 예: $\frac{1}{2}mv^2$)"
         className={textarea}
       />
       <div className="flex items-center justify-end gap-2">
